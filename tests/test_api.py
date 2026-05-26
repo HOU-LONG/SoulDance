@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+from backend.app.agent import ShopGuideAgent
 from backend.app.main import create_app
 
 
@@ -76,6 +77,34 @@ def test_websocket_recommendation_event_order_and_quick_actions():
     assert event_types[0] == "assistant_state"
     assert event_types.index("text_delta") < event_types.index("products_start")
     assert event_types.index("products_done") < event_types.index("quick_actions")
+
+
+def test_websocket_chat_uses_agent_stream_message(monkeypatch):
+    async def explode_handle_message(self, request):
+        raise AssertionError("websocket should stream events instead of awaiting handle_message")
+
+    async def fake_stream_message(self, request):
+        yield {"type": "assistant_state", "message_id": "assistant_test", "phase": "retrieving", "label": "streaming"}
+        yield {"type": "done", "message_id": "assistant_test"}
+
+    monkeypatch.setattr(ShopGuideAgent, "handle_message", explode_handle_message)
+    monkeypatch.setattr(ShopGuideAgent, "stream_message", fake_stream_message, raising=False)
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_stream_method",
+                "message": "推荐防晒霜",
+            }
+        )
+        first_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    assert first_event["type"] == "assistant_state"
+    assert done_event["type"] == "done"
 
 
 def test_websocket_natural_language_cart_action_uses_agent_context():

@@ -78,7 +78,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
                     await websocket.send_json({"type": "cart_update", **event})
                     await websocket.send_json({"type": "done"})
                     continue
-                for event in await agent.handle_message(request):
+                async for event in agent.stream_message(request):
                     await websocket.send_json(event)
         except WebSocketDisconnect:
             return

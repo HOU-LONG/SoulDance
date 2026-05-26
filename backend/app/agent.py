@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 import re
 import uuid
 
@@ -48,21 +49,36 @@ class ShopGuideAgent:
         return ranked
 
     async def handle_message(self, request: ChatRequest) -> list[dict]:
+        return [event async for event in self.stream_message(request)]
+
+    async def stream_message(self, request: ChatRequest) -> AsyncIterator[dict]:
         if request.type == "product_followup":
-            return await self._handle_followup(request)
+            async for event in self._stream_followup(request):
+                yield event
+            return
         plan = await self.plan(request)
         if plan.need_clarification or plan.intent == "clarification":
-            return self._build_clarification_events(plan)
+            for event in self._build_clarification_events(plan):
+                yield event
+            return
         if plan.intent == "compare_products":
-            return self._build_comparison_events(request)
+            for event in self._build_comparison_events(request):
+                yield event
+            return
         if plan.intent == "scenario_bundle":
-            return self._build_bundle_events(request, plan)
+            for event in self._build_bundle_events(request, plan):
+                yield event
+            return
         ranked = self.retrieve_and_rank(plan)
         context = self.sessions.get(request.session_id)
         self._remember_recommendations(context, plan, ranked)
-        return await self._build_recommendation_events(request, plan, ranked)
+        async for event in self._stream_recommendation_events(request, plan, ranked):
+            yield event
 
     async def _handle_followup(self, request: ChatRequest) -> list[dict]:
+        return [event async for event in self._stream_followup(request)]
+
+    async def _stream_followup(self, request: ChatRequest) -> AsyncIterator[dict]:
         context = self.sessions.get(request.session_id)
         if request.focus_product_id:
             context.focus_product_id = request.focus_product_id
@@ -76,62 +92,71 @@ class ShopGuideAgent:
         self._remember_recommendations(context, plan, ranked)
         message_id = _message_id()
         intro = _followup_intro(plan)
-        text = await self._safe_generate_text(request, plan, ranked, focus_product)
-        events = [_assistant_state(message_id, "retrieving", "正在按当前商品上下文重新筛选")]
-        events.extend(_text_delta_events(message_id, intro))
+        yield _assistant_state(message_id, "retrieving", "正在按当前商品上下文重新筛选")
+        for event in _text_delta_events(message_id, intro):
+            yield event
         if ranked:
             replacement = _product_card(ranked[0])
-            events.append(
-                {
-                    "type": "replacement_product",
-                    "message_id": message_id,
-                    "focus_product_id": request.focus_product_id,
-                    "reason": ranked[0].reason,
-                    "product": replacement.model_dump(mode="json"),
-                }
-            )
-            events.extend(_text_delta_events(message_id, text))
-            events.append(_quick_actions_event(message_id, plan, ranked))
+            yield {
+                "type": "replacement_product",
+                "message_id": message_id,
+                "focus_product_id": request.focus_product_id,
+                "reason": ranked[0].reason,
+                "product": replacement.model_dump(mode="json"),
+            }
+            text = await self._safe_generate_text(request, plan, ranked, focus_product)
+            for event in _text_delta_events(message_id, text):
+                yield event
+            yield _quick_actions_event(message_id, plan, ranked)
         else:
-            events.extend(_text_delta_events(message_id, text))
-            events.append(_filter_recovery_event(message_id, plan))
-        events.append({"type": "focus_done", "message_id": message_id})
-        events.extend(await self.tts.synthesize_events(intro + text, request.tts_enabled))
-        return events
+            text = _no_match_text(plan)
+            for event in _text_delta_events(message_id, text):
+                yield event
+            yield _filter_recovery_event(message_id, plan)
+        yield {"type": "focus_done", "message_id": message_id}
+        for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+            yield event
 
     async def _build_recommendation_events(
         self, request: ChatRequest, plan: RetrievalPlan, ranked: list[RankedProduct]
     ) -> list[dict]:
+        return [event async for event in self._stream_recommendation_events(request, plan, ranked)]
+
+    async def _stream_recommendation_events(
+        self, request: ChatRequest, plan: RetrievalPlan, ranked: list[RankedProduct]
+    ) -> AsyncIterator[dict]:
         message_id = _message_id()
         intro = _understanding_text(plan)
-        events = [_assistant_state(message_id, "retrieving", "正在理解需求并筛选商品")]
-        events.extend(_text_delta_events(message_id, intro))
+        yield _assistant_state(message_id, "retrieving", "正在理解需求并筛选商品")
+        for event in _text_delta_events(message_id, intro):
+            yield event
         if not ranked:
             text = _no_match_text(plan)
-            events.extend(_text_delta_events(message_id, text))
-            events.append(_filter_recovery_event(message_id, plan))
-            events.append(_quick_actions_event(message_id, plan, ranked))
-            events.append({"type": "done", "message_id": message_id})
-            events.extend(await self.tts.synthesize_events(intro + text, request.tts_enabled))
-            return events
-        text = await self._safe_generate_text(request, plan, ranked, None)
-        events.append({"type": "products_start", "message_id": message_id})
+            for event in _text_delta_events(message_id, text):
+                yield event
+            yield _filter_recovery_event(message_id, plan)
+            yield _quick_actions_event(message_id, plan, ranked)
+            yield {"type": "done", "message_id": message_id}
+            for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+                yield event
+            return
+        yield {"type": "products_start", "message_id": message_id}
         for index, item in enumerate(ranked):
-            events.append(
-                {
-                    "type": "product_item",
-                    "message_id": message_id,
-                    "index": index,
-                    "role": "primary" if index == 0 else "alternative",
-                    "product": _product_card(item).model_dump(mode="json"),
-                }
-            )
-        events.append({"type": "products_done", "message_id": message_id})
-        events.extend(_text_delta_events(message_id, text))
-        events.append(_quick_actions_event(message_id, plan, ranked))
-        events.append({"type": "done", "message_id": message_id})
-        events.extend(await self.tts.synthesize_events(intro + text, request.tts_enabled))
-        return events
+            yield {
+                "type": "product_item",
+                "message_id": message_id,
+                "index": index,
+                "role": "primary" if index == 0 else "alternative",
+                "product": _product_card(item).model_dump(mode="json"),
+            }
+        yield {"type": "products_done", "message_id": message_id}
+        text = await self._safe_generate_text(request, plan, ranked, None)
+        for event in _text_delta_events(message_id, text):
+            yield event
+        yield _quick_actions_event(message_id, plan, ranked)
+        yield {"type": "done", "message_id": message_id}
+        for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+            yield event
 
     async def _safe_generate_text(
         self,

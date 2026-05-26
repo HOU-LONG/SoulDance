@@ -12,6 +12,17 @@ class FakeRetriever:
         return []
 
 
+class BlockingResponseLLM(FakeLLMClient):
+    def __init__(self):
+        self.generate_started = asyncio.Event()
+        self.release_generate = asyncio.Event()
+
+    async def generate_response(self, user_message, plan, ranked_products, focus_product=None):
+        self.generate_started.set()
+        await self.release_generate.wait()
+        return "这是延迟生成的导购解释。"
+
+
 def test_load_products_reads_dataset():
     products = load_products("ecommerce_agent_dataset")
 
@@ -141,6 +152,40 @@ def test_recommendation_streams_understanding_before_products_and_quick_actions(
     assert event_types.index("quick_actions") < event_types.index("done")
     quick_actions = next(event for event in events if event["type"] == "quick_actions")
     assert {action["label"] for action in quick_actions["actions"]} >= {"更便宜", "不要这个品牌"}
+
+
+def test_recommendation_stream_emits_products_before_llm_explanation_finishes():
+    async def run():
+        products = load_products("ecommerce_agent_dataset")
+        llm = BlockingResponseLLM()
+        agent = ShopGuideAgent(products, llm, FakeRetriever())
+        stream = agent.stream_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_true_stream",
+                message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
+            )
+        )
+
+        events = []
+        for _ in range(10):
+            event = await asyncio.wait_for(anext(stream), timeout=0.2)
+            events.append(event)
+            if event["type"] == "products_done":
+                break
+
+        assert [event["type"] for event in events][:2] == ["assistant_state", "text_delta"]
+        assert any(event["type"] == "product_item" for event in events)
+        assert events[-1]["type"] == "products_done"
+        assert not llm.generate_started.is_set()
+
+        llm.release_generate.set()
+        while True:
+            event = await asyncio.wait_for(anext(stream), timeout=0.2)
+            if event["type"] == "done":
+                break
+
+    asyncio.run(run())
 
 
 def test_ambiguous_phone_request_asks_clarification_without_products():

@@ -73,9 +73,11 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
                     await websocket.send_json({"type": "cart_update", "action": request.action or "add_to_cart", "cart": event})
                     await websocket.send_json({"type": "done"})
                     continue
-                if agent.is_natural_language_cart_request(request):
-                    event = agent.handle_cart_message(request, cart)
-                    await websocket.send_json({"type": "cart_update", **event})
+                cart_event = None
+                if request.type != "product_followup":
+                    cart_event = await agent.try_handle_cart_message(request, cart)
+                if cart_event is not None:
+                    await websocket.send_json({"type": "cart_update", **cart_event})
                     await websocket.send_json({"type": "done"})
                     continue
                 async for event in agent.stream_message(request):

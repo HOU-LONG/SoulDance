@@ -16,6 +16,14 @@ hard_constraints 可包含 category, sub_category, price_max, exclude_terms, exc
 否定约束例如不要、不含、排除必须放进 hard_constraints，不能变成软偏好。
 商品最终选择由后端完成，你只负责理解用户需求。"""
 
+SEMANTIC_SYSTEM_PROMPT = """你是电商导购后端的语义解析层。只输出 JSON，不要 Markdown。
+你的任务是把用户自然语言解析成可执行的结构化 semantic frame，不直接执行商品选择或购物车操作。
+intent 只能是 recommend_product, product_followup, compare_products, cart_operation, scenario_bundle, clarification。
+followup 偏好变化放在 constraint_edits：add 表示新增或覆盖约束，remove 表示用户明确取消旧约束，relax 表示放宽某类约束。
+自然语言购物车放在 cart_operation，target.reference 可用 focus_product, last_recommendation, last_recommendations, recent_cart_item。
+target.selection_strategy 可用 primary, cheapest, most_expensive, index。
+不要编造 product_id；只有用户明确提供 product_id 时才填写。"""
+
 RESPONSE_SYSTEM_PROMPT = """你是低压力电商导购助手。只能基于后端给你的真实商品和证据回答。
 回复结构：一句话理解用户意图；说明已经处理的硬约束；主推一个商品；给 2-3 个证据；给低成本修正入口。
 不要编造商品属性，不要承诺疗效，不要油腻。"""
@@ -47,6 +55,43 @@ class DoubaoLLMClient:
                     "role": "user",
                     "content": json.dumps(
                         {"message": message, "session_context": context_payload},
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0,
+            response_format={"type": "json_object"},
+        )
+        return response.choices[0].message.content or "{}"
+
+    async def parse_semantic_frame(
+        self,
+        message: str,
+        context: SessionContext | None = None,
+        request_type: str = "user_message",
+    ) -> str:
+        context_payload: dict[str, Any] = {}
+        if context:
+            context_payload = {
+                "last_plan": context.last_plan.model_dump(mode="json") if context.last_plan else None,
+                "focus_product_id": context.focus_product_id,
+                "last_product_ids": context.last_product_ids,
+                "last_recommendations": context.last_recommendations,
+                "recent_cart_product_id": context.recent_cart_product_id,
+                "global_profile": context.global_profile,
+            }
+        response = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": SEMANTIC_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "message": message,
+                            "request_type": request_type,
+                            "session_context": context_payload,
+                        },
                         ensure_ascii=False,
                     ),
                 },
@@ -100,6 +145,14 @@ class DoubaoLLMClient:
 
 class FakeLLMClient:
     async def plan(self, message: str, context: SessionContext | None = None) -> str:
+        return "{}"
+
+    async def parse_semantic_frame(
+        self,
+        message: str,
+        context: SessionContext | None = None,
+        request_type: str = "user_message",
+    ) -> str:
         return "{}"
 
     async def generate_response(

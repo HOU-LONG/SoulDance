@@ -49,6 +49,44 @@ class RetrievalPlan(BaseModel):
     clarification_question: str | None = None
 
 
+class ConstraintPatch(BaseModel):
+    category: str | None = None
+    sub_category: str | None = None
+    price_max: float | None = None
+    exclude_terms: list[str] = Field(default_factory=list)
+    exclude_brands: list[str] = Field(default_factory=list)
+    exclude_brand_regions: list[str] = Field(default_factory=list)
+    soft_preferences: dict[str, str] = Field(default_factory=dict)
+
+
+class ConstraintEdits(BaseModel):
+    add: ConstraintPatch = Field(default_factory=ConstraintPatch)
+    remove: ConstraintPatch = Field(default_factory=ConstraintPatch)
+    relax: list[str] = Field(default_factory=list)
+
+
+class ProductReference(BaseModel):
+    reference: str = "focus_product"
+    selection_strategy: str = "primary"
+    index: int | None = None
+    product_id: str | None = None
+
+
+class CartOperation(BaseModel):
+    action: str = "add_to_cart"
+    target: ProductReference = Field(default_factory=ProductReference)
+    quantity: int = 1
+
+
+class SemanticFrame(BaseModel):
+    intent: str = "recommend_product"
+    confidence: float = 1.0
+    constraint_edits: ConstraintEdits = Field(default_factory=ConstraintEdits)
+    cart_operation: CartOperation | None = None
+    target: ProductReference | None = None
+    clarification_question: str | None = None
+
+
 class RankedProduct(BaseModel):
     product: Product
     score: float

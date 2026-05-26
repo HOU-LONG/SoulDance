@@ -1,7 +1,27 @@
 from fastapi.testclient import TestClient
 
 from backend.app.agent import ShopGuideAgent
+from backend.app.llm_client import FakeLLMClient
 from backend.app.main import create_app
+
+
+class SemanticCartLLM(FakeLLMClient):
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        if "两件" not in message:
+            return '{"intent": "recommend_product"}'
+        return """
+        {
+          "intent": "cart_operation",
+          "cart_operation": {
+            "action": "add_to_cart",
+            "quantity": 2,
+            "target": {
+              "reference": "last_recommendations",
+              "selection_strategy": "primary"
+            }
+          }
+        }
+        """
 
 
 def test_health_endpoint_reports_product_count():
@@ -140,4 +160,43 @@ def test_websocket_natural_language_cart_action_uses_agent_context():
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "add_to_cart"
     assert cart_event["cart"]["items"][0]["product_id"] == primary_product_id
+    assert done_event["type"] == "done"
+
+
+def test_websocket_cart_operation_can_be_detected_by_semantic_frame_without_keywords():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    app.state.agent.llm_client = SemanticCartLLM()
+    app.state.agent.semantic_parser.llm_client = app.state.agent.llm_client
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_semantic_cart",
+                "message": "推荐防晒霜",
+            }
+        )
+        primary_product_id = None
+        while True:
+            event = websocket.receive_json()
+            if event["type"] == "product_item" and event["role"] == "primary":
+                primary_product_id = event["product"]["product_id"]
+            if event["type"] == "done":
+                break
+
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_semantic_cart",
+                "message": "就这个来两件",
+            }
+        )
+        cart_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    assert cart_event["type"] == "cart_update"
+    assert cart_event["action"] == "add_to_cart"
+    assert cart_event["product_id"] == primary_product_id
+    assert cart_event["cart"]["items"][0]["quantity"] == 2
     assert done_event["type"] == "done"

@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from backend.app.agent import ShopGuideAgent
 from backend.app.cart import CartService
@@ -21,6 +22,16 @@ class BlockingResponseLLM(FakeLLMClient):
         self.generate_started.set()
         await self.release_generate.wait()
         return "这是延迟生成的导购解释。"
+
+
+class SemanticFrameLLM(FakeLLMClient):
+    def __init__(self, *frames):
+        self.frames = list(frames)
+
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        if not self.frames:
+            return "{}"
+        return json.dumps(self.frames.pop(0), ensure_ascii=False)
 
 
 def test_load_products_reads_dataset():
@@ -129,6 +140,45 @@ def test_no_match_followup_does_not_emit_replacement_product():
     assert not [event for event in followup_events if event["type"] == "replacement_product"]
     merged_text = "".join(event["text"] for event in followup_events if event["type"] == "text_delta")
     assert "没有完全满足" in merged_text
+
+
+def test_followup_uses_semantic_constraint_edits_to_remove_old_constraints():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM(
+        {
+            "intent": "product_followup",
+            "constraint_edits": {
+                "add": {"price_max": 100},
+                "remove": {"exclude_terms": ["酒精"]},
+            },
+        }
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_semantic_followup",
+                message="推荐一款适合油皮的洗面奶，不要含酒精",
+            )
+        )
+    )
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="product_followup",
+                session_id="demo_semantic_followup",
+                message="酒精可以接受，但要100以内",
+            )
+        )
+    )
+
+    updated_plan = agent.sessions.get("demo_semantic_followup").last_plan
+    assert updated_plan.hard_constraints.price_max == 100
+    assert "酒精" not in updated_plan.hard_constraints.exclude_terms
+    assert updated_plan.hard_constraints.sub_category == "洁面"
 
 
 def test_recommendation_streams_understanding_before_products_and_quick_actions():
@@ -298,6 +348,52 @@ def test_natural_language_cart_actions_resolve_recent_product():
     )
     assert update_result["cart"]["items"][0]["quantity"] == 2
     assert update_result["action"] == "update_quantity"
+
+
+def test_semantic_cart_operation_targets_cheapest_recent_recommendation():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM(
+        {
+            "intent": "cart_operation",
+            "cart_operation": {
+                "action": "add_to_cart",
+                "quantity": 2,
+                "target": {
+                    "reference": "last_recommendations",
+                    "selection_strategy": "cheapest",
+                },
+            },
+        }
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+    cart = CartService(products)
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_semantic_cart", message="推荐防晒霜")
+        )
+    )
+    context = agent.sessions.get("demo_semantic_cart")
+    expected_product_id = min(
+        (agent.product_map[product_id] for product_id in context.last_product_ids),
+        key=lambda product: product.price,
+    ).product_id
+
+    result = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_semantic_cart",
+                message="把刚才推荐里最便宜的加两件到购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert result["action"] == "add_to_cart"
+    assert result["product_id"] == expected_product_id
+    assert result["cart"]["items"][0]["product_id"] == expected_product_id
+    assert result["cart"]["items"][0]["quantity"] == 2
 
 
 def test_cart_service_add_update_checkout():

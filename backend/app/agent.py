@@ -10,6 +10,7 @@ from .llm_client import FakeLLMClient
 from .models import ChatRequest, HardConstraints, Product, ProductCard, RankedProduct, RetrievalPlan, SessionContext
 from .planner_agent import PlannerAgent
 from .ranker import rank_products
+from .semantic_layer import SemanticParser, apply_constraint_edits, resolve_cart_operation, rule_semantic_frame
 from .session_store import SessionStore
 from .tts_adapter import TTSAdapter
 
@@ -29,6 +30,7 @@ class ShopGuideAgent:
         self.retriever = retriever or BM25OnlyRetriever(products)
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent(self.llm_client)
+        self.semantic_parser = SemanticParser(self.llm_client)
         self.tts = tts_adapter or TTSAdapter()
 
     async def plan(self, request: ChatRequest) -> RetrievalPlan:
@@ -84,6 +86,11 @@ class ShopGuideAgent:
             context.focus_product_id = request.focus_product_id
         context.focus_history.append(request.message)
         plan = await self.plan(request)
+        frame = await self.semantic_parser.parse(request, context)
+        if frame.intent == "product_followup":
+            plan = apply_constraint_edits(plan, frame.constraint_edits, request.message)
+            plan.intent = "product_followup"
+            plan.retrieval_mode = "product_focus_retrieval"
         focus_product = self.product_map.get(request.focus_product_id or context.focus_product_id or "")
         if focus_product and _wants_different_brand(request.message):
             plan.hard_constraints.exclude_brands = _dedupe(plan.hard_constraints.exclude_brands + [focus_product.brand])
@@ -341,6 +348,46 @@ class ShopGuideAgent:
                 "origin_constraints": plan.hard_constraints.model_dump(mode="json"),
             }
         _update_profile(context, plan)
+
+    async def try_handle_cart_message(self, request: ChatRequest, cart: CartService) -> dict | None:
+        context = self.sessions.get(request.session_id)
+        frame = await self.semantic_parser.parse(request, context)
+        if frame.intent != "cart_operation" or frame.cart_operation is None:
+            frame = rule_semantic_frame(request)
+        if frame.intent != "cart_operation" or frame.cart_operation is None:
+            return None
+        action, quantity, product_id = resolve_cart_operation(
+            frame.cart_operation,
+            context,
+            self.product_map,
+            cart.get(request.session_id),
+        )
+        return self._execute_cart_action(request.session_id, action, product_id, quantity, cart)
+
+    def _execute_cart_action(
+        self,
+        session_id: str,
+        action: str,
+        product_id: str | None,
+        quantity: int,
+        cart: CartService,
+    ) -> dict:
+        context = self.sessions.get(session_id)
+        if action == "checkout":
+            snapshot = cart.checkout(session_id)
+            return {"action": action, "product_id": product_id, "cart": snapshot, "message": "已为你模拟下单。"}
+        if not product_id:
+            snapshot = cart.get(session_id)
+            return {"action": "get_cart", "product_id": None, "cart": snapshot, "message": "我还没找到要操作的商品。"}
+        if action == "update_quantity":
+            snapshot = cart.update_quantity(session_id, product_id, quantity)
+        elif action == "remove":
+            snapshot = cart.remove(session_id, product_id)
+        else:
+            action = "add_to_cart"
+            snapshot = cart.add(session_id, product_id, quantity)
+        context.recent_cart_product_id = product_id
+        return {"action": action, "product_id": product_id, "cart": snapshot, "message": _cart_message(action, product_id)}
 
 
 def _product_card(item: RankedProduct) -> ProductCard:

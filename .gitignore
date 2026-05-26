@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
+env/
+venv/
+.venv/
+venv_vllm/
+venv_vllm_cu128/
+venv_vllm_cu128
+conda_gcc12/
+conda_gcc12
+
+# Models, caches, and external artifacts
+model/
+sources/
+.cache/
+
+# Runtime logs and smoke outputs
+logs/
+*.log
+*.pid
+*.wav
+*.headers
+
+# Secrets and local config
+.env
+.env.*
+*.local
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# External source checkout. Manage separately or as a submodule if needed.
+vllm-omni-main/

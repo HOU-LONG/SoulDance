@@ -24,6 +24,15 @@ class SemanticCartLLM(FakeLLMClient):
         """
 
 
+class CountingSemanticLLM(FakeLLMClient):
+    def __init__(self):
+        self.parse_calls = 0
+
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        self.parse_calls += 1
+        return '{"intent": "recommend_product"}'
+
+
 def test_health_endpoint_reports_product_count():
     app = create_app(use_fake_llm=True, use_fake_retriever=True)
     client = TestClient(app)
@@ -103,7 +112,7 @@ def test_websocket_chat_uses_agent_stream_message(monkeypatch):
     async def explode_handle_message(self, request):
         raise AssertionError("websocket should stream events instead of awaiting handle_message")
 
-    async def fake_stream_message(self, request):
+    async def fake_stream_message(self, request, compiled_ir=None):
         yield {"type": "assistant_state", "message_id": "assistant_test", "phase": "retrieving", "label": "streaming"}
         yield {"type": "done", "message_id": "assistant_test"}
 
@@ -125,6 +134,29 @@ def test_websocket_chat_uses_agent_stream_message(monkeypatch):
 
     assert first_event["type"] == "assistant_state"
     assert done_event["type"] == "done"
+
+
+def test_websocket_recommendation_uses_one_semantic_parse():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    llm = CountingSemanticLLM()
+    app.state.agent.llm_client = llm
+    app.state.agent.semantic_parser.llm_client = llm
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_single_parse",
+                "message": "推荐防晒霜，但不要含酒精",
+            }
+        )
+        while True:
+            event = websocket.receive_json()
+            if event["type"] == "done":
+                break
+
+    assert llm.parse_calls == 1
 
 
 def test_websocket_natural_language_cart_action_uses_agent_context():
@@ -160,6 +192,32 @@ def test_websocket_natural_language_cart_action_uses_agent_context():
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "add_to_cart"
     assert cart_event["cart"]["items"][0]["product_id"] == primary_product_id
+    assert done_event["type"] == "done"
+
+
+def test_websocket_explicit_cart_action_updates_agent_cart_memory():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+    product_id = client.get("/api/products").json()["products"][0]["product_id"]
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "cart_action",
+                "session_id": "demo_ws_explicit_cart",
+                "action": "add_to_cart",
+                "product_id": product_id,
+                "quantity": 1,
+            }
+        )
+        cart_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    context = app.state.agent.sessions.get("demo_ws_explicit_cart")
+    assert cart_event["type"] == "cart_update"
+    assert cart_event["product_id"] == product_id
+    assert context.state.cart_memory.recent_product_id == product_id
+    assert context.recent_cart_product_id == product_id
     assert done_event["type"] == "done"
 
 

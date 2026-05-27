@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -78,13 +80,90 @@ class CartOperation(BaseModel):
     quantity: int = 1
 
 
+class QueryIntent(BaseModel):
+    category: str | None = None
+    sub_category: str | None = None
+    soft_preferences: dict[str, str] = Field(default_factory=dict)
+    query_terms: list[str] = Field(default_factory=list)
+
+
 class SemanticFrame(BaseModel):
     intent: str = "recommend_product"
     confidence: float = 1.0
     constraint_edits: ConstraintEdits = Field(default_factory=ConstraintEdits)
     cart_operation: CartOperation | None = None
     target: ProductReference | None = None
+    references: list[ProductReference] = Field(default_factory=list)
+    query_intent: QueryIntent = Field(default_factory=QueryIntent)
+    response_goal: str | None = None
     clarification_question: str | None = None
+
+
+ShoppingIntentIR = SemanticFrame
+
+
+class ExecutionPlan(BaseModel):
+    execution_type: str
+    retrieval_plan: RetrievalPlan | None = None
+    reference_bindings: dict[str, str | None] = Field(default_factory=dict)
+    stream_policy: str = "cards_before_explanation"
+    clarification_question: str | None = None
+
+
+class UserProfile(BaseModel):
+    stable_preferences: dict[str, object] = Field(default_factory=dict)
+    negative_preferences: list[str] = Field(default_factory=list)
+
+
+class DialogState(BaseModel):
+    last_intent: str | None = None
+    last_user_message: str | None = None
+    turn_index: int = 0
+
+
+class ActiveFocusState(BaseModel):
+    type: str | None = None
+    product_id: str | None = None
+    source: str | None = None
+
+
+class RecommendationMemoryItem(BaseModel):
+    index: int
+    product_id: str
+    role: str = "alternative"
+    score: float | None = None
+
+
+class RecommendationMemory(BaseModel):
+    last_set_id: str | None = None
+    items: list[RecommendationMemoryItem] = Field(default_factory=list)
+
+
+class ConstraintState(BaseModel):
+    hard: HardConstraints = Field(default_factory=HardConstraints)
+    soft: dict[str, str] = Field(default_factory=dict)
+    source_turns: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class CartMemory(BaseModel):
+    recent_product_id: str | None = None
+
+
+class TraceState(BaseModel):
+    last_ir: dict[str, Any] | None = None
+    last_execution_plan: dict[str, Any] | None = None
+    decision_log: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SessionState(BaseModel):
+    session_id: str = ""
+    user_profile: UserProfile = Field(default_factory=UserProfile)
+    dialog_state: DialogState = Field(default_factory=DialogState)
+    active_focus: ActiveFocusState = Field(default_factory=ActiveFocusState)
+    recommendation_memory: RecommendationMemory = Field(default_factory=RecommendationMemory)
+    constraint_state: ConstraintState = Field(default_factory=ConstraintState)
+    cart_memory: CartMemory = Field(default_factory=CartMemory)
+    trace: TraceState = Field(default_factory=TraceState)
 
 
 class RankedProduct(BaseModel):
@@ -129,6 +208,7 @@ class ProductCard(BaseModel):
 
 class SessionContext(BaseModel):
     session_id: str
+    state: SessionState = Field(default_factory=SessionState)
     last_plan: RetrievalPlan | None = None
     last_product_ids: list[str] = Field(default_factory=list)
     focus_product_id: str | None = None
@@ -138,3 +218,7 @@ class SessionContext(BaseModel):
     last_recommendations: list[dict[str, object]] = Field(default_factory=list)
     negative_feedback: list[str] = Field(default_factory=list)
     recent_cart_product_id: str | None = None
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.state.session_id:
+            self.state.session_id = self.session_id

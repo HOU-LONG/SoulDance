@@ -6,12 +6,25 @@ import uuid
 
 from .cart import CartService
 from .embedding_retriever import BM25OnlyRetriever
+from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
-from .models import ChatRequest, HardConstraints, Product, ProductCard, RankedProduct, RetrievalPlan, SessionContext
+from .models import (
+    ChatRequest,
+    HardConstraints,
+    Product,
+    ProductCard,
+    RankedProduct,
+    RecommendationMemoryItem,
+    RetrievalPlan,
+    SessionContext,
+)
 from .planner_agent import PlannerAgent
+from .query_builder import QueryBuilder
 from .ranker import rank_products
-from .semantic_layer import SemanticParser, apply_constraint_edits, resolve_cart_operation, rule_semantic_frame
+from .reference_resolver import ReferenceResolver
+from .semantic_layer import SemanticParser, rule_semantic_frame
 from .session_store import SessionStore
+from .state_reducer import StateReducer, seed_constraint_state_from_plan
 from .tts_adapter import TTSAdapter
 
 
@@ -31,11 +44,21 @@ class ShopGuideAgent:
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent(self.llm_client)
         self.semantic_parser = SemanticParser(self.llm_client)
+        self.intent_compiler = IntentCompiler(self.llm_client, self.semantic_parser)
+        self.state_reducer = StateReducer()
+        self.query_builder = QueryBuilder()
+        self.reference_resolver = ReferenceResolver(self.product_map)
         self.tts = tts_adapter or TTSAdapter()
 
     async def plan(self, request: ChatRequest) -> RetrievalPlan:
         context = self.sessions.get(request.session_id)
-        return await self.planner.create_plan(request, context)
+        seed_constraint_state_from_plan(context, context.last_plan)
+        ir = await self.intent_compiler.compile(request, context)
+        self.state_reducer.apply(context, ir, request.message)
+        plan = self.query_builder.build(ir, context, request.message)
+        context.last_plan = plan
+        context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
+        return plan
 
     def retrieve_and_rank(self, plan: RetrievalPlan) -> list[RankedProduct]:
         retrieved = self.retriever.search(plan.retrieval_query, top_k=30)
@@ -53,12 +76,23 @@ class ShopGuideAgent:
     async def handle_message(self, request: ChatRequest) -> list[dict]:
         return [event async for event in self.stream_message(request)]
 
-    async def stream_message(self, request: ChatRequest) -> AsyncIterator[dict]:
+    async def compile_intent(self, request: ChatRequest):
+        context = self.sessions.get(request.session_id)
+        seed_constraint_state_from_plan(context, context.last_plan)
+        return await self.intent_compiler.compile(request, context)
+
+    async def stream_message(self, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
+        context = self.sessions.get(request.session_id)
+        seed_constraint_state_from_plan(context, context.last_plan)
+        ir = compiled_ir or await self.intent_compiler.compile(request, context)
         if request.type == "product_followup":
-            async for event in self._stream_followup(request):
+            async for event in self._stream_followup(request, ir):
                 yield event
             return
-        plan = await self.plan(request)
+        self.state_reducer.apply(context, ir, request.message)
+        plan = self.query_builder.build(ir, context, request.message)
+        context.last_plan = plan
+        context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         if plan.need_clarification or plan.intent == "clarification":
             for event in self._build_clarification_events(plan):
                 yield event
@@ -80,22 +114,30 @@ class ShopGuideAgent:
     async def _handle_followup(self, request: ChatRequest) -> list[dict]:
         return [event async for event in self._stream_followup(request)]
 
-    async def _stream_followup(self, request: ChatRequest) -> AsyncIterator[dict]:
+    async def _stream_followup(self, request: ChatRequest, ir=None) -> AsyncIterator[dict]:
         context = self.sessions.get(request.session_id)
         if request.focus_product_id:
             context.focus_product_id = request.focus_product_id
+            context.state.active_focus.type = "product"
+            context.state.active_focus.product_id = request.focus_product_id
+            context.state.active_focus.source = "product_card"
         context.focus_history.append(request.message)
-        plan = await self.plan(request)
-        frame = await self.semantic_parser.parse(request, context)
-        if frame.intent == "product_followup":
-            plan = apply_constraint_edits(plan, frame.constraint_edits, request.message)
-            plan.intent = "product_followup"
-            plan.retrieval_mode = "product_focus_retrieval"
+        if ir is None:
+            seed_constraint_state_from_plan(context, context.last_plan)
+            ir = await self.intent_compiler.compile(request, context)
+        self.state_reducer.apply(context, ir, request.message)
+        plan = self.query_builder.build(ir, context, request.message)
+        plan.intent = "product_followup"
+        plan.retrieval_mode = "product_focus_retrieval"
         focus_product = self.product_map.get(request.focus_product_id or context.focus_product_id or "")
         if focus_product and _wants_different_brand(request.message):
             plan.hard_constraints.exclude_brands = _dedupe(plan.hard_constraints.exclude_brands + [focus_product.brand])
+            context.state.constraint_state.hard.exclude_brands = list(plan.hard_constraints.exclude_brands)
             context.negative_feedback.append(f"不要品牌:{focus_product.brand}")
+            context.state.user_profile.negative_preferences.append(f"不要品牌:{focus_product.brand}")
         ranked = self.retrieve_and_rank(plan)
+        context.last_plan = plan
+        context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         self._remember_recommendations(context, plan, ranked)
         message_id = _message_id()
         intro = _followup_intro(plan)
@@ -340,6 +382,18 @@ class ShopGuideAgent:
             {"product_id": item.product.product_id, "role": "primary" if index == 0 else "alternative", "index": index}
             for index, item in enumerate(ranked)
         ]
+        context.state.recommendation_memory.last_set_id = "recset_" + uuid.uuid4().hex[:8]
+        context.state.recommendation_memory.items = [
+            RecommendationMemoryItem(
+                index=index,
+                product_id=item.product.product_id,
+                role="primary" if index == 0 else "alternative",
+                score=item.score,
+            )
+            for index, item in enumerate(ranked)
+        ]
+        context.state.constraint_state.hard = plan.hard_constraints.model_copy(deep=True)
+        context.state.constraint_state.soft = dict(plan.soft_preferences)
         if ranked:
             context.focus_product_id = ranked[0].product.product_id
             context.active_focus = {
@@ -347,22 +401,37 @@ class ShopGuideAgent:
                 "product_id": ranked[0].product.product_id,
                 "origin_constraints": plan.hard_constraints.model_dump(mode="json"),
             }
+            context.state.active_focus.type = "product"
+            context.state.active_focus.product_id = ranked[0].product.product_id
+            context.state.active_focus.source = "recommendation"
         _update_profile(context, plan)
 
-    async def try_handle_cart_message(self, request: ChatRequest, cart: CartService) -> dict | None:
+    async def try_handle_cart_message(self, request: ChatRequest, cart: CartService, compiled_ir=None) -> dict | None:
         context = self.sessions.get(request.session_id)
-        frame = await self.semantic_parser.parse(request, context)
+        frame = compiled_ir or await self.intent_compiler.compile(request, context)
         if frame.intent != "cart_operation" or frame.cart_operation is None:
             frame = rule_semantic_frame(request)
         if frame.intent != "cart_operation" or frame.cart_operation is None:
             return None
-        action, quantity, product_id = resolve_cart_operation(
-            frame.cart_operation,
+        action = _normalize_cart_action(frame.cart_operation.action)
+        quantity = max(frame.cart_operation.quantity, 0)
+        resolution = self.reference_resolver.resolve(
+            frame.cart_operation.target,
             context,
-            self.product_map,
             cart.get(request.session_id),
         )
+        product_id = resolution.product_id
         return self._execute_cart_action(request.session_id, action, product_id, quantity, cart)
+
+    def execute_cart_action(
+        self,
+        session_id: str,
+        action: str,
+        product_id: str | None,
+        quantity: int,
+        cart: CartService,
+    ) -> dict:
+        return self._execute_cart_action(session_id, action, product_id, quantity, cart)
 
     def _execute_cart_action(
         self,
@@ -387,6 +456,7 @@ class ShopGuideAgent:
             action = "add_to_cart"
             snapshot = cart.add(session_id, product_id, quantity)
         context.recent_cart_product_id = product_id
+        context.state.cart_memory.recent_product_id = product_id
         return {"action": action, "product_id": product_id, "cart": snapshot, "message": _cart_message(action, product_id)}
 
 
@@ -577,6 +647,18 @@ def _detect_cart_action(text: str) -> str:
         return "update_quantity"
     if any(word in text for word in ["购物车", "加购", "加入", "加到"]):
         return "add_to_cart"
+    return "get_cart"
+
+
+def _normalize_cart_action(action: str) -> str:
+    if action in {"add", "add_to_cart"}:
+        return "add_to_cart"
+    if action in {"update", "set_quantity", "update_quantity"}:
+        return "update_quantity"
+    if action in {"delete", "remove"}:
+        return "remove"
+    if action in {"checkout", "order"}:
+        return "checkout"
     return "get_cart"
 
 

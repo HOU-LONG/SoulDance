@@ -69,23 +69,32 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
                 payload = await websocket.receive_json()
                 request = ChatRequest.model_validate(payload)
                 if request.type == "cart_action":
-                    event = _handle_cart_action(cart, request)
-                    await websocket.send_json({"type": "cart_update", "action": request.action or "add_to_cart", "cart": event})
+                    event = agent.execute_cart_action(
+                        request.session_id,
+                        request.action or "add_to_cart",
+                        request.product_id,
+                        request.quantity,
+                        cart,
+                    )
+                    await websocket.send_json({"type": "cart_update", **event})
                     await websocket.send_json({"type": "done"})
                     continue
                 cart_event = None
+                compiled_ir = None
                 if request.type != "product_followup":
-                    cart_event = await agent.try_handle_cart_message(request, cart)
+                    compiled_ir = await agent.compile_intent(request)
+                    cart_event = await agent.try_handle_cart_message(request, cart, compiled_ir)
                 if cart_event is not None:
                     await websocket.send_json({"type": "cart_update", **cart_event})
                     await websocket.send_json({"type": "done"})
                     continue
-                async for event in agent.stream_message(request):
+                async for event in agent.stream_message(request, compiled_ir):
                     await websocket.send_json(event)
         except WebSocketDisconnect:
             return
         except Exception as exc:
             await websocket.send_json({"type": "error", "message": str(exc)})
+            await websocket.send_json({"type": "done"})
 
     @app.get("/api/cart")
     def get_cart(session_id: str):

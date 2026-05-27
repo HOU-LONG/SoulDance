@@ -34,6 +34,16 @@ class SemanticFrameLLM(FakeLLMClient):
         return json.dumps(self.frames.pop(0), ensure_ascii=False)
 
 
+class NoPlannerSemanticLLM(SemanticFrameLLM):
+    def __init__(self, *frames):
+        super().__init__(*frames)
+        self.plan_calls = 0
+
+    async def plan(self, message, context=None):
+        self.plan_calls += 1
+        raise AssertionError("main agent flow must not call llm.plan()")
+
+
 def test_load_products_reads_dataset():
     products = load_products("ecommerce_agent_dataset")
 
@@ -179,6 +189,140 @@ def test_followup_uses_semantic_constraint_edits_to_remove_old_constraints():
     assert updated_plan.hard_constraints.price_max == 100
     assert "酒精" not in updated_plan.hard_constraints.exclude_terms
     assert updated_plan.hard_constraints.sub_category == "洁面"
+
+
+def test_recommendation_uses_single_intent_compiler_without_llm_plan():
+    products = load_products("ecommerce_agent_dataset")
+    llm = NoPlannerSemanticLLM(
+        {
+            "intent": "recommend_product",
+            "constraint_edits": {
+                "add": {
+                    "category": "美妆护肤",
+                    "sub_category": "防晒",
+                    "exclude_terms": ["酒精"],
+                    "exclude_brand_regions": ["日本"],
+                    "soft_preferences": {"texture": "清爽"},
+                }
+            },
+            "query_intent": {
+                "category": "美妆护肤",
+                "sub_category": "防晒",
+                "query_terms": ["防晒", "清爽"],
+                "soft_preferences": {"texture": "清爽"},
+            },
+        }
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_single_parse",
+                message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
+            )
+        )
+    )
+
+    assert llm.plan_calls == 0
+    assert any(event["type"] == "product_item" for event in events)
+    context = agent.sessions.get("demo_single_parse")
+    assert context.state.constraint_state.hard.sub_category == "防晒"
+    assert "酒精" in context.state.constraint_state.hard.exclude_terms
+    assert context.state.recommendation_memory.items[0].index == 0
+
+
+def test_session_state_is_authoritative_for_followup_constraint_edits():
+    products = load_products("ecommerce_agent_dataset")
+    llm = NoPlannerSemanticLLM(
+        {
+            "intent": "recommend_product",
+            "constraint_edits": {
+                "add": {
+                    "category": "美妆护肤",
+                    "sub_category": "洁面",
+                    "exclude_terms": ["酒精"],
+                    "soft_preferences": {"skin_type": "油皮"},
+                }
+            },
+            "query_intent": {
+                "category": "美妆护肤",
+                "sub_category": "洁面",
+                "query_terms": ["洗面奶", "油皮"],
+                "soft_preferences": {"skin_type": "油皮"},
+            },
+        },
+        {
+            "intent": "product_followup",
+            "constraint_edits": {
+                "add": {"price_max": 100},
+                "remove": {"exclude_terms": ["酒精"]},
+            },
+        },
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_state_followup",
+                message="推荐一款适合油皮的洗面奶，不要含酒精",
+            )
+        )
+    )
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="product_followup",
+                session_id="demo_state_followup",
+                message="酒精可以接受，但要100以内",
+            )
+        )
+    )
+
+    context = agent.sessions.get("demo_state_followup")
+    hard = context.state.constraint_state.hard
+    assert hard.sub_category == "洁面"
+    assert hard.price_max == 100
+    assert "酒精" not in hard.exclude_terms
+    assert context.last_plan.hard_constraints == hard
+
+
+def test_cart_reference_resolver_ignores_hallucinated_product_id():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM(
+        {
+            "intent": "cart_operation",
+            "cart_operation": {
+                "action": "add_to_cart",
+                "quantity": 1,
+                "target": {
+                    "reference": "last_recommendations",
+                    "selection_strategy": "primary",
+                    "product_id": "p_hallucinated_by_llm",
+                },
+            },
+        }
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+    cart = CartService(products)
+
+    result = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_hallucinated_cart",
+                message="把刚才那款加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert result["action"] == "get_cart"
+    assert result["product_id"] is None
+    assert result["cart"]["items"] == []
 
 
 def test_recommendation_streams_understanding_before_products_and_quick_actions():

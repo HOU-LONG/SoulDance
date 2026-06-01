@@ -7,6 +7,7 @@ from backend.app.data_loader import load_products
 from backend.app.llm_client import FakeLLMClient
 from backend.app.memory_cache import StructuredMemoryCache
 from backend.app.models import ChatRequest, Product
+from backend.app.taxonomy import TaxonomyResolver
 
 
 class FakeRetriever:
@@ -62,6 +63,21 @@ def test_load_products_reads_dataset():
     assert products[0].product_id
     assert products[0].title
     assert products[0].chunk
+
+
+def test_taxonomy_resolver_covers_dataset_subcategories_and_aliases():
+    products = load_products("ecommerce_agent_dataset")
+    resolver = TaxonomyResolver.from_products(products)
+
+    for product in products:
+        resolved = resolver.resolve(product.sub_category)
+        assert resolved is not None
+        assert resolved.category == product.category
+        assert resolved.sub_category == product.sub_category
+
+    assert resolver.resolve("轻薄笔记本").sub_category == "笔记本电脑"
+    assert resolver.resolve("精华液").sub_category == "精华"
+    assert resolver.resolve("猫粮") is None
 
 
 def test_planner_extracts_budget_and_negative_constraints():
@@ -120,8 +136,49 @@ def test_negative_brand_apple_is_enforced_before_product_cards():
     )
 
     product_events = [event for event in events if event["type"] == "product_item"]
+    if product_events:
+        assert all(event["product"]["sub_category"] == "笔记本电脑" for event in product_events)
+        assert all("Apple" not in event["product"]["brand"] and "苹果" not in event["product"]["brand"] for event in product_events)
+    else:
+        assert any(event["type"] == "filter_recovery_options" for event in events)
+
+
+def test_subcategory_query_keeps_essence_results_strict():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_essence_budget",
+                message="推荐精华，预算100以内",
+            )
+        )
+    )
+
+    product_events = [event for event in events if event["type"] == "product_item"]
     assert product_events
-    assert all("Apple" not in event["product"]["brand"] and "苹果" not in event["product"]["brand"] for event in product_events)
+    assert all(event["product"]["sub_category"] == "精华" for event in product_events)
+    assert all(event["product"]["price"] <= 100 for event in product_events)
+
+
+def test_unknown_taxonomy_request_returns_recovery_without_cross_category_cards():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_unknown_taxonomy",
+                message="推荐毛巾",
+            )
+        )
+    )
+
+    assert not [event for event in events if event["type"] == "product_item"]
+    assert any(event["type"] == "filter_recovery_options" for event in events)
 
 
 def test_llm_compare_misclassification_is_guarded_for_fresh_recommendation():

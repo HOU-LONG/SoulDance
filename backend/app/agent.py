@@ -26,6 +26,7 @@ from .reference_resolver import ReferenceResolver
 from .semantic_layer import SemanticParser, rule_semantic_frame
 from .session_store import SessionStore
 from .state_reducer import StateReducer, seed_constraint_state_from_plan
+from .taxonomy import TaxonomyResolver
 from .tts_adapter import TTSAdapter
 
 
@@ -52,6 +53,7 @@ class ShopGuideAgent:
         self.reference_resolver = ReferenceResolver(self.product_map)
         self.tts = tts_adapter or TTSAdapter()
         self.memory_cache = memory_cache
+        self.taxonomy = TaxonomyResolver.from_products(products)
 
     async def plan(self, request: ChatRequest) -> RetrievalPlan:
         context = self.sessions.get(request.session_id)
@@ -59,6 +61,8 @@ class ShopGuideAgent:
         ir = await self.intent_compiler.compile(request, context)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
+        self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
+        plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         return plan
@@ -100,6 +104,8 @@ class ShopGuideAgent:
             return
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
+        self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
+        plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         if plan.need_clarification or plan.intent == "clarification":
@@ -113,6 +119,15 @@ class ShopGuideAgent:
         if plan.intent == "scenario_bundle":
             for event in self._build_bundle_events(request, plan):
                 yield event
+            return
+        if _looks_like_product_request(request.message) and not self.taxonomy.is_known_request(request.message):
+            message_id = _message_id()
+            text = _unknown_category_text(request.message)
+            yield _assistant_state(message_id, "clarifying", "当前商品库没有匹配类目")
+            for event in _text_delta_events(message_id, text):
+                yield event
+            yield _filter_recovery_event(message_id, plan)
+            yield {"type": "done", "message_id": message_id}
             return
         ranked = self.retrieve_and_rank(plan)
         context = self.sessions.get(request.session_id)
@@ -136,6 +151,8 @@ class ShopGuideAgent:
             ir = await self.intent_compiler.compile(request, context)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
+        self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
+        plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
         plan.intent = "product_followup"
         plan.retrieval_mode = "product_focus_retrieval"
         focus_product = self.product_map.get(request.focus_product_id or context.focus_product_id or "")
@@ -641,6 +658,14 @@ def _slot_constraints(slot: str) -> HardConstraints:
 
 def _default_plan(text: str) -> RetrievalPlan:
     return RetrievalPlan(hard_constraints=HardConstraints(), retrieval_query=text or "商品推荐")
+
+
+def _looks_like_product_request(text: str) -> bool:
+    return any(word in text for word in ["推荐", "找", "买", "想要", "有没有"])
+
+
+def _unknown_category_text(text: str) -> str:
+    return "当前商品库里还没有能稳定匹配这个需求的类目。为了不跨类目乱推荐，我先不返回商品卡。你可以换成现有商品类目再试。"
 
 
 def _wants_different_brand(text: str) -> bool:

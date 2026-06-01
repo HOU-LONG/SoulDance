@@ -7,7 +7,7 @@ MODEL="$ROOT/model/qwen3_tts"
 DEPLOY_CONFIG="$ROOT/qwen3_tts_local.yaml"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-18880}"
-GPU="${GPU:-2}"
+GPU="${GPU:-0}"
 
 mkdir -p "$ROOT/logs" "$ROOT/.cache"
 

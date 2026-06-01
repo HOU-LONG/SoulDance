@@ -79,6 +79,8 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
             edits.add.exclude_terms.append("酒精")
         if "日系" in text or "日本" in text:
             edits.add.exclude_brand_regions.append("日本")
+        if "苹果" in text or "Apple" in text or "apple" in text:
+            edits.add.exclude_brands.append("苹果")
     if request.type == "product_followup":
         intent = "product_followup"
     return SemanticFrame(intent=intent, constraint_edits=edits)
@@ -114,6 +116,9 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     frame.constraint_edits.add.exclude_brand_regions = _dedupe(
         frame.constraint_edits.add.exclude_brand_regions + guarded.constraint_edits.add.exclude_brand_regions
     )
+    frame.constraint_edits.add.exclude_brands = _dedupe(
+        frame.constraint_edits.add.exclude_brands + guarded.constraint_edits.add.exclude_brands
+    )
     if guarded.constraint_edits.add.price_max is not None:
         frame.constraint_edits.add.price_max = guarded.constraint_edits.add.price_max
     frame.constraint_edits.remove.exclude_terms = _dedupe(
@@ -121,6 +126,9 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     )
     frame.constraint_edits.remove.exclude_brand_regions = _dedupe(
         frame.constraint_edits.remove.exclude_brand_regions + guarded.constraint_edits.remove.exclude_brand_regions
+    )
+    frame.constraint_edits.remove.exclude_brands = _dedupe(
+        frame.constraint_edits.remove.exclude_brands + guarded.constraint_edits.remove.exclude_brands
     )
     return frame
 

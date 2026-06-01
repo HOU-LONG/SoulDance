@@ -5,12 +5,23 @@ from backend.app.agent import ShopGuideAgent
 from backend.app.cart import CartService
 from backend.app.data_loader import load_products
 from backend.app.llm_client import FakeLLMClient
-from backend.app.models import ChatRequest
+from backend.app.memory_cache import StructuredMemoryCache
+from backend.app.models import ChatRequest, Product
 
 
 class FakeRetriever:
     def search(self, query, top_k=20):
         return []
+
+
+class CountingRetriever:
+    def __init__(self, products):
+        self.products = products
+        self.calls = 0
+
+    def search(self, query, top_k=20):
+        self.calls += 1
+        return [(product, 1.0 / (index + 1)) for index, product in enumerate(self.products[:top_k])]
 
 
 class BlockingResponseLLM(FakeLLMClient):
@@ -92,6 +103,87 @@ def test_hard_constraints_filter_forbidden_products():
     assert candidates
     for ranked in candidates:
         assert "日本" not in ranked.product.brand_region
+
+
+def test_negative_brand_apple_is_enforced_before_product_cards():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_no_apple",
+                message="我想给大学生买一台轻薄笔记本，预算6000以内，不要苹果",
+            )
+        )
+    )
+
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    assert all("Apple" not in event["product"]["brand"] and "苹果" not in event["product"]["brand"] for event in product_events)
+
+
+def test_llm_compare_misclassification_is_guarded_for_fresh_recommendation():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM({"intent": "compare_products"})
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_cat_food",
+                message="想找一款猫粮，家里猫肠胃比较敏感，预算300左右，优先看口碑好的",
+            )
+        )
+    )
+
+    assert "comparison_result" not in [event["type"] for event in events]
+    merged_text = "".join(event["text"] for event in events if event["type"] == "text_delta")
+    assert "还没有足够的最近推荐商品可以对比" not in merged_text
+
+
+def test_structured_memory_cache_reuses_ranked_results_for_same_plan():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    cache = StructuredMemoryCache()
+    agent = ShopGuideAgent(products, FakeLLMClient(), retriever, memory_cache=cache)
+    request = ChatRequest(type="user_message", session_id="demo_cache", message="推荐防晒霜")
+
+    first_events = asyncio.run(agent.handle_message(request))
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_cache_2", message="推荐防晒霜")
+        )
+    )
+
+    first_products = [event["product"]["product_id"] for event in first_events if event["type"] == "product_item"]
+    second_products = [event["product"]["product_id"] for event in second_events if event["type"] == "product_item"]
+    assert first_products == second_products
+    assert retriever.calls == 1
+    assert cache.stats()["hits"] == 1
+
+
+def test_structured_memory_cache_does_not_cross_hard_constraints():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    cache = StructuredMemoryCache()
+    agent = ShopGuideAgent(products, FakeLLMClient(), retriever, memory_cache=cache)
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_cache_100", message="推荐精华，预算100以内")
+        )
+    )
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_cache_800", message="推荐精华，预算800以内")
+        )
+    )
+
+    assert retriever.calls == 2
+    assert cache.stats()["misses"] == 2
 
 
 def test_product_followup_inherits_original_constraints():
@@ -555,3 +647,39 @@ def test_cart_service_add_update_checkout():
     checkout = cart.checkout("demo")
     assert checkout["status"] == "ok"
     assert cart.get("demo")["items"] == []
+
+
+def test_noise_review_is_filtered_from_product_evidence():
+    from backend.app.knowledge_base import product_evidence
+
+    product = Product(
+        product_id="p_towel_noise",
+        title="柔软吸水毛巾",
+        brand="测试品牌",
+        category="食品饮料",
+        sub_category="毛巾",
+        price=39.0,
+        image_path="",
+        marketing_description="柔软吸水，适合浴后擦拭。",
+        reviews=[
+            {"rating": 5, "content": "老公和女儿吃了都觉得很好吃，入口香甜。"},
+            {"rating": 5, "content": "毛巾柔软厚实，洗完澡擦身体很舒服。"},
+        ],
+        search_text="柔软吸水毛巾 毛巾柔软厚实 洗完澡擦身体很舒服",
+    )
+
+    evidence = product_evidence(product, ["柔软", "吸水"])
+
+    assert any("毛巾柔软" in item for item in evidence)
+    assert all("好吃" not in item and "入口" not in item for item in evidence)
+
+
+def test_sensitive_skin_conflict_review_is_kept_as_risk_evidence():
+    from backend.app.knowledge_base import product_evidence
+
+    products = load_products("ecommerce_agent_dataset")
+    product = next(product for product in products if product.product_id == "p_beauty_001")
+
+    evidence = product_evidence(product, ["敏感肌"])
+
+    assert any("泛红" in item or "刺痛" in item or "不适" in item for item in evidence)

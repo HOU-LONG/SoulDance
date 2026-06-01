@@ -8,6 +8,7 @@ from .cart import CartService
 from .embedding_retriever import BM25OnlyRetriever
 from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
+from .memory_cache import StructuredMemoryCache
 from .models import (
     ChatRequest,
     HardConstraints,
@@ -36,6 +37,7 @@ class ShopGuideAgent:
         retriever=None,
         session_store: SessionStore | None = None,
         tts_adapter: TTSAdapter | None = None,
+        memory_cache: StructuredMemoryCache | None = None,
     ):
         self.products = products
         self.product_map = {product.product_id: product for product in products}
@@ -49,6 +51,7 @@ class ShopGuideAgent:
         self.query_builder = QueryBuilder()
         self.reference_resolver = ReferenceResolver(self.product_map)
         self.tts = tts_adapter or TTSAdapter()
+        self.memory_cache = memory_cache
 
     async def plan(self, request: ChatRequest) -> RetrievalPlan:
         context = self.sessions.get(request.session_id)
@@ -61,6 +64,10 @@ class ShopGuideAgent:
         return plan
 
     def retrieve_and_rank(self, plan: RetrievalPlan) -> list[RankedProduct]:
+        if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
+            cached = self.memory_cache.get(plan, self.product_map)
+            if cached is not None:
+                return cached
         retrieved = self.retriever.search(plan.retrieval_query, top_k=30)
         if retrieved:
             candidates = [product for product, _ in retrieved]
@@ -71,6 +78,8 @@ class ShopGuideAgent:
         ranked = rank_products(candidates, plan, scores, limit=3)
         if not ranked and candidates != self.products:
             ranked = rank_products(self.products, plan, {}, limit=3)
+        if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
+            self.memory_cache.put(plan, ranked)
         return ranked
 
     async def handle_message(self, request: ChatRequest) -> list[dict]:

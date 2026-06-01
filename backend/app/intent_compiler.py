@@ -27,6 +27,8 @@ def _normalize_intent(frame: ShoppingIntentIR, request: ChatRequest) -> Shopping
         intent = "product_followup"
     elif intent == "product_followup" and rule_intent == "recommend_product":
         intent = "recommend_product"
+    elif intent == "compare_products" and rule_intent == "recommend_product":
+        intent = "recommend_product"
     elif intent == "recommend_product" and rule_intent in {
         "compare_products",
         "scenario_bundle",

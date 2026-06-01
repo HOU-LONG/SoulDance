@@ -10,6 +10,7 @@ from .config import Settings, get_settings
 from .data_loader import load_products
 from .embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
 from .llm_client import DoubaoLLMClient, FakeLLMClient
+from .memory_cache import StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest
 
 
@@ -27,7 +28,8 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
             use_embedding=settings.use_embedding,
         )
     )
-    agent = ShopGuideAgent(products, llm_client, retriever)
+    memory_cache = StructuredMemoryCache(settings.memory_cache_path or None)
+    agent = ShopGuideAgent(products, llm_client, retriever, memory_cache=memory_cache)
     cart = CartService(products)
     product_map = {product.product_id: product for product in products}
 
@@ -43,6 +45,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
             "product_count": len(products),
             "llm": "fake" if isinstance(llm_client, FakeLLMClient) else "doubao",
             "retriever": _retriever_label(retriever),
+            "memory_cache": memory_cache.stats(),
         }
 
     @app.get("/api/products")

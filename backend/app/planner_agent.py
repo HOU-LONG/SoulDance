@@ -78,6 +78,8 @@ class PlannerAgent:
                 constraints.exclude_terms = _dedupe(constraints.exclude_terms + ["酒精"])
             if "日系" in text or "日本" in text:
                 constraints.exclude_brand_regions = _dedupe(constraints.exclude_brand_regions + ["日本"])
+            if "苹果" in text or "Apple" in text or "apple" in text:
+                constraints.exclude_brands = _dedupe(constraints.exclude_brands + ["苹果"])
         if "油皮" in text or "混油" in text:
             soft["skin_type"] = "油皮"
         if "敏感肌" in text:
@@ -199,7 +201,7 @@ def _detect_intent(text: str, request: ChatRequest) -> str:
         return "product_followup"
     if re.search(r"购物车|加购|加入|下单|结算|删掉|删除|移除|数量|改成", text):
         return "cart_action"
-    if re.search(r"对比|比较|哪个更|哪款更|第一款|第二款|第三款", text):
+    if re.search(r"对比|比较一下|比较下|哪个更|哪款更|第一款|第二款|第三款", text):
         return "compare_products"
     if ("三亚" in text or "海边" in text or "度假" in text) and re.search(r"搭配|一套|方案|从.+到", text):
         return "scenario_bundle"

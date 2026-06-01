@@ -15,6 +15,7 @@ class Settings(BaseModel):
     embedding_device: str = "cuda:0"
     use_embedding: bool = True
     request_timeout_seconds: float = 45.0
+    memory_cache_path: str = ""
 
     @property
     def dataset_path(self) -> Path:
@@ -43,4 +44,5 @@ def get_settings() -> Settings:
         embedding_device=os.getenv("EMBEDDING_DEVICE", "cuda:0"),
         use_embedding=os.getenv("USE_EMBEDDING", "1") not in {"0", "false", "False"},
         request_timeout_seconds=float(os.getenv("ARK_TIMEOUT_SECONDS", "45")),
+        memory_cache_path=os.getenv("SHOPGUIDE_MEMORY_CACHE_PATH", ""),
     )

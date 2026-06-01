@@ -21,9 +21,10 @@ codex/rag-memory-reranker
 Expected latest commits:
 
 ```text
+c7e0355 fix: enforce dataset taxonomy constraints
+c058416 docs: add backend feature verification report
 a0f7a73 docs: document rag memory reranker implementation
 8093630 feat: add rag memory cache and evidence reranker
-d560a65 chore: save qwen start gpu default
 ```
 
 Backend environment:
@@ -57,6 +58,7 @@ export SHOPGUIDE_MEMORY_CACHE_PATH="cache/shopguide_memory.jsonl"
 | Area | Implemented capability | Verification status |
 |---|---|---|
 | Product data | Loads 100 products from `ecommerce_agent_dataset` | To verify |
+| Taxonomy resolver | Reads real `category/sub_category` values from dataset and validates aliases against that taxonomy | To verify |
 | RAG retrieval | BM25 plus optional embedding retrieval | To verify |
 | Hard filters | Budget, category, sub-category, excluded terms, excluded brand region, excluded brand | To verify |
 | LLM semantic layer | LLM parses intent; backend rule guards preserve hard constraints | To verify |
@@ -83,7 +85,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-33 passed, 1 warning
+36 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -91,7 +93,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 33 tests pass.
+- [ ] All 36 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -216,6 +218,7 @@ Send:
 Acceptance:
 
 - [ ] Product cards, if any, have `price <= 100`.
+- [ ] Product cards, if any, have `sub_category=精华`.
 - [ ] If no product matches, backend returns `filter_recovery_options`.
 
 ### 7.2 Excluded Brand
@@ -233,6 +236,7 @@ Send:
 Acceptance:
 
 - [ ] No `product_item.product.brand` contains `Apple` or `苹果`.
+- [ ] Product cards, if any, have `sub_category=笔记本电脑`.
 - [ ] Text response must not say one thing while card violates it.
 
 ### 7.3 Excluded Ingredient / Region
@@ -251,6 +255,24 @@ Acceptance:
 
 - [ ] No Japanese-brand product is returned.
 - [ ] Product evidence should not contradict the no-alcohol requirement.
+
+### 7.4 Unknown Taxonomy Request
+
+Send:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_unknown_taxonomy_001",
+  "message": "推荐毛巾"
+}
+```
+
+Acceptance:
+
+- [ ] Backend does not return unrelated food, beauty, apparel, or digital product cards to fill the result.
+- [ ] Response includes no-match recovery guidance or clarification-style text.
+- [ ] No product card is emitted unless the dataset actually contains a matching towel taxonomy entry.
 
 ## 8. Multi-Turn Followup Verification
 
@@ -452,6 +474,7 @@ Acceptance:
 - [ ] Response includes at least one `bundle_item`.
 - [ ] Response includes `bundle_done`.
 - [ ] Bundle item products are real catalog product IDs.
+- [ ] Treat this as a fixed demo scenario with known slots, not as proof of a generic scene planner.
 
 ## 14. Known Non-Goals for This Backend Verification
 
@@ -461,6 +484,7 @@ Do not fail backend verification for these unless the current task explicitly ex
 - Photo search / VLM is not implemented in this backend pass.
 - Qwen3-TTS service exists separately; full speech playback is not the core backend acceptance path here.
 - Production Redis/cache invalidation is not part of the first memory-cache version.
+- Generic scene planning is not implemented in this pass; the current Sanya bundle is a fixed demo-slot flow.
 
 ## 15. Issue Reporting Format
 
@@ -488,9 +512,10 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `33 passed`.
+- [ ] Full test suite returns `36 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
+- [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.
 - [ ] Multi-turn followup preserves previous constraints.
 - [ ] Comparison uses recent recommendation memory.
 - [ ] Natural-language cart operations work.

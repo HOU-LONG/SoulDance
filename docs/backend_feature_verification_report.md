@@ -21,14 +21,11 @@ codex/rag-memory-reranker
 Expected latest commits:
 
 ```text
-00791a0 feat: expose semantic intent and stream llm responses
-3700993 fix: classify halo greetings as small talk
-901a2bc fix: route small talk outside product retrieval
-8a0e14c feat: add restrained active clarification policy
-c7e0355 fix: enforce dataset taxonomy constraints
-c058416 docs: add backend feature verification report
-a0f7a73 docs: document rag memory reranker implementation
-8093630 feat: add rag memory cache and evidence reranker
+fd064b7 fix: tighten intent routing and recovery actions
+d65c7db feat: select product cards with llm decision
+c75cb96 fix: keep streamed events on their assistant message
+c3a1d0d fix: gate product cards for unclear input
+1149c0d docs: record streaming intent verification
 ```
 
 Backend environment:
@@ -70,7 +67,9 @@ export SHOPGUIDE_MEMORY_CACHE_PATH="cache/shopguide_memory.jsonl"
 | Compiler-style executor | Backend deterministically performs retrieval, filtering, ranking, cart mutation, event rendering | To verify |
 | Streaming API | WebSocket emits ordered assistant/product/cart events | To verify |
 | Active clarification | Emits one-question `clarification_request` for high-uncertainty requests such as generic phone, laptop, gift, or skincare needs | To verify |
-| Product card admission | Emits structured `product_item` cards only after LLM intent, backend admission, taxonomy/ranker/reranker allow recommendation | To verify |
+| Product card admission | Emits structured `product_item` cards only after LLM intent, backend admission, taxonomy/ranker/reranker, LLM selection, and backend final validation allow recommendation | To verify |
+| LLM product selection | Builds a candidate pool, asks LLM to select catalog IDs only, then validates selected products before streaming cards | To verify |
+| Dynamic card count | Returns 0-4 product cards based on candidate relevance and LLM selection instead of always filling 3 cards | To verify |
 | Multi-turn followup | Maintains session constraints and product focus | To verify |
 | Comparison | Compares products from recent recommendation memory | To verify |
 | Scenario bundle | Streams grouped bundle recommendation items | To verify |
@@ -91,7 +90,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-46 passed, 1 warning
+57 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -99,7 +98,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 46 tests pass.
+- [ ] All 57 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -191,6 +190,7 @@ Expected event order:
 ```text
 assistant_state
 text_delta
+assistant_state
 products_start
 product_item...
 products_done
@@ -203,6 +203,8 @@ Acceptance:
 
 - [ ] Event order matches expected order.
 - [ ] At least one `product_item` is returned.
+- [ ] Product cards appear only after an `assistant_state` with `selection_mode=llm_selection`.
+- [ ] `assistant_state` exposes `candidate_count` and `selected_count`.
 - [ ] Returned product `sub_category` is `防晒`.
 - [ ] Returned product brand region is not `日本`.
 - [ ] Evidence does not claim unsupported attributes.
@@ -334,6 +336,7 @@ Product-card admission rule:
 
 - [ ] A product card is emitted only when there is a shopping intent plus backend admission evidence, such as a shopping action, budget/constraint, or a category/sub-category validated by taxonomy.
 - [ ] If LLM incorrectly labels non-shopping text as `recommend_product`, backend admission still blocks retrieval and card emission.
+- [ ] Non-shopping replies can be LLM-generated natural text, but retrieval mode remains `no_retrieval`.
 
 Mixed greeting plus product request:
 
@@ -538,7 +541,84 @@ Acceptance:
 - [ ] Step 4 returns checkout status `ok`.
 - [ ] Cart product ID is from previous backend recommendation.
 
-## 13. Structured Memory Cache Verification
+### 12.1 Oral Cart Follow-up
+
+Step 1:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_cart_followup_001",
+  "message": "推荐一款手机，预算4000，拍照优先"
+}
+```
+
+Step 2:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_cart_followup_001",
+  "message": "就这个来两件"
+}
+```
+
+Acceptance:
+
+- [ ] Step 2 emits `cart_update`.
+- [ ] `cart_update.action` is `add_to_cart`.
+- [ ] Quantity is 2.
+- [ ] Product ID is the current primary product from the previous recommendation.
+- [ ] If the same phrase is sent in a new session with no recent recommendation, backend does not add a random product.
+
+## 13. LLM Product Selection and Dynamic Card Count Verification
+
+The recommendation pipeline is now:
+
+```text
+LLM semantic intent
+backend shopping admission
+taxonomy and hard filters
+ranker/reranker candidate pool
+LLM selection_decision
+backend final validation
+product_item events
+```
+
+Acceptance:
+
+- [ ] `assistant_state.selection_mode` is `llm_selection` for normal recommendations with candidates.
+- [ ] `candidate_count` can be larger than `selected_count`.
+- [ ] `selected_count` is between 0 and 4.
+- [ ] Low-relevance requests do not fill three unrelated cards.
+- [ ] LLM-selected IDs must be from the candidate pool; any outside ID is discarded by backend validation.
+- [ ] Hard constraints are re-checked after LLM selection.
+
+Suggested manual cases:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_dynamic_cards_001",
+  "message": "推荐数码电子产品，预算20000"
+}
+```
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_dynamic_cards_002",
+  "message": "推荐精华，预算100以内"
+}
+```
+
+Expected:
+
+- The broad digital request may return up to 4 relevant cards.
+- The narrow cheap essence request may return only 1 card if only one candidate matches.
+- Neither case should force exactly 3 cards.
+
+## 14. Structured Memory Cache Verification
 
 Start backend with optional persistent cache:
 
@@ -578,7 +658,7 @@ Acceptance:
 - [ ] Returned product IDs remain the same.
 - [ ] A different hard constraint, such as `推荐防晒霜，预算1元以内`, must not reuse the old cached product cards.
 
-## 14. Evidence Reranker Verification
+## 15. Evidence Reranker Verification
 
 Automated tests cover this directly:
 
@@ -597,7 +677,7 @@ Acceptance:
 - [ ] Towel-style product evidence does not include `好吃` / `入口` style food review.
 - [ ] Sensitive-skin negative risk review remains available when the query mentions sensitive skin.
 
-## 15. Scenario Bundle Verification
+## 16. Scenario Bundle Verification
 
 Send:
 
@@ -617,7 +697,7 @@ Acceptance:
 - [ ] Bundle item products are real catalog product IDs.
 - [ ] Treat this as a fixed demo scenario with known slots, not as proof of a generic scene planner.
 
-## 16. Known Non-Goals for This Backend Verification
+## 17. Known Non-Goals for This Backend Verification
 
 Do not fail backend verification for these unless the current task explicitly expands scope:
 
@@ -627,7 +707,7 @@ Do not fail backend verification for these unless the current task explicitly ex
 - Production Redis/cache invalidation is not part of the first memory-cache version.
 - Generic scene planning is not implemented in this pass; the current Sanya bundle is a fixed demo-slot flow.
 
-## 17. Issue Reporting Format
+## 18. Issue Reporting Format
 
 When a verifier finds a problem, report with:
 
@@ -649,19 +729,23 @@ Suggested severity:
 - `major`: wrong intent route, no cart state update, hallucinated product ID, cache crosses constraints.
 - `minor`: wording awkward, quick actions not ideal, evidence order debatable.
 
-## 18. Final Acceptance Checklist
+## 19. Final Acceptance Checklist
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `46 passed`.
+- [ ] Full test suite returns `57 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.
 - [ ] Pure greetings and thanks do not trigger product retrieval or product cards.
+- [ ] Invalid/self-statement inputs such as `我是猪` and `sdfghjhgfdg` do not trigger product retrieval or product cards.
+- [ ] Product cards are emitted after LLM product selection and backend final validation.
+- [ ] Product card count is dynamic and does not force exactly 3 cards.
 - [ ] Active clarification triggers only for high-uncertainty requests and does not block specific requests.
 - [ ] Multi-turn followup preserves previous constraints.
 - [ ] Comparison uses recent recommendation memory.
 - [ ] Natural-language cart operations work.
+- [ ] Oral cart follow-up such as `就这个来两件` works only when session context has a recent product.
 - [ ] Structured cache hits repeated equivalent requests.
 - [ ] Evidence reranker filters obvious noisy comments.
 - [ ] No API key is committed or printed in logs.

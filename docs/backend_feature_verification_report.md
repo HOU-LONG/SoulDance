@@ -21,6 +21,7 @@ codex/rag-memory-reranker
 Expected latest commits:
 
 ```text
+00791a0 feat: expose semantic intent and stream llm responses
 3700993 fix: classify halo greetings as small talk
 901a2bc fix: route small talk outside product retrieval
 8a0e14c feat: add restrained active clarification policy

@@ -51,6 +51,35 @@ class StreamingResponseLLM(FakeLLMClient):
             yield chunk
 
 
+class ProductSelectionLLM(FakeLLMClient):
+    def __init__(self, selected_ids, clarify=False):
+        self.selected_ids = list(selected_ids)
+        self.clarify = clarify
+        self.candidate_count = 0
+
+    async def select_products(self, user_message, plan, candidates):
+        self.candidate_count = len(candidates)
+        return json.dumps(
+            {
+                "should_recommend": not self.clarify,
+                "need_clarification": self.clarify,
+                "selected_product_ids": self.selected_ids,
+                "reasons": {product_id: f"LLM选择{product_id}" for product_id in self.selected_ids},
+            },
+            ensure_ascii=False,
+        )
+
+
+class HumanizedChitchatLLM(FakeLLMClient):
+    def __init__(self):
+        self.messages = []
+
+    async def stream_chitchat_response(self, user_message, intent, context=None):
+        self.messages.append((user_message, intent))
+        yield "我在，"
+        yield "你可以慢慢说想买什么。"
+
+
 class SemanticFrameLLM(FakeLLMClient):
     def __init__(self, *frames):
         self.frames = list(frames)
@@ -666,6 +695,73 @@ def test_recommendation_streams_understanding_before_products_and_quick_actions(
     assert {action["label"] for action in quick_actions["actions"]} >= {"更便宜", "不要这个品牌"}
 
 
+def test_llm_selection_controls_single_product_card_count():
+    products = load_products("ecommerce_agent_dataset")
+    probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    probe_plan = asyncio.run(
+        probe_agent.plan(
+            ChatRequest(type="user_message", session_id="demo_select_one_probe", message="推荐数码电子产品，预算20000")
+        )
+    )
+    first_id = probe_agent.retrieve_and_rank(probe_plan)[0].product.product_id
+    llm = ProductSelectionLLM([first_id])
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_select_one", message="推荐数码电子产品，预算20000")
+        )
+    )
+
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert [event["product"]["product_id"] for event in product_events] == [first_id]
+    assert product_events[0]["product"]["reason"] == f"LLM选择{first_id}"
+    assert llm.candidate_count > 3
+    selection_state = [event for event in events if event["type"] == "assistant_state"][-1]
+    assert selection_state["selection_mode"] == "llm_selection"
+    assert selection_state["candidate_count"] == llm.candidate_count
+    assert selection_state["selected_count"] == 1
+
+
+def test_llm_selection_can_emit_four_relevant_product_cards():
+    products = load_products("ecommerce_agent_dataset")
+    probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    probe_plan = asyncio.run(
+        probe_agent.plan(
+            ChatRequest(type="user_message", session_id="demo_select_four_probe", message="推荐数码电子产品，预算20000")
+        )
+    )
+    selected_ids = [item.product.product_id for item in probe_agent.retrieve_and_rank(probe_plan)[:4]]
+    llm = ProductSelectionLLM(selected_ids)
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_select_four", message="推荐数码电子产品，预算20000")
+        )
+    )
+
+    product_ids = [event["product"]["product_id"] for event in events if event["type"] == "product_item"]
+    assert product_ids == selected_ids
+
+
+def test_llm_selection_rejects_out_of_pool_and_hard_constraint_violations():
+    products = load_products("ecommerce_agent_dataset")
+    over_budget_id = next(product.product_id for product in products if product.sub_category == "精华" and product.price > 100)
+    valid_id = next(product.product_id for product in products if product.sub_category == "精华" and product.price <= 100)
+    llm = ProductSelectionLLM(["not_in_candidates", over_budget_id, valid_id])
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_select_safe", message="推荐精华，预算100以内")
+        )
+    )
+
+    product_ids = [event["product"]["product_id"] for event in events if event["type"] == "product_item"]
+    assert product_ids == [valid_id]
+
+
 def test_recommendation_explanation_uses_llm_streaming_chunks_after_products():
     products = load_products("ecommerce_agent_dataset")
     llm = StreamingResponseLLM()
@@ -725,6 +821,26 @@ def test_recommendation_stream_emits_products_before_llm_explanation_finishes():
                 break
 
     asyncio.run(run())
+
+
+def test_small_talk_and_unclear_input_use_llm_humanized_text_without_products():
+    products = load_products("ecommerce_agent_dataset")
+    llm = HumanizedChitchatLLM()
+    agent = ShopGuideAgent(products, llm, CountingRetriever(products))
+
+    for index, message in enumerate(["你好", "我是猪"]):
+        events = asyncio.run(
+            agent.handle_message(
+                ChatRequest(type="user_message", session_id=f"demo_human_chitchat_{index}", message=message)
+            )
+        )
+        event_types = [event["type"] for event in events]
+        assert "product_item" not in event_types
+        assert "clarification_request" not in event_types
+        merged_text = "".join(event["text"] for event in events if event["type"] == "text_delta")
+        assert merged_text == "我在，你可以慢慢说想买什么。"
+
+    assert llm.messages == [("你好", "small_talk"), ("我是猪", "unclear_input")]
 
 
 def test_ambiguous_phone_request_asks_clarification_without_products():

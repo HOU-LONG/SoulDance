@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node -e \"const fs=require('fs'); const html=fs.readFileSync('index.html','utf8'); for (const text of ['clarification_request','product_item','filter_recovery_options','unclear_input','我是猪','assistantByMessageId','ws://127.0.0.1:18080/ws/chat','/health','statIntent','statLlm','eventSeq']) { if (!html.includes(text)) throw new Error('missing '+text); } console.log('static client check passed');\""
+    "build": "node -e \"const fs=require('fs'); const html=fs.readFileSync('index.html','utf8'); for (const text of ['clarification_request','product_item','filter_recovery_options','unclear_input','我是猪','assistantByMessageId','selection_mode','candidate_count','selected_count','ws://127.0.0.1:18080/ws/chat','/health','statIntent','statLlm','eventSeq']) { if (!html.includes(text)) throw new Error('missing '+text); } console.log('static client check passed');\""
   },
   "dependencies": {},
   "devDependencies": {}

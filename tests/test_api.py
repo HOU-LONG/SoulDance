@@ -104,6 +104,9 @@ def test_websocket_recommendation_event_order_and_quick_actions():
 
     event_types = [event["type"] for event in events]
     assert event_types[0] == "assistant_state"
+    assert events[0]["intent"] == "recommend_product"
+    assert events[0]["retrieval_mode"] == "single"
+    assert events[0]["llm_mode"] == "fake"
     assert event_types.index("text_delta") < event_types.index("products_start")
     assert event_types.index("products_done") < event_types.index("quick_actions")
 

@@ -103,7 +103,7 @@ class ShopGuideAgent:
                 yield event
             return
         if ir.intent == "small_talk":
-            for event in self._build_small_talk_events():
+            for event in self._build_small_talk_events(ir.intent):
                 yield event
             return
         self.state_reducer.apply(context, ir, request.message)
@@ -127,7 +127,7 @@ class ShopGuideAgent:
         if _looks_like_product_request(request.message) and not self.taxonomy.is_known_request(request.message):
             message_id = _message_id()
             text = _unknown_category_text(request.message)
-            yield _assistant_state(message_id, "clarifying", "当前商品库没有匹配类目")
+            yield self._assistant_state(message_id, "clarifying", "当前商品库没有匹配类目", plan)
             for event in _text_delta_events(message_id, text):
                 yield event
             yield _filter_recovery_event(message_id, plan)
@@ -171,7 +171,7 @@ class ShopGuideAgent:
         self._remember_recommendations(context, plan, ranked)
         message_id = _message_id()
         intro = _followup_intro(plan)
-        yield _assistant_state(message_id, "retrieving", "正在按当前商品上下文重新筛选")
+        yield self._assistant_state(message_id, "retrieving", "正在按当前商品上下文重新筛选", plan)
         for event in _text_delta_events(message_id, intro):
             yield event
         if ranked:
@@ -183,9 +183,11 @@ class ShopGuideAgent:
                 "reason": ranked[0].reason,
                 "product": replacement.model_dump(mode="json"),
             }
-            text = await self._safe_generate_text(request, plan, ranked, focus_product)
-            for event in _text_delta_events(message_id, text):
+            text_parts: list[str] = []
+            async for event in self._stream_generate_text_events(message_id, request, plan, ranked, focus_product):
+                text_parts.append(event["text"])
                 yield event
+            text = "".join(text_parts)
             yield _quick_actions_event(message_id, plan, ranked)
         else:
             text = _no_match_text(plan)
@@ -206,7 +208,7 @@ class ShopGuideAgent:
     ) -> AsyncIterator[dict]:
         message_id = _message_id()
         intro = _understanding_text(plan)
-        yield _assistant_state(message_id, "retrieving", "正在理解需求并筛选商品")
+        yield self._assistant_state(message_id, "retrieving", "正在理解需求并筛选商品", plan)
         for event in _text_delta_events(message_id, intro):
             yield event
         if not ranked:
@@ -229,9 +231,11 @@ class ShopGuideAgent:
                 "product": _product_card(item).model_dump(mode="json"),
             }
         yield {"type": "products_done", "message_id": message_id}
-        text = await self._safe_generate_text(request, plan, ranked, None)
-        for event in _text_delta_events(message_id, text):
+        text_parts: list[str] = []
+        async for event in self._stream_generate_text_events(message_id, request, plan, ranked, None):
+            text_parts.append(event["text"])
             yield event
+        text = "".join(text_parts)
         yield _quick_actions_event(message_id, plan, ranked)
         yield {"type": "done", "message_id": message_id}
         for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
@@ -254,10 +258,36 @@ class ShopGuideAgent:
             pass
         return await FakeLLMClient().generate_response(request.message, plan, ranked, focus_product)
 
+    async def _stream_generate_text_events(
+        self,
+        message_id: str,
+        request: ChatRequest,
+        plan: RetrievalPlan,
+        ranked: list[RankedProduct],
+        focus_product: Product | None,
+    ) -> AsyncIterator[dict]:
+        if not ranked:
+            for event in _text_delta_events(message_id, _no_match_text(plan)):
+                yield event
+            return
+        try:
+            got_chunk = False
+            async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product):
+                if chunk:
+                    got_chunk = True
+                    yield {"type": "text_delta", "message_id": message_id, "text": chunk}
+            if got_chunk:
+                return
+        except Exception:
+            pass
+        text = await self._safe_generate_text(request, plan, ranked, focus_product)
+        for event in _text_delta_events(message_id, text):
+            yield event
+
     def _build_clarification_events(self, plan: RetrievalPlan) -> list[dict]:
         message_id = _message_id()
         question = plan.clarification_question or "我需要再确认一个关键偏好，才能更稳地推荐。"
-        events = [_assistant_state(message_id, "clarifying", "需要确认一个关键偏好")]
+        events = [self._assistant_state(message_id, "clarifying", "需要确认一个关键偏好", plan)]
         events.extend(_text_delta_events(message_id, question))
         events.append(
             {
@@ -270,13 +300,39 @@ class ShopGuideAgent:
         events.append({"type": "done", "message_id": message_id})
         return events
 
-    def _build_small_talk_events(self) -> list[dict]:
+    def _build_small_talk_events(self, intent: str = "small_talk") -> list[dict]:
         message_id = _message_id()
         text = "你好，我是你的购物导购助手。你可以直接告诉我购物需求，比如预算、品类、偏好，或者不想要的品牌和成分。"
-        events = [_assistant_state(message_id, "chatting", "回应寒暄")]
+        events = [
+            self._assistant_state(
+                message_id,
+                "chatting",
+                "回应寒暄",
+                intent=intent,
+                retrieval_mode="no_retrieval",
+            )
+        ]
         events.extend(_text_delta_events(message_id, text))
         events.append({"type": "done", "message_id": message_id})
         return events
+
+    def _assistant_state(
+        self,
+        message_id: str,
+        phase: str,
+        label: str,
+        plan: RetrievalPlan | None = None,
+        intent: str | None = None,
+        retrieval_mode: str | None = None,
+    ) -> dict:
+        return _assistant_state(
+            message_id,
+            phase,
+            label,
+            intent=intent or (plan.intent if plan else None),
+            retrieval_mode=retrieval_mode or (plan.retrieval_mode if plan else None),
+            llm_mode=_llm_mode(self.llm_client),
+        )
 
     def _build_comparison_events(self, request: ChatRequest) -> list[dict]:
         context = self.sessions.get(request.session_id)
@@ -512,8 +568,28 @@ def _product_card(item: RankedProduct) -> ProductCard:
     )
 
 
-def _assistant_state(message_id: str, phase: str, label: str) -> dict:
-    return {"type": "assistant_state", "message_id": message_id, "phase": phase, "label": label}
+def _assistant_state(
+    message_id: str,
+    phase: str,
+    label: str,
+    intent: str | None = None,
+    retrieval_mode: str | None = None,
+    llm_mode: str | None = None,
+) -> dict:
+    event = {"type": "assistant_state", "message_id": message_id, "phase": phase, "label": label}
+    if intent:
+        event["intent"] = intent
+    if retrieval_mode:
+        event["retrieval_mode"] = retrieval_mode
+    if llm_mode:
+        event["llm_mode"] = llm_mode
+    return event
+
+
+def _llm_mode(llm_client) -> str:
+    if isinstance(llm_client, FakeLLMClient):
+        return "fake"
+    return "doubao"
 
 
 def _understanding_text(plan: RetrievalPlan) -> str:

@@ -36,6 +36,21 @@ class BlockingResponseLLM(FakeLLMClient):
         return "这是延迟生成的导购解释。"
 
 
+class StreamingResponseLLM(FakeLLMClient):
+    def __init__(self):
+        self.generate_called = False
+        self.chunks = ["第一段", "第二段", "第三段"]
+
+    async def generate_response(self, user_message, plan, ranked_products, focus_product=None):
+        self.generate_called = True
+        return "不应该等待完整回复"
+
+    async def stream_response(self, user_message, plan, ranked_products, focus_product=None):
+        for chunk in self.chunks:
+            await asyncio.sleep(0)
+            yield chunk
+
+
 class SemanticFrameLLM(FakeLLMClient):
     def __init__(self, *frames):
         self.frames = list(frames)
@@ -580,11 +595,42 @@ def test_recommendation_streams_understanding_before_products_and_quick_actions(
 
     event_types = [event["type"] for event in events]
     assert event_types[0] == "assistant_state"
+    state = events[0]
+    assert state["intent"] == "recommend_product"
+    assert state["retrieval_mode"] == "single"
+    assert state["llm_mode"] == "fake"
     assert event_types.index("text_delta") < event_types.index("products_start")
     assert event_types.index("products_done") < event_types.index("quick_actions")
     assert event_types.index("quick_actions") < event_types.index("done")
     quick_actions = next(event for event in events if event["type"] == "quick_actions")
     assert {action["label"] for action in quick_actions["actions"]} >= {"更便宜", "不要这个品牌"}
+
+
+def test_recommendation_explanation_uses_llm_streaming_chunks_after_products():
+    products = load_products("ecommerce_agent_dataset")
+    llm = StreamingResponseLLM()
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_stream_chunks",
+                message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    products_done_index = event_types.index("products_done")
+    quick_actions_index = event_types.index("quick_actions")
+    streamed_text = [
+        event["text"]
+        for event in events[products_done_index + 1 : quick_actions_index]
+        if event["type"] == "text_delta"
+    ]
+    assert streamed_text == llm.chunks
+    assert not llm.generate_called
 
 
 def test_recommendation_stream_emits_products_before_llm_explanation_finishes():

@@ -112,34 +112,6 @@ class DoubaoLLMClient:
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
     ) -> str:
-        products = [
-            {
-                "product_id": item.product.product_id,
-                "title": item.product.title,
-                "brand": item.product.brand,
-                "category": item.product.category,
-                "sub_category": item.product.sub_category,
-                "price": item.product.price,
-                "reason": item.reason,
-                "evidence": item.evidence,
-            }
-            for item in ranked_products[:3]
-        ]
-        constraints = plan.hard_constraints
-        evidence_payload = {
-            "allowed_products": products,
-            "selected_primary": products[0]["product_id"] if products else None,
-            "hard_constraints_applied": {
-                "category": constraints.category,
-                "sub_category": constraints.sub_category,
-                "price_max": constraints.price_max,
-                "exclude_terms": constraints.exclude_terms,
-                "exclude_brands": constraints.exclude_brands,
-                "exclude_brand_regions": constraints.exclude_brand_regions,
-            },
-            "focus_product": focus_product.model_dump(mode="json") if focus_product else None,
-            "forbidden_claims": ["疗效承诺", "未给出的商品属性", "后端没有返回的 product_id"],
-        }
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -149,7 +121,7 @@ class DoubaoLLMClient:
                     "content": json.dumps(
                         {
                             "message": user_message,
-                            "evidence_payload": evidence_payload,
+                            "evidence_payload": _response_evidence_payload(plan, ranked_products, focus_product),
                         },
                         ensure_ascii=False,
                     ),
@@ -158,6 +130,36 @@ class DoubaoLLMClient:
             temperature=0.3,
         )
         return response.choices[0].message.content or ""
+
+    async def stream_response(
+        self,
+        user_message: str,
+        plan: RetrievalPlan,
+        ranked_products: list[RankedProduct],
+        focus_product: Product | None = None,
+    ):
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": RESPONSE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "message": user_message,
+                            "evidence_payload": _response_evidence_payload(plan, ranked_products, focus_product),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0.3,
+            stream=True,
+        )
+        async for chunk in stream:
+            text = chunk.choices[0].delta.content if chunk.choices and chunk.choices[0].delta else None
+            if text:
+                yield text
 
 
 class FakeLLMClient:
@@ -196,3 +198,49 @@ class FakeLLMClient:
             f"主推「{primary.product.title}」，价格 {primary.product.price:.0f} 元。"
             f"{primary.reason} 如果你想更便宜、更清爽或换个品牌，我可以继续帮你换。"
         )
+
+    async def stream_response(
+        self,
+        user_message: str,
+        plan: RetrievalPlan,
+        ranked_products: list[RankedProduct],
+        focus_product: Product | None = None,
+    ):
+        text = await self.generate_response(user_message, plan, ranked_products, focus_product)
+        for index in range(0, len(text), 12):
+            yield text[index : index + 12]
+
+
+def _response_evidence_payload(
+    plan: RetrievalPlan,
+    ranked_products: list[RankedProduct],
+    focus_product: Product | None = None,
+) -> dict[str, Any]:
+    products = [
+        {
+            "product_id": item.product.product_id,
+            "title": item.product.title,
+            "brand": item.product.brand,
+            "category": item.product.category,
+            "sub_category": item.product.sub_category,
+            "price": item.product.price,
+            "reason": item.reason,
+            "evidence": item.evidence,
+        }
+        for item in ranked_products[:3]
+    ]
+    constraints = plan.hard_constraints
+    return {
+        "allowed_products": products,
+        "selected_primary": products[0]["product_id"] if products else None,
+        "hard_constraints_applied": {
+            "category": constraints.category,
+            "sub_category": constraints.sub_category,
+            "price_max": constraints.price_max,
+            "exclude_terms": constraints.exclude_terms,
+            "exclude_brands": constraints.exclude_brands,
+            "exclude_brand_regions": constraints.exclude_brand_regions,
+        },
+        "focus_product": focus_product.model_dump(mode="json") if focus_product else None,
+        "forbidden_claims": ["疗效承诺", "未给出的商品属性", "后端没有返回的 product_id"],
+    }

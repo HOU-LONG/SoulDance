@@ -90,7 +90,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-45 passed, 1 warning
+46 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -98,7 +98,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 45 tests pass.
+- [ ] All 46 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -295,6 +295,7 @@ Acceptance:
 
 - [ ] Retrieval plan intent is `small_talk`.
 - [ ] Response includes `assistant_state`, `text_delta`, and `done`.
+- [ ] `assistant_state` exposes `intent=small_talk` and `llm_mode`.
 - [ ] Response does not include `product_item`.
 - [ ] Response does not include `clarification_request`.
 - [ ] Text guides the user to provide a shopping need.
@@ -314,6 +315,7 @@ Mixed greeting plus product request:
 Acceptance:
 
 - [ ] This is treated as `recommend_product`, not `small_talk`.
+- [ ] `assistant_state` exposes `intent=recommend_product`, `retrieval_mode`, and `llm_mode`.
 - [ ] Response includes sunscreen product cards.
 
 ## 9. Active Clarification Verification
@@ -618,7 +620,7 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `45 passed`.
+- [ ] Full test suite returns `46 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.

@@ -22,6 +22,7 @@ This puts a useful sentence on screen before retrieval cards arrive, then gives 
 ## Optional Events
 
 - `assistant_state`: lightweight phase marker for UI status text or telemetry.
+- `assistant_state.intent`, `assistant_state.retrieval_mode`, and `assistant_state.llm_mode` are optional debug fields for verification UIs.
 - `small_talk` responses do not use a dedicated event; clients receive `assistant_state`, `text_delta`, and `done`.
 - `quick_actions`: low-cost refinement actions such as `更便宜`, `不要这个品牌`, `更适合户外`.
 - `clarification_request`: used only when recommending immediately would be unreliable.

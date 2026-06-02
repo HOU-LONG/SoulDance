@@ -57,6 +57,8 @@ The warning is from `jieba/pkg_resources` and is non-blocking.
 
 Build one simple chat screen with:
 
+- Health panel for `llm`, `retriever`, and `product_count`.
+- Intent panel for the current turn's `intent`, `retrieval_mode`, and event count.
 - Message input.
 - Send button.
 - AI text bubble area for `text_delta`.
@@ -69,6 +71,8 @@ Clarification card should display:
 - `question` as the main text.
 - Three option buttons from `options`.
 - On click, send the option's `message` as a new `user_message` using the same `session_id`.
+
+Important: `llm=fake` means the backend is using rule fallback. Use `llm=doubao` when verifying real LLM/Semantic Agent intent recognition.
 
 Recommended event handling:
 
@@ -84,6 +88,8 @@ Recommended event handling:
 | `done` | Mark current turn complete |
 
 The client should not render product skeletons forever if a clarification turn has no `products_start`.
+
+The browser can render streaming normally. The backend sends each LLM chunk as a separate `text_delta`; the test client logs event sequence numbers and receive timestamps so teammates can see whether chunks arrive progressively.
 
 ## 4. WebSocket Contract
 

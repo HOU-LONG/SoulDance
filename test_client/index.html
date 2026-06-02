@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ShopGuide 主动澄清测试客户端</title>
+    <style>
+      :root { color: #18231f; background: #eef2ef; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; min-height: 100vh; }
+      button, input { font: inherit; }
+      button { border: 1px solid #c8d3cd; border-radius: 8px; background: #fff; color: #18231f; cursor: pointer; }
+      button:hover:not(:disabled) { border-color: #25584e; }
+      button:disabled { cursor: not-allowed; opacity: .45; }
+      .primary { border-color: #25584e; background: #25584e; color: #fff; }
+      .app { display: grid; grid-template-columns: minmax(280px, 320px) minmax(420px, 1fr) minmax(300px, 380px); gap: 1px; min-height: 100vh; background: #cbd8d1; }
+      aside, main { min-width: 0; background: #f7f9f7; }
+      .side { display: flex; flex-direction: column; gap: 1px; }
+      .workspace { display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh; }
+      .panel { padding: 20px; background: #f7f9f7; }
+      .head, .product-top, .message-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .eyebrow { margin: 0 0 6px; color: #65756f; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+      h1, h2, h3, p { margin-top: 0; }
+      h1 { margin-bottom: 0; font-size: 25px; line-height: 1.15; }
+      h2 { margin-bottom: 0; font-size: 17px; }
+      h3 { font-size: 15px; line-height: 1.45; }
+      .dot { width: 12px; height: 12px; flex: 0 0 auto; border-radius: 50%; background: #93a19b; }
+      .dot.connecting { background: #ca8a04; }
+      .dot.connected { background: #229366; }
+      .dot.error { background: #c24141; }
+      label { display: grid; gap: 7px; margin-top: 16px; color: #4d5d57; font-size: 12px; font-weight: 800; }
+      input { width: 100%; min-height: 42px; border: 1px solid #c8d3cd; border-radius: 8px; padding: 0 12px; background: #fff; color: #18231f; outline: none; }
+      input:focus { border-color: #25584e; box-shadow: 0 0 0 3px rgba(37, 88, 78, .12); }
+      .buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+      .buttons button, .composer button { min-height: 38px; padding: 0 14px; }
+      .hint { margin: 14px 0 0; color: #6b7b75; font-size: 13px; line-height: 1.5; }
+      .scenarios { display: grid; gap: 8px; margin-top: 14px; }
+      .scenario { display: grid; gap: 5px; width: 100%; padding: 12px; text-align: left; }
+      .scenario strong { font-size: 14px; }
+      .scenario span { color: #25584e; font-size: 13px; }
+      .scenario small { color: #687973; line-height: 1.4; }
+      .workspace-header { min-height: 82px; padding: 18px 24px; border-bottom: 1px solid #d9e1dd; background: #fbfcfb; }
+      .stats { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+      .pill { display: grid; min-width: 86px; gap: 2px; border: 1px solid #d6dfda; border-radius: 8px; padding: 7px 10px; background: #fff; color: #6a7a74; font-size: 13px; }
+      .pill small { font-size: 10px; font-weight: 800; text-transform: uppercase; }
+      .pill.active { border-color: #25584e; color: #25584e; }
+      .pill.warn { border-color: #b45309; color: #92400e; background: #fff7ed; }
+      .feed { display: flex; flex-direction: column; gap: 14px; overflow: auto; padding: 22px 24px; }
+      .empty { display: grid; place-content: center; min-height: 100%; color: #5d6d67; text-align: center; }
+      .empty h3 { margin-bottom: 8px; color: #18231f; font-size: 22px; }
+      .message { max-width: 900px; border-radius: 8px; padding: 14px; }
+      .user { align-self: flex-end; width: min(78%, 650px); background: #25584e; color: #fff; }
+      .assistant { align-self: flex-start; width: min(96%, 900px); border: 1px solid #d7e0db; background: #fff; }
+      .message p { margin: 6px 0 0; white-space: pre-wrap; line-height: 1.65; }
+      .tag { border: 1px solid #d6dfda; border-radius: 999px; padding: 3px 8px; color: #60726c; font-size: 11px; }
+      .clarify, .actions { margin-top: 14px; border-left: 4px solid #25584e; padding: 12px 0 12px 14px; background: #f3f7f5; }
+      .option-row { display: flex; flex-wrap: wrap; gap: 8px; }
+      .option-row button { min-height: 36px; padding: 0 12px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-top: 14px; }
+      .product { border: 1px solid #d7e0db; border-radius: 8px; padding: 12px; background: #fbfcfb; }
+      .product-top span { border-radius: 999px; background: #e4ece8; padding: 3px 8px; color: #25584e; font-size: 11px; font-weight: 800; }
+      .product-top strong { color: #9d3a2f; }
+      .meta, .reason, .evidence { color: #596b65; font-size: 13px; line-height: 1.5; }
+      .composer { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 16px 24px; border-top: 1px solid #d9e1dd; background: #fbfcfb; }
+      .assertions { display: grid; gap: 8px; margin: 14px 0 0; padding: 0; list-style: none; }
+      .assertions li { border-radius: 8px; padding: 9px 10px; background: #e9efec; color: #677872; font-size: 13px; }
+      .assertions li.pass { background: #dff2e9; color: #176048; }
+      .logs { overflow: auto; margin-top: 14px; padding-right: 4px; }
+      details { border: 1px solid #d7e0db; border-radius: 8px; margin-bottom: 8px; background: #fff; }
+      summary { display: flex; justify-content: space-between; gap: 8px; padding: 9px 10px; cursor: pointer; color: #4f625c; font-size: 12px; font-weight: 800; }
+      details.sent summary { color: #25584e; }
+      details.received summary { color: #7a4b12; }
+      pre { overflow: auto; margin: 0; border-top: 1px solid #e2e8e5; padding: 10px; color: #21302c; font-size: 11px; line-height: 1.45; white-space: pre-wrap; }
+      .error { width: fit-content; border: 1px solid #e7b5ad; border-radius: 8px; background: #fff5f3; padding: 10px 12px; color: #a43226; font-size: 13px; }
+      @media (max-width: 1120px) { .app { grid-template-columns: 280px minmax(420px, 1fr); } .right { grid-column: 1 / -1; display: grid; grid-template-columns: 280px 1fr; min-height: 360px; } }
+      @media (max-width: 760px) { .app, .workspace, .right { display: block; } .workspace { min-height: auto; } .workspace-header, .composer, .feed { padding: 16px; } .composer { grid-template-columns: 1fr; } .message, .user, .assistant { width: 100%; } }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="side left">
+        <section class="panel">
+          <div class="head"><div><p class="eyebrow">ShopGuide</p><h1>主动澄清测试台</h1></div><span id="stateDot" class="dot" title="disconnected"></span></div>
+          <label>WebSocket <input id="wsUrl" value="ws://127.0.0.1:18080/ws/chat" /></label>
+          <label>Session ID <input id="sessionId" /></label>
+          <div class="buttons"><button id="connectBtn" class="primary">连接</button><button id="disconnectBtn">断开</button><button id="resetBtn">新会话</button></div>
+          <p class="hint">默认需要本地端口转发到 mix_A100 的 18080。</p>
+          <div class="stats" style="justify-content:flex-start;margin-top:14px">
+            <span id="statLlm" class="pill"><small>llm</small>unknown</span>
+            <span id="statRetriever" class="pill"><small>retriever</small>unknown</span>
+            <span id="statCount" class="pill"><small>products</small>?</span>
+          </div>
+        </section>
+        <section class="panel"><div class="head"><h2>测试场景</h2><span>8 项</span></div><div id="scenarios" class="scenarios"></div></section>
+      </aside>
+      <main class="workspace">
+        <header class="workspace-header head">
+          <div><p class="eyebrow">Manual Verification</p><h2>WebSocket 事件流</h2></div>
+          <div class="stats"><span id="statIntent" class="pill"><small>intent</small>unknown</span><span id="statRetrieval" class="pill"><small>retrieval</small>unknown</span><span id="statEvents" class="pill"><small>events</small>0</span><span id="statClarification" class="pill"><small>clarification</small>no</span><span id="statProducts" class="pill"><small>products</small>0</span><span id="statRecovery" class="pill"><small>recovery</small>no</span><span id="statDone" class="pill"><small>done</small>no</span></div>
+        </header>
+        <section id="feed" class="feed"><div class="empty"><h3>先连接后端，再点一个场景。</h3><p>推荐演示流：推荐一款手机，然后点击澄清卡片里的拍照优先。</p></div></section>
+        <form id="composer" class="composer"><input id="message" placeholder="请先连接 WebSocket" disabled /><button id="sendBtn" class="primary" disabled>发送</button></form>
+      </main>
+      <aside class="side right">
+        <section class="panel"><div class="head"><h2>本轮断言</h2><span id="assertState">live</span></div><ul class="assertions"><li id="assertClarification">收到澄清请求</li><li id="assertProducts">收到商品卡片</li><li id="assertRecovery">收到恢复选项</li><li id="assertDone">收到结束事件</li></ul></section>
+        <section class="panel"><div class="head"><h2>原始日志</h2><button id="clearLogsBtn">清空</button></div><div id="logs" class="logs"><p class="hint">事件会显示在这里。</p></div></section>
+      </aside>
+    </div>
+    <script>
+      const scenarios = [["含糊手机", "推荐一款手机", "应出现澄清卡片，不出现商品卡片"], ["手机澄清答案", "拍照优先，预算4000以内", "同一 session 下应推荐手机商品"], ["明确手机需求", "推荐一款手机，预算4000，拍照优先", "应直接返回商品，无澄清"], ["含糊笔记本", "推荐一台笔记本", "应出现轻薄/性能/性价比方向澄清"], ["礼物泛需求", "送女朋友礼物", "应询问预算、对象或偏好方向"], ["护肤泛需求", "推荐护肤品", "应询问肤质或功效"], ["明确精华预算", "推荐精华，预算100以内", "应返回精华商品，价格不超过100"], ["未知毛巾类目", "推荐毛巾", "不应出现无关商品，应有恢复选项或无匹配提示"]];
+      let ws = null;
+      let activeAssistant = null;
+      let stats = { clarification: false, products: 0, recovery: false, done: false, error: false, intent: "unknown", retrieval: "unknown", events: 0 };
+      let eventSeq = 0;
+      const $ = (id) => document.getElementById(id);
+      $("sessionId").value = `client_clarify_${Date.now()}`;
+      function escapeHtml(text) { return String(text).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[ch])); }
+      function setState(next) { $("stateDot").className = `dot ${next}`; $("stateDot").title = next; $("message").disabled = next !== "connected"; $("sendBtn").disabled = next !== "connected"; $("message").placeholder = next === "connected" ? "输入自定义测试消息" : "请先连接 WebSocket"; document.querySelectorAll(".scenario").forEach((button) => (button.disabled = next !== "connected")); }
+      function setPill(name, active, value, warn = false) { const el = $(`stat${name}`); el.className = `pill ${active ? "active" : ""} ${warn ? "warn" : ""}`; el.innerHTML = `<small>${name.toLowerCase()}</small>${escapeHtml(value)}`; }
+      function setAssert(name, active) { $(`assert${name}`).className = active ? "pass" : ""; }
+      function renderStats() { setPill("Intent", stats.intent !== "unknown", stats.intent); setPill("Retrieval", stats.retrieval !== "unknown", stats.retrieval); setPill("Events", stats.events > 0, String(stats.events)); setPill("Clarification", stats.clarification, stats.clarification ? "yes" : "no"); setPill("Products", stats.products > 0, String(stats.products)); setPill("Recovery", stats.recovery, stats.recovery ? "yes" : "no"); setPill("Done", stats.done, stats.done ? "yes" : "no"); setAssert("Clarification", stats.clarification); setAssert("Products", stats.products > 0); setAssert("Recovery", stats.recovery); setAssert("Done", stats.done); $("assertState").textContent = stats.error ? "error" : "live"; }
+      function resetStats() { stats = { clarification: false, products: 0, recovery: false, done: false, error: false, intent: "unknown", retrieval: "unknown", events: 0 }; eventSeq = 0; renderStats(); }
+      function addLog(direction, payload) { const logs = $("logs"); if (logs.querySelector(".hint")) logs.innerHTML = ""; const details = document.createElement("details"); details.className = direction; const seq = payload && payload.eventSeq ? `#${payload.eventSeq} ` : ""; details.innerHTML = `<summary><span>${seq}${direction}</span><time>${new Date().toLocaleTimeString("zh-CN", { hour12: false })}</time></summary><pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`; logs.prepend(details); }
+      function healthUrlFromWs() { try { const url = new URL($("wsUrl").value); url.protocol = url.protocol === "wss:" ? "https:" : "http:"; url.pathname = "/health"; url.search = ""; return url.toString(); } catch { return "http://127.0.0.1:18080/health"; } }
+      async function refreshHealth() { try { const response = await fetch(healthUrlFromWs()); const health = await response.json(); setPill("Llm", true, health.llm || "unknown", health.llm === "fake"); setPill("Retriever", true, health.retriever || "unknown"); setPill("Count", true, String(health.product_count ?? "?")); addLog("health", health); } catch (error) { setPill("Llm", false, "health error", true); addLog("system", { message: "failed to load /health", error: String(error) }); } }
+      function ensureAssistant(event) { if (activeAssistant) return activeAssistant; activeAssistant = document.createElement("article"); activeAssistant.className = "message assistant"; activeAssistant.dataset.messageId = event.message_id || `assistant_${Date.now()}`; activeAssistant.innerHTML = `<div class="message-head"><strong>后端</strong><span class="tag">${escapeHtml(event.label || event.phase || "processing")}</span></div><p class="assistant-text"></p>`; $("feed").append(activeAssistant); return activeAssistant; }
+      function beginTurn(message) { activeAssistant = null; resetStats(); const empty = $("feed").querySelector(".empty"); if (empty) empty.remove(); const user = document.createElement("article"); user.className = "message user"; user.innerHTML = `<strong>用户</strong><p>${escapeHtml(message)}</p>`; $("feed").append(user); }
+      function sendUserMessage(message) { const text = message.trim(); if (!text) return; if (!ws || ws.readyState !== WebSocket.OPEN) { addLog("system", { message: "websocket is not connected" }); setState("error"); return; } const payload = { type: "user_message", session_id: $("sessionId").value, message: text, input_type: "text", tts_enabled: false }; beginTurn(text); ws.send(JSON.stringify(payload)); addLog("sent", payload); $("message").value = ""; }
+      function renderActions(root, title, actions) { if (!Array.isArray(actions) || actions.length === 0) return; const box = document.createElement("section"); box.className = "actions"; box.innerHTML = `<h3>${escapeHtml(title)}</h3><div class="option-row"></div>`; actions.forEach((action) => { if (!action || !action.label || !action.message) return; const btn = document.createElement("button"); btn.textContent = action.label; btn.onclick = () => sendUserMessage(action.message); box.querySelector(".option-row").append(btn); }); root.append(box); }
+      function renderProduct(root, item) { const p = item.product || {}; let grid = root.querySelector(".grid"); if (!grid) { grid = document.createElement("section"); grid.className = "grid"; root.append(grid); } const card = document.createElement("article"); card.className = "product"; const title = p.name || p.title || p.product_id || "未命名商品"; const meta = [p.brand, p.category, p.sub_category].filter(Boolean).join(" / "); const evidence = Array.isArray(p.evidence) ? p.evidence.slice(0, 2).map((e) => `<li>${escapeHtml(e)}</li>`).join("") : ""; card.innerHTML = `<div class="product-top"><span>${item.role === "primary" ? "主推" : `备选 ${(item.index || 0) + 1}`}</span>${typeof p.price === "number" ? `<strong>¥${p.price}</strong>` : ""}</div><h3>${escapeHtml(title)}</h3><p class="meta">${escapeHtml(meta)}</p>${p.reason ? `<p class="reason">${escapeHtml(p.reason)}</p>` : ""}${evidence ? `<ul class="evidence">${evidence}</ul>` : ""}`; grid.append(card); }
+      function handleEvent(event) { const root = ensureAssistant(event); if (event.type === "assistant_state") { stats.intent = event.intent || stats.intent; stats.retrieval = event.retrieval_mode || stats.retrieval; renderStats(); const meta = [event.label || event.phase || "processing", event.intent, event.retrieval_mode, event.llm_mode].filter(Boolean).join(" · "); root.querySelector(".tag").textContent = meta; } else if (event.type === "text_delta") { root.querySelector(".assistant-text").textContent += event.text || ""; } else if (event.type === "clarification_request") { stats.clarification = true; renderStats(); const box = document.createElement("section"); box.className = "clarify"; box.innerHTML = `<h3>${escapeHtml(event.question || "")}</h3><div class="option-row"></div>`; (event.options || []).forEach((option) => { if (!option || !option.label || !option.message) return; const btn = document.createElement("button"); btn.textContent = option.label; btn.onclick = () => sendUserMessage(option.message); box.querySelector(".option-row").append(btn); }); root.append(box); } else if (event.type === "product_item") { stats.products += 1; renderStats(); renderProduct(root, event); } else if (event.type === "quick_actions") { renderActions(root, "快捷操作", event.actions || []); } else if (event.type === "filter_recovery_options") { stats.recovery = true; renderStats(); renderActions(root, "恢复选项", event.options || []); } else if (event.type === "done" || event.type === "focus_done") { stats.done = true; renderStats(); root.querySelector(".message-head").insertAdjacentHTML("beforeend", '<span class="tag">done</span>'); } else if (event.type === "error") { stats.error = true; renderStats(); root.insertAdjacentHTML("beforeend", `<div class="error">${escapeHtml(event.message || "backend error")}</div>`); } }
+      function connect() { if (ws) ws.close(); setState("connecting"); addLog("system", { message: `connecting to ${$("wsUrl").value}` }); refreshHealth(); ws = new WebSocket($("wsUrl").value); ws.onopen = () => { setState("connected"); addLog("system", { message: "connected" }); refreshHealth(); }; ws.onclose = () => { setState("disconnected"); addLog("system", { message: "disconnected" }); }; ws.onerror = () => { setState("error"); addLog("system", { message: "websocket error" }); }; ws.onmessage = (raw) => { try { const event = JSON.parse(raw.data); eventSeq += 1; stats.events = eventSeq; renderStats(); addLog("received", { eventSeq, receivedAt: new Date().toISOString(), ...event }); handleEvent(event); } catch (error) { addLog("system", { message: "failed to parse backend event", raw: raw.data, error: String(error) }); } }; }
+      scenarios.forEach(([label, message, expect]) => { const btn = document.createElement("button"); btn.className = "scenario"; btn.disabled = true; btn.innerHTML = `<strong>${escapeHtml(label)}</strong><span>${escapeHtml(message)}</span><small>${escapeHtml(expect)}</small>`; btn.onclick = () => sendUserMessage(message); $("scenarios").append(btn); });
+      $("connectBtn").onclick = connect;
+      $("disconnectBtn").onclick = () => { if (ws) ws.close(); ws = null; setState("disconnected"); };
+      $("resetBtn").onclick = () => { $("sessionId").value = `client_clarify_${Date.now()}`; $("feed").innerHTML = '<div class="empty"><h3>先连接后端，再点一个场景。</h3><p>推荐演示流：推荐一款手机，然后点击澄清卡片里的拍照优先。</p></div>'; resetStats(); };
+      $("clearLogsBtn").onclick = () => { $("logs").innerHTML = '<p class="hint">事件会显示在这里。</p>'; };
+      $("composer").onsubmit = (event) => { event.preventDefault(); sendUserMessage($("message").value); };
+      setState("disconnected");
+      renderStats();
+    </script>
+  </body>
+</html>

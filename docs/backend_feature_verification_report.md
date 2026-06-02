@@ -21,6 +21,7 @@ codex/rag-memory-reranker
 Expected latest commits:
 
 ```text
+3700993 fix: classify halo greetings as small talk
 901a2bc fix: route small talk outside product retrieval
 8a0e14c feat: add restrained active clarification policy
 c7e0355 fix: enforce dataset taxonomy constraints

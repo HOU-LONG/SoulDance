@@ -21,6 +21,7 @@ codex/rag-memory-reranker
 Expected latest commits:
 
 ```text
+901a2bc fix: route small talk outside product retrieval
 8a0e14c feat: add restrained active clarification policy
 c7e0355 fix: enforce dataset taxonomy constraints
 c058416 docs: add backend feature verification report

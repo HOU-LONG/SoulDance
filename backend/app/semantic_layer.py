@@ -65,6 +65,8 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
                 target=_rule_product_reference(text),
             ),
         )
+    if request.type == "user_message" and _is_small_talk(text):
+        return SemanticFrame(intent="small_talk")
     edits = ConstraintEdits()
     price_max = _detect_price_max(text)
     if price_max is not None:
@@ -132,6 +134,9 @@ def _extract_json(raw: str) -> dict[str, Any]:
 
 def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFrame:
     guarded = rule_semantic_frame(request)
+    if guarded.intent == "small_talk":
+        frame.intent = "small_talk"
+        return frame
     if guarded.intent == "cart_operation" and frame.cart_operation is None:
         frame.intent = guarded.intent
         frame.cart_operation = guarded.cart_operation
@@ -157,6 +162,31 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
         frame.constraint_edits.remove.exclude_brands + guarded.constraint_edits.remove.exclude_brands
     )
     return frame
+
+
+def _is_small_talk(text: str) -> bool:
+    normalized = re.sub(r"[\s?？!！。,.，、]+", "", (text or "").lower())
+    if not normalized:
+        return True
+    if _has_shopping_signal(text):
+        return False
+    return bool(
+        re.fullmatch(
+            r"(你好|您好|hello|hi|hey|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁|你是干嘛的|你能做什么)",
+            normalized,
+        )
+    )
+
+
+def _has_shopping_signal(text: str) -> bool:
+    return bool(
+        re.search(
+            r"推荐|找|买|想要|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+            r"防晒|精华|护肤|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+            text or "",
+            flags=re.I,
+        )
+    )
 
 
 def _remove_constraints(constraints: HardConstraints, patch) -> None:

@@ -208,11 +208,32 @@ def _detect_intent(text: str, request: ChatRequest) -> str:
         return "product_followup"
     if re.search(r"购物车|加购|加入|下单|结算|删掉|删除|移除|数量|改成", text):
         return "cart_action"
+    if _is_small_talk_intent(text):
+        return "small_talk"
     if re.search(r"对比|比较一下|比较下|哪个更|哪款更|第一款|第二款|第三款", text):
         return "compare_products"
     if ("三亚" in text or "海边" in text or "度假" in text) and re.search(r"搭配|一套|方案|从.+到", text):
         return "scenario_bundle"
     return "recommend_product"
+
+
+def _is_small_talk_intent(text: str) -> bool:
+    normalized = re.sub(r"[\s?？!！。,.，、]+", "", (text or "").lower())
+    if not normalized:
+        return True
+    if re.search(
+        r"推荐|找|买|想要|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+        r"防晒|精华|护肤|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+        text or "",
+        flags=re.I,
+    ):
+        return False
+    return bool(
+        re.fullmatch(
+            r"(你好|您好|hello|hi|hey|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁|你是干嘛的|你能做什么)",
+            normalized,
+        )
+    )
 
 
 def _clarification_policy(

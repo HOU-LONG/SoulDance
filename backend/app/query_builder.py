@@ -42,6 +42,7 @@ class QueryBuilder:
             "scenario_bundle": "decompose_parallel",
             "cart_operation": "state_then_action",
             "clarification": "clarification",
+            "small_talk": "no_retrieval",
         }.get(intent, "single")
         return RetrievalPlan(
             intent=intent,

@@ -102,6 +102,10 @@ class ShopGuideAgent:
             async for event in self._stream_followup(request, ir):
                 yield event
             return
+        if ir.intent == "small_talk":
+            for event in self._build_small_talk_events():
+                yield event
+            return
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
@@ -263,6 +267,14 @@ class ShopGuideAgent:
                 "options": _clarification_options(question),
             }
         )
+        events.append({"type": "done", "message_id": message_id})
+        return events
+
+    def _build_small_talk_events(self) -> list[dict]:
+        message_id = _message_id()
+        text = "你好，我是你的购物导购助手。你可以直接告诉我购物需求，比如预算、品类、偏好，或者不想要的品牌和成分。"
+        events = [_assistant_state(message_id, "chatting", "回应寒暄")]
+        events.extend(_text_delta_events(message_id, text))
         events.append({"type": "done", "message_id": message_id})
         return events
 

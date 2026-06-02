@@ -22,6 +22,7 @@ This puts a useful sentence on screen before retrieval cards arrive, then gives 
 ## Optional Events
 
 - `assistant_state`: lightweight phase marker for UI status text or telemetry.
+- `small_talk` responses do not use a dedicated event; clients receive `assistant_state`, `text_delta`, and `done`.
 - `quick_actions`: low-cost refinement actions such as `更便宜`, `不要这个品牌`, `更适合户外`.
 - `clarification_request`: used only when recommending immediately would be unreliable.
 - `comparison_result`: compares products from `SessionContext.last_product_ids`.
@@ -38,4 +39,3 @@ The backend resolves natural commands against recent session state:
 - `数量改成2` -> update the most recent cart product.
 - `删掉第二个` -> remove the second recent recommendation when available.
 - `下单吧` -> simulate checkout.
-

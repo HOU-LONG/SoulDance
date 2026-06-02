@@ -34,6 +34,7 @@ def _normalize_intent(frame: ShoppingIntentIR, request: ChatRequest) -> Shopping
         "scenario_bundle",
         "cart_operation",
         "clarification",
+        "small_talk",
     }:
         intent = rule_intent
     elif intent == "cart_operation" and frame.cart_operation is None:
@@ -52,5 +53,9 @@ def _canonical_intent(intent: str) -> str:
         "compare": "compare_products",
         "bundle": "scenario_bundle",
         "clarify": "clarification",
+        "smalltalk": "small_talk",
+        "small_talk": "small_talk",
+        "non_shopping": "small_talk",
+        "chitchat": "small_talk",
     }
     return aliases.get(intent, intent)

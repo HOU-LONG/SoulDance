@@ -181,6 +181,75 @@ def test_unknown_taxonomy_request_returns_recovery_without_cross_category_cards(
     assert any(event["type"] == "filter_recovery_options" for event in events)
 
 
+def test_greeting_does_not_recommend_products():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    plan = asyncio.run(
+        agent.plan(ChatRequest(type="user_message", session_id="demo_greeting_plan", message="你好?"))
+    )
+    assert plan.intent == "small_talk"
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_greeting",
+                message="你好?",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "product_item" not in event_types
+    assert "clarification_request" not in event_types
+    merged_text = "".join(event["text"] for event in events if event["type"] == "text_delta")
+    assert "购物需求" in merged_text
+
+
+def test_small_talk_variants_do_not_trigger_retrieval():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    agent = ShopGuideAgent(products, FakeLLMClient(), retriever)
+
+    for index, message in enumerate(["hello", "在吗", "谢谢", "你是谁"]):
+        events = asyncio.run(
+            agent.handle_message(
+                ChatRequest(type="user_message", session_id=f"demo_small_talk_{index}", message=message)
+            )
+        )
+        event_types = [event["type"] for event in events]
+        assert event_types[0] == "assistant_state"
+        assert event_types[-1] == "done"
+        assert "text_delta" in event_types
+        assert "product_item" not in event_types
+        assert "clarification_request" not in event_types
+
+    assert retriever.calls == 0
+
+
+def test_greeting_with_product_request_still_recommends():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    plan = asyncio.run(
+        agent.plan(
+            ChatRequest(type="user_message", session_id="demo_greeting_product_plan", message="你好，推荐防晒霜")
+        )
+    )
+    assert plan.intent == "recommend_product"
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_greeting_product", message="你好，推荐防晒霜")
+        )
+    )
+
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["sub_category"] == "防晒" for event in product_events)
+
+
 def test_llm_compare_misclassification_is_guarded_for_fresh_recommendation():
     products = load_products("ecommerce_agent_dataset")
     llm = SemanticFrameLLM({"intent": "compare_products"})

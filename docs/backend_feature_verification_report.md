@@ -63,6 +63,7 @@ export SHOPGUIDE_MEMORY_CACHE_PATH="cache/shopguide_memory.jsonl"
 | RAG retrieval | BM25 plus optional embedding retrieval | To verify |
 | Hard filters | Budget, category, sub-category, excluded terms, excluded brand region, excluded brand | To verify |
 | LLM semantic layer | LLM parses intent; backend rule guards preserve hard constraints | To verify |
+| Small talk routing | Pure greetings and thanks compile to `small_talk` and do not enter product retrieval | To verify |
 | Compiler-style executor | Backend deterministically performs retrieval, filtering, ranking, cart mutation, event rendering | To verify |
 | Streaming API | WebSocket emits ordered assistant/product/cart events | To verify |
 | Active clarification | Emits one-question `clarification_request` for high-uncertainty requests such as generic phone, laptop, gift, or skincare needs | To verify |
@@ -87,7 +88,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-41 passed, 1 warning
+44 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -95,7 +96,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 41 tests pass.
+- [ ] All 44 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -276,9 +277,44 @@ Acceptance:
 - [ ] Response includes no-match recovery guidance or clarification-style text.
 - [ ] No product card is emitted unless the dataset actually contains a matching towel taxonomy entry.
 
-## 8. Active Clarification Verification
+## 8. Small Talk / Non-Shopping Verification
 
-### 8.1 Ambiguous Phone
+Send:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_small_talk_001",
+  "message": "你好?"
+}
+```
+
+Acceptance:
+
+- [ ] Retrieval plan intent is `small_talk`.
+- [ ] Response includes `assistant_state`, `text_delta`, and `done`.
+- [ ] Response does not include `product_item`.
+- [ ] Response does not include `clarification_request`.
+- [ ] Text guides the user to provide a shopping need.
+
+Mixed greeting plus product request:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_small_talk_002",
+  "message": "你好，推荐防晒霜"
+}
+```
+
+Acceptance:
+
+- [ ] This is treated as `recommend_product`, not `small_talk`.
+- [ ] Response includes sunscreen product cards.
+
+## 9. Active Clarification Verification
+
+### 9.1 Ambiguous Phone
 
 Send:
 
@@ -296,7 +332,7 @@ Acceptance:
 - [ ] Response does not include `product_item`.
 - [ ] Question asks about photo, battery life, or value-for-money priority.
 
-### 8.2 Clarification Answer
+### 9.2 Clarification Answer
 
 Using the same session, send:
 
@@ -314,7 +350,7 @@ Acceptance:
 - [ ] Product cards, if any, have `sub_category=智能手机`.
 - [ ] Product cards, if any, have `price <= 4000`.
 
-### 8.3 Ambiguous Gift / Skincare
+### 9.3 Ambiguous Gift / Skincare
 
 Send separately:
 
@@ -340,7 +376,7 @@ Acceptance:
 - [ ] Neither response emits unrelated product cards just to fill a result.
 - [ ] Specific requests such as `推荐精华，预算100以内` still recommend directly.
 
-## 9. Multi-Turn Followup Verification
+## 10. Multi-Turn Followup Verification
 
 Step 1: send normal recommendation:
 
@@ -371,7 +407,7 @@ Acceptance:
 - [ ] If no product matches 100以内 + original exclusions, response includes `filter_recovery_options`.
 - [ ] Backend must not emit an out-of-budget `replacement_product`.
 
-## 10. Comparison Verification
+## 11. Comparison Verification
 
 Step 1:
 
@@ -414,7 +450,7 @@ Acceptance:
 - [ ] Backend must not respond with `我还没有足够的最近推荐商品可以对比`.
 - [ ] This fresh recommendation must not be misrouted into compare mode.
 
-## 11. Cart Flow Verification
+## 12. Cart Flow Verification
 
 Step 1:
 
@@ -463,7 +499,7 @@ Acceptance:
 - [ ] Step 4 returns checkout status `ok`.
 - [ ] Cart product ID is from previous backend recommendation.
 
-## 12. Structured Memory Cache Verification
+## 13. Structured Memory Cache Verification
 
 Start backend with optional persistent cache:
 
@@ -503,7 +539,7 @@ Acceptance:
 - [ ] Returned product IDs remain the same.
 - [ ] A different hard constraint, such as `推荐防晒霜，预算1元以内`, must not reuse the old cached product cards.
 
-## 13. Evidence Reranker Verification
+## 14. Evidence Reranker Verification
 
 Automated tests cover this directly:
 
@@ -522,7 +558,7 @@ Acceptance:
 - [ ] Towel-style product evidence does not include `好吃` / `入口` style food review.
 - [ ] Sensitive-skin negative risk review remains available when the query mentions sensitive skin.
 
-## 14. Scenario Bundle Verification
+## 15. Scenario Bundle Verification
 
 Send:
 
@@ -542,7 +578,7 @@ Acceptance:
 - [ ] Bundle item products are real catalog product IDs.
 - [ ] Treat this as a fixed demo scenario with known slots, not as proof of a generic scene planner.
 
-## 15. Known Non-Goals for This Backend Verification
+## 16. Known Non-Goals for This Backend Verification
 
 Do not fail backend verification for these unless the current task explicitly expands scope:
 
@@ -552,7 +588,7 @@ Do not fail backend verification for these unless the current task explicitly ex
 - Production Redis/cache invalidation is not part of the first memory-cache version.
 - Generic scene planning is not implemented in this pass; the current Sanya bundle is a fixed demo-slot flow.
 
-## 16. Issue Reporting Format
+## 17. Issue Reporting Format
 
 When a verifier finds a problem, report with:
 
@@ -574,14 +610,15 @@ Suggested severity:
 - `major`: wrong intent route, no cart state update, hallucinated product ID, cache crosses constraints.
 - `minor`: wording awkward, quick actions not ideal, evidence order debatable.
 
-## 17. Final Acceptance Checklist
+## 18. Final Acceptance Checklist
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `41 passed`.
+- [ ] Full test suite returns `44 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.
+- [ ] Pure greetings and thanks do not trigger product retrieval or product cards.
 - [ ] Active clarification triggers only for high-uncertainty requests and does not block specific requests.
 - [ ] Multi-turn followup preserves previous constraints.
 - [ ] Comparison uses recent recommendation memory.

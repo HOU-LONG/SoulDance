@@ -10,21 +10,22 @@ For a normal recommendation, the WebSocket response should follow this order:
 assistant_state
 text_delta              # deterministic understanding sentence
 assistant_state         # optional selection status
+text_delta              # grounded explanation
 products_start
 product_item...
 products_done
-text_delta              # grounded explanation
 quick_actions
 done
 ```
 
-This puts a useful sentence on screen before cards arrive, runs LLM product selection over backend candidates, then gives the user one-tap ways to refine the result.
+This puts useful text on screen before cards arrive, runs LLM product selection over backend candidates, streams the grounded explanation, and then emits final product cards.
 
 ## Optional Events
 
 - `assistant_state`: lightweight phase marker for UI status text or telemetry.
 - `assistant_state.intent`, `assistant_state.retrieval_mode`, and `assistant_state.llm_mode` are optional debug fields for verification UIs.
 - `assistant_state.selection_mode`, `assistant_state.candidate_count`, and `assistant_state.selected_count` are optional fields showing LLM product-card selection status.
+- `assistant_state.context_action` is an optional field showing whether the turn is a `new_task`, `clarification_answer`, `followup`, or normal same-task turn.
 - `small_talk` responses do not use a dedicated event; clients receive `assistant_state`, `text_delta`, and `done`.
 - `quick_actions`: low-cost refinement actions such as `更便宜`, `不要这个品牌`, `更适合户外`.
 - `clarification_request`: used only when recommending immediately would be unreliable.
@@ -45,6 +46,7 @@ taxonomy and hard filters
 ranker/reranker candidate pool
 LLM selection_decision
 backend final validation
+grounded explanation text
 ```
 
 The LLM can only select product IDs from the candidate pool. The backend discards IDs outside the pool and re-checks hard constraints before streaming cards. The final count is dynamic, with a demo cap of 4 cards.

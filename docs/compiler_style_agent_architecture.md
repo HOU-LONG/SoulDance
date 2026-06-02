@@ -18,9 +18,9 @@ Client Request
 
 The important boundary is simple:
 
-- LLM may parse intent and write final natural-language explanation.
-- Backend deterministically executes retrieval, hard filtering, ranking, reference resolution, cart mutation, and event rendering.
-- LLM never chooses final products, mutates cart state, bypasses hard filters, invents usable product IDs, or controls product card order.
+- LLM may parse intent, choose product IDs from backend candidates, and write final natural-language explanation.
+- Backend deterministically executes session state updates, retrieval, hard filtering, ranking, reference resolution, cart mutation, final product validation, and event rendering.
+- LLM never mutates cart state, bypasses hard filters, invents usable product IDs, or controls product card event order.
 
 ## Core Modules
 
@@ -80,6 +80,8 @@ SessionState
 - dialog_state
 - active_focus
 - recommendation_memory
+- pending_clarification
+- current_task
 - cart_memory
 - constraint_state
 - trace
@@ -88,6 +90,8 @@ SessionState
 Important rules:
 
 - `constraint_state.hard` is the current source of truth for hard constraints.
+- `pending_clarification` records the category/sub-category and question for the next preference-only clarification answer.
+- `current_task` marks the active shopping task; explicit new taxonomy requests reset conflicting task constraints.
 - `recommendation_memory.items` is the source for "第一款 / 第二款 / 最便宜".
 - `active_focus.product_id` is the source for product BottomSheet followup.
 - `cart_memory.recent_product_id` tracks recent cart target.
@@ -105,7 +109,9 @@ user_message
 -> retriever topK
 -> hard_filter
 -> ranker / future custom reranker hook
--> stream: assistant_state -> text_delta -> product_item -> explanation -> quick_actions -> done
+-> LLM selection_decision
+-> backend final validation
+-> stream: assistant_state -> text_delta -> assistant_state(selection) -> explanation -> product_item -> quick_actions -> done
 ```
 
 ### Followup
@@ -213,4 +219,4 @@ Key regression tests cover:
 - followup edits update `SessionState.constraint_state`;
 - hallucinated cart `product_id` is ignored;
 - explicit and natural-language cart actions share deterministic cart execution;
-- streaming keeps product cards before LLM explanation.
+- streaming keeps LLM explanation before product cards.

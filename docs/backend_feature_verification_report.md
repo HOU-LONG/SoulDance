@@ -90,7 +90,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-57 passed, 1 warning
+59 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -98,7 +98,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 57 tests pass.
+- [ ] All 59 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -191,10 +191,10 @@ Expected event order:
 assistant_state
 text_delta
 assistant_state
+text_delta
 products_start
 product_item...
 products_done
-text_delta
 quick_actions
 done
 ```
@@ -205,6 +205,7 @@ Acceptance:
 - [ ] At least one `product_item` is returned.
 - [ ] Product cards appear only after an `assistant_state` with `selection_mode=llm_selection`.
 - [ ] `assistant_state` exposes `candidate_count` and `selected_count`.
+- [ ] Explanation `text_delta` is streamed before `products_start`.
 - [ ] Returned product `sub_category` is `防晒`.
 - [ ] Returned product brand region is not `日本`.
 - [ ] Evidence does not claim unsupported attributes.
@@ -337,6 +338,11 @@ Product-card admission rule:
 - [ ] A product card is emitted only when there is a shopping intent plus backend admission evidence, such as a shopping action, budget/constraint, or a category/sub-category validated by taxonomy.
 - [ ] If LLM incorrectly labels non-shopping text as `recommend_product`, backend admission still blocks retrieval and card emission.
 - [ ] Non-shopping replies can be LLM-generated natural text, but retrieval mode remains `no_retrieval`.
+
+Session context rule:
+
+- [ ] Same-session explicit new taxonomy requests start a new shopping task.
+- [ ] Same-session preference-only answers reuse the current pending clarification.
 
 Mixed greeting plus product request:
 
@@ -588,6 +594,7 @@ product_item events
 Acceptance:
 
 - [ ] `assistant_state.selection_mode` is `llm_selection` for normal recommendations with candidates.
+- [ ] `assistant_state.context_action` shows whether the turn is a new task or a clarification answer when applicable.
 - [ ] `candidate_count` can be larger than `selected_count`.
 - [ ] `selected_count` is between 0 and 4.
 - [ ] Low-relevance requests do not fill three unrelated cards.
@@ -733,7 +740,7 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `57 passed`.
+- [ ] Full test suite returns `59 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.

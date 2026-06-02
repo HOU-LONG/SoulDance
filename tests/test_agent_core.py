@@ -821,7 +821,7 @@ def test_llm_selection_rejects_out_of_pool_and_hard_constraint_violations():
     assert product_ids == [valid_id]
 
 
-def test_recommendation_explanation_uses_llm_streaming_chunks_after_products():
+def test_recommendation_explanation_streams_before_product_cards():
     products = load_products("ecommerce_agent_dataset")
     llm = StreamingResponseLLM()
     agent = ShopGuideAgent(products, llm, FakeRetriever())
@@ -837,18 +837,17 @@ def test_recommendation_explanation_uses_llm_streaming_chunks_after_products():
     )
 
     event_types = [event["type"] for event in events]
-    products_done_index = event_types.index("products_done")
-    quick_actions_index = event_types.index("quick_actions")
+    products_start_index = event_types.index("products_start")
     streamed_text = [
         event["text"]
-        for event in events[products_done_index + 1 : quick_actions_index]
+        for event in events[:products_start_index]
         if event["type"] == "text_delta"
     ]
-    assert streamed_text == llm.chunks
+    assert streamed_text[-3:] == llm.chunks
     assert not llm.generate_called
 
 
-def test_recommendation_stream_emits_products_before_llm_explanation_finishes():
+def test_recommendation_stream_waits_for_llm_explanation_before_product_cards():
     async def run():
         products = load_products("ecommerce_agent_dataset")
         llm = BlockingResponseLLM()
@@ -865,19 +864,27 @@ def test_recommendation_stream_emits_products_before_llm_explanation_finishes():
         for _ in range(10):
             event = await asyncio.wait_for(anext(stream), timeout=0.2)
             events.append(event)
-            if event["type"] == "products_done":
+            if event.get("selection_mode") == "llm_selection" and "selected_count" in event:
                 break
+
+        pending_event = asyncio.create_task(anext(stream))
+        await asyncio.wait_for(llm.generate_started.wait(), timeout=0.2)
 
         assert [event["type"] for event in events][:2] == ["assistant_state", "text_delta"]
-        assert any(event["type"] == "product_item" for event in events)
-        assert events[-1]["type"] == "products_done"
-        assert not llm.generate_started.is_set()
+        assert not any(event["type"] == "product_item" for event in events)
+        assert not pending_event.done()
 
         llm.release_generate.set()
+        events.append(await asyncio.wait_for(pending_event, timeout=0.2))
         while True:
             event = await asyncio.wait_for(anext(stream), timeout=0.2)
+            events.append(event)
             if event["type"] == "done":
                 break
+
+        event_types = [event["type"] for event in events]
+        assert event_types.index("products_start") > event_types.index("text_delta")
+        assert any(event["type"] == "product_item" for event in events)
 
     asyncio.run(run())
 
@@ -965,6 +972,63 @@ def test_clarification_answer_reuses_session_category_and_soft_preference():
     assert all(event["product"]["sub_category"] == "智能手机" for event in product_events)
     plan = agent.sessions.get("demo_clarify_answer").last_plan
     assert plan.soft_preferences["priority"] == "拍照"
+
+
+def test_new_taxonomy_request_replaces_pending_clarification_category():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_switch_pending", message="推荐一台笔记本")
+        )
+    )
+    assert "clarification_request" in [event["type"] for event in first_events]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_switch_pending", message="我想要手机")
+        )
+    )
+
+    event_types = [event["type"] for event in second_events]
+    assert "product_item" not in event_types
+    assert "clarification_request" in event_types
+    question = next(event["question"] for event in second_events if event["type"] == "clarification_request")
+    assert "拍照" in question
+    assert "笔记本" not in question
+    plan = agent.sessions.get("demo_switch_pending").last_plan
+    assert plan.hard_constraints.sub_category == "智能手机"
+
+
+def test_clarification_preference_answer_inherits_pending_category():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_pending_answer", message="推荐一台笔记本")
+        )
+    )
+    assert "clarification_request" in [event["type"] for event in first_events]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_pending_answer", message="性价比优先，预算5000以内")
+        )
+    )
+
+    event_types = [event["type"] for event in second_events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in second_events if event["type"] == "product_item"]
+    if product_events:
+        assert all(event["product"]["sub_category"] == "笔记本电脑" for event in product_events)
+        assert all(event["product"]["price"] <= 5000 for event in product_events)
+    else:
+        assert "filter_recovery_options" in event_types
+    plan = agent.sessions.get("demo_pending_answer").last_plan
+    assert plan.hard_constraints.sub_category == "笔记本电脑"
+    assert plan.soft_preferences["priority"] == "性价比"
 
 
 def test_ambiguous_laptop_request_asks_clarification_without_products():

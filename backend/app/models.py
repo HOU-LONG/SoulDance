@@ -139,6 +139,19 @@ class RecommendationMemory(BaseModel):
     items: list[RecommendationMemoryItem] = Field(default_factory=list)
 
 
+class PendingClarification(BaseModel):
+    category: str | None = None
+    sub_category: str | None = None
+    question: str | None = None
+    created_turn: int = 0
+
+
+class CurrentTaskState(BaseModel):
+    task_id: str | None = None
+    category: str | None = None
+    sub_category: str | None = None
+
+
 class ConstraintState(BaseModel):
     hard: HardConstraints = Field(default_factory=HardConstraints)
     soft: dict[str, str] = Field(default_factory=dict)
@@ -161,6 +174,8 @@ class SessionState(BaseModel):
     dialog_state: DialogState = Field(default_factory=DialogState)
     active_focus: ActiveFocusState = Field(default_factory=ActiveFocusState)
     recommendation_memory: RecommendationMemory = Field(default_factory=RecommendationMemory)
+    pending_clarification: PendingClarification | None = None
+    current_task: CurrentTaskState = Field(default_factory=CurrentTaskState)
     constraint_state: ConstraintState = Field(default_factory=ConstraintState)
     cart_memory: CartMemory = Field(default_factory=CartMemory)
     trace: TraceState = Field(default_factory=TraceState)

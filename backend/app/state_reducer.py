@@ -49,12 +49,12 @@ def _apply_constraint_edits(hard: HardConstraints, soft: dict[str, str], edits: 
 
 def _apply_query_intent_defaults(hard: HardConstraints, soft: dict[str, str], ir: ShoppingIntentIR) -> None:
     query_intent = ir.query_intent
-    if query_intent.category and not hard.category:
+    if query_intent.category:
         hard.category = query_intent.category
-    if query_intent.sub_category and not hard.sub_category:
+    if query_intent.sub_category:
         hard.sub_category = query_intent.sub_category
     for key, value in query_intent.soft_preferences.items():
-        if value and key not in soft:
+        if value:
             soft[key] = value
 
 

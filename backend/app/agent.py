@@ -14,6 +14,7 @@ from .memory_cache import StructuredMemoryCache
 from .models import (
     ChatRequest,
     HardConstraints,
+    PendingClarification,
     Product,
     ProductCard,
     RankedProduct,
@@ -61,6 +62,7 @@ class ShopGuideAgent:
         context = self.sessions.get(request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
         ir = await self.intent_compiler.compile(request, context)
+        self._prepare_context_for_turn(context, request, ir)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
@@ -109,6 +111,7 @@ class ShopGuideAgent:
             async for event in self._stream_no_retrieval_events(request, ir.intent):
                 yield event
             return
+        context_action = self._prepare_context_for_turn(context, request, ir)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
@@ -121,7 +124,7 @@ class ShopGuideAgent:
                 yield event
             return
         if plan.need_clarification or plan.intent == "clarification":
-            for event in self._build_clarification_events(plan):
+            for event in self._build_clarification_events(context, plan, context_action):
                 yield event
             return
         if plan.intent == "compare_products":
@@ -142,7 +145,7 @@ class ShopGuideAgent:
             yield {"type": "done", "message_id": message_id}
             return
         ranked = self.retrieve_and_rank(plan)
-        async for event in self._stream_recommendation_events(request, plan, ranked):
+        async for event in self._stream_recommendation_events(request, plan, ranked, context_action):
             yield event
 
     async def _handle_followup(self, request: ChatRequest) -> list[dict]:
@@ -159,6 +162,7 @@ class ShopGuideAgent:
         if ir is None:
             seed_constraint_state_from_plan(context, context.last_plan)
             ir = await self.intent_compiler.compile(request, context)
+        self._prepare_context_for_turn(context, request, ir)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
@@ -210,7 +214,11 @@ class ShopGuideAgent:
         return [event async for event in self._stream_recommendation_events(request, plan, ranked)]
 
     async def _stream_recommendation_events(
-        self, request: ChatRequest, plan: RetrievalPlan, ranked: list[RankedProduct]
+        self,
+        request: ChatRequest,
+        plan: RetrievalPlan,
+        ranked: list[RankedProduct],
+        context_action: str = "same_task",
     ) -> AsyncIterator[dict]:
         message_id = _message_id()
         intro = _understanding_text(plan)
@@ -221,6 +229,7 @@ class ShopGuideAgent:
             plan,
             selection_mode="llm_selection",
             candidate_count=len(ranked),
+            context_action=context_action,
         )
         for event in _text_delta_events(message_id, intro):
             yield event
@@ -233,8 +242,11 @@ class ShopGuideAgent:
             selection_mode="llm_selection",
             candidate_count=len(ranked),
             selected_count=len(selected),
+            context_action=context_action,
         )
         if not selected:
+            context = self.sessions.get(request.session_id)
+            context.state.pending_clarification = None
             text = _no_match_text(plan)
             for event in _text_delta_events(message_id, text):
                 yield event
@@ -245,6 +257,11 @@ class ShopGuideAgent:
             return
         context = self.sessions.get(request.session_id)
         self._remember_recommendations(context, plan, selected)
+        text_parts: list[str] = []
+        async for event in self._stream_generate_text_events(message_id, request, plan, selected, None):
+            text_parts.append(event["text"])
+            yield event
+        text = "".join(text_parts)
         yield {"type": "products_start", "message_id": message_id}
         for index, item in enumerate(selected):
             yield {
@@ -255,11 +272,6 @@ class ShopGuideAgent:
                 "product": _product_card(item).model_dump(mode="json"),
             }
         yield {"type": "products_done", "message_id": message_id}
-        text_parts: list[str] = []
-        async for event in self._stream_generate_text_events(message_id, request, plan, selected, None):
-            text_parts.append(event["text"])
-            yield event
-        text = "".join(text_parts)
         yield _quick_actions_event(message_id, plan, selected)
         yield {"type": "done", "message_id": message_id}
         for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
@@ -351,10 +363,21 @@ class ShopGuideAgent:
         for event in _text_delta_events(message_id, text):
             yield event
 
-    def _build_clarification_events(self, plan: RetrievalPlan) -> list[dict]:
+    def _build_clarification_events(
+        self, context: SessionContext, plan: RetrievalPlan, context_action: str = "same_task"
+    ) -> list[dict]:
         message_id = _message_id()
         question = plan.clarification_question or "我需要再确认一个关键偏好，才能更稳地推荐。"
-        events = [self._assistant_state(message_id, "clarifying", "需要确认一个关键偏好", plan)]
+        _remember_pending_clarification(context, plan, question)
+        events = [
+            self._assistant_state(
+                message_id,
+                "clarifying",
+                "需要确认一个关键偏好",
+                plan,
+                context_action=context_action,
+            )
+        ]
         events.extend(_text_delta_events(message_id, question))
         events.append(
             {
@@ -408,6 +431,42 @@ class ShopGuideAgent:
         plan.clarification_question = None
         plan.category = None
 
+    def _prepare_context_for_turn(self, context: SessionContext, request: ChatRequest, ir) -> str:
+        if request.type == "product_followup":
+            return "followup"
+        if ir.intent not in {"recommend_product", "clarification"}:
+            return ir.intent
+        explicit_match = self.taxonomy.resolve(request.message)
+        pending = context.state.pending_clarification
+        if explicit_match:
+            current = context.state.constraint_state.hard
+            current_sub = current.sub_category
+            current_category = current.category
+            target_sub = explicit_match.sub_category
+            target_category = explicit_match.category
+            pending_sub = pending.sub_category if pending else None
+            pending_category = pending.category if pending else None
+            is_conflict = (
+                (target_sub and current_sub and target_sub != current_sub)
+                or (target_sub and pending_sub and target_sub != pending_sub)
+                or (not target_sub and target_category and current_category and target_category != current_category)
+                or (not target_sub and target_category and pending_category and target_category != pending_category)
+            )
+            if is_conflict:
+                _reset_shopping_task(context)
+                return "new_task"
+            if pending and (
+                (target_sub and target_sub == pending.sub_category)
+                or (not target_sub and target_category == pending.category)
+            ):
+                _seed_pending_constraints(context)
+                return "clarification_answer"
+            return "same_task"
+        if pending and _looks_like_clarification_answer(request.message, ir):
+            _seed_pending_constraints(context)
+            return "clarification_answer"
+        return "same_task"
+
     def _assistant_state(
         self,
         message_id: str,
@@ -419,6 +478,7 @@ class ShopGuideAgent:
         selection_mode: str | None = None,
         candidate_count: int | None = None,
         selected_count: int | None = None,
+        context_action: str | None = None,
     ) -> dict:
         return _assistant_state(
             message_id,
@@ -430,6 +490,7 @@ class ShopGuideAgent:
             selection_mode=selection_mode,
             candidate_count=candidate_count,
             selected_count=selected_count,
+            context_action=context_action,
         )
 
     def _build_comparison_events(self, request: ChatRequest) -> list[dict]:
@@ -582,6 +643,11 @@ class ShopGuideAgent:
         ]
         context.state.constraint_state.hard = plan.hard_constraints.model_copy(deep=True)
         context.state.constraint_state.soft = dict(plan.soft_preferences)
+        context.state.pending_clarification = None
+        context.state.current_task.category = plan.hard_constraints.category
+        context.state.current_task.sub_category = plan.hard_constraints.sub_category
+        if not context.state.current_task.task_id:
+            context.state.current_task.task_id = "task_" + uuid.uuid4().hex[:8]
         if ranked:
             context.focus_product_id = ranked[0].product.product_id
             context.active_focus = {
@@ -676,6 +742,7 @@ def _assistant_state(
     selection_mode: str | None = None,
     candidate_count: int | None = None,
     selected_count: int | None = None,
+    context_action: str | None = None,
 ) -> dict:
     event = {"type": "assistant_state", "message_id": message_id, "phase": phase, "label": label}
     if intent:
@@ -690,7 +757,57 @@ def _assistant_state(
         event["candidate_count"] = candidate_count
     if selected_count is not None:
         event["selected_count"] = selected_count
+    if context_action:
+        event["context_action"] = context_action
     return event
+
+
+def _reset_shopping_task(context: SessionContext) -> None:
+    context.state.constraint_state.hard = HardConstraints()
+    context.state.constraint_state.soft = {}
+    context.state.pending_clarification = None
+    context.state.current_task.task_id = "task_" + uuid.uuid4().hex[:8]
+    context.state.current_task.category = None
+    context.state.current_task.sub_category = None
+    context.last_product_ids = []
+    context.last_recommendations = []
+    context.focus_product_id = None
+    context.active_focus = {}
+    context.state.active_focus.type = None
+    context.state.active_focus.product_id = None
+    context.state.active_focus.source = None
+    context.state.recommendation_memory.items = []
+    context.state.recommendation_memory.last_set_id = None
+
+
+def _seed_pending_constraints(context: SessionContext) -> None:
+    pending = context.state.pending_clarification
+    if not pending:
+        return
+    hard = context.state.constraint_state.hard
+    hard.category = pending.category or hard.category
+    hard.sub_category = pending.sub_category or hard.sub_category
+
+
+def _remember_pending_clarification(context: SessionContext, plan: RetrievalPlan, question: str) -> None:
+    constraints = plan.hard_constraints
+    context.state.pending_clarification = PendingClarification(
+        category=constraints.category,
+        sub_category=constraints.sub_category,
+        question=question,
+        created_turn=context.state.dialog_state.turn_index,
+    )
+    context.state.current_task.category = constraints.category
+    context.state.current_task.sub_category = constraints.sub_category
+
+
+def _looks_like_clarification_answer(message: str, ir) -> bool:
+    edits = ir.constraint_edits
+    if edits.add.price_max is not None or edits.add.soft_preferences:
+        return True
+    if ir.query_intent.soft_preferences:
+        return True
+    return bool(re.search(r"预算|以内|以下|拍照|续航|性价比|性能|轻薄|便携|清爽|温和|保湿|修护", message or ""))
 
 
 def _llm_mode(llm_client) -> str:

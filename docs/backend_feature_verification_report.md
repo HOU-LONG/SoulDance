@@ -21,6 +21,7 @@ codex/rag-memory-reranker
 Expected latest commits:
 
 ```text
+8a0e14c feat: add restrained active clarification policy
 c7e0355 fix: enforce dataset taxonomy constraints
 c058416 docs: add backend feature verification report
 a0f7a73 docs: document rag memory reranker implementation

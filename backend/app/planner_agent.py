@@ -14,8 +14,15 @@ CATEGORY_ALIASES = {
     "防晒": "防晒",
     "洗面奶": "洁面",
     "洁面": "洁面",
+    "精华液": "精华",
+    "精华": "精华",
+    "护肤品": "美妆护肤",
     "手机": "智能手机",
     "智能手机": "智能手机",
+    "笔记本电脑": "笔记本电脑",
+    "笔记本": "笔记本电脑",
+    "轻薄本": "笔记本电脑",
+    "电脑本": "笔记本电脑",
     "耳机": "真无线耳机",
     "跑鞋": "跑步鞋",
     "跑步鞋": "跑步鞋",
@@ -219,7 +226,18 @@ def _clarification_policy(
         return False, None
     if category == "智能手机" and constraints.price_max is None and "priority" not in soft:
         return True, "选手机我需要先知道你更看重拍照、续航还是性价比？也可以直接告诉我预算。"
+    if category == "笔记本电脑" and constraints.price_max is None and "priority" not in soft:
+        return True, "选笔记本我需要先知道你更看重轻薄便携、性能，还是性价比？也可以直接告诉我预算。"
+    if _is_generic_gift_request(text) and (constraints.price_max is None or "recipient" not in soft):
+        return True, "送礼我需要先确认预算和对象：更偏实用、惊喜感，还是稳妥不踩雷？"
+    if category == "美妆护肤" and constraints.sub_category is None and constraints.price_max is None:
+        if "skin_type" not in soft and "effect" not in soft:
+            return True, "护肤品我需要先确认肤质或功效：油皮清爽、敏感肌温和，还是保湿修护？"
     return False, None
+
+
+def _is_generic_gift_request(text: str) -> bool:
+    return bool(re.search(r"送人|送给|礼物|生日|女朋友|男朋友|父母|长辈", text or ""))
 
 
 def _parent_category(sub_category: str | None) -> str | None:

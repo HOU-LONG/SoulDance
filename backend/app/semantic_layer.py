@@ -81,6 +81,31 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
             edits.add.exclude_brand_regions.append("日本")
         if "苹果" in text or "Apple" in text or "apple" in text:
             edits.add.exclude_brands.append("苹果")
+    soft = edits.add.soft_preferences
+    if "拍照" in text:
+        soft["priority"] = "拍照"
+    if "续航" in text:
+        soft["priority"] = "续航"
+    if "性价比" in text:
+        soft["priority"] = "性价比"
+    if "轻薄" in text or "便携" in text:
+        soft["priority"] = "轻薄便携"
+    if "性能" in text or "游戏" in text:
+        soft["priority"] = "性能优先"
+    if "油皮" in text or "混油" in text:
+        soft["skin_type"] = "油皮"
+    if "敏感肌" in text:
+        soft["skin_type"] = "敏感肌"
+    if "保湿" in text or "修护" in text:
+        soft["effect"] = "保湿修护"
+    if "女朋友" in text or "女生" in text:
+        soft["recipient"] = "女朋友"
+    if "男朋友" in text or "男生" in text:
+        soft["recipient"] = "男朋友"
+    if "爸" in text or "妈" in text or "父母" in text or "长辈" in text:
+        soft["recipient"] = "长辈"
+    if "礼物" in text or "送人" in text or "送给" in text:
+        soft["occasion"] = "送礼"
     if request.type == "product_followup":
         intent = "product_followup"
     return SemanticFrame(intent=intent, constraint_edits=edits)
@@ -121,6 +146,7 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     )
     if guarded.constraint_edits.add.price_max is not None:
         frame.constraint_edits.add.price_max = guarded.constraint_edits.add.price_max
+    frame.constraint_edits.add.soft_preferences.update(guarded.constraint_edits.add.soft_preferences)
     frame.constraint_edits.remove.exclude_terms = _dedupe(
         frame.constraint_edits.remove.exclude_terms + guarded.constraint_edits.remove.exclude_terms
     )

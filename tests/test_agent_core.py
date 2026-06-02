@@ -548,6 +548,112 @@ def test_ambiguous_phone_request_asks_clarification_without_products():
     assert "拍照" in question
 
 
+def test_phone_request_with_budget_and_priority_recommends_without_clarification():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_phone_ready",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["sub_category"] == "智能手机" for event in product_events)
+    assert all(event["product"]["price"] <= 4000 for event in product_events)
+
+
+def test_clarification_answer_reuses_session_category_and_soft_preference():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_clarify_answer", message="推荐一款手机")
+        )
+    )
+    assert "clarification_request" in [event["type"] for event in first_events]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_clarify_answer", message="拍照优先，预算4000")
+        )
+    )
+
+    event_types = [event["type"] for event in second_events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in second_events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["sub_category"] == "智能手机" for event in product_events)
+    plan = agent.sessions.get("demo_clarify_answer").last_plan
+    assert plan.soft_preferences["priority"] == "拍照"
+
+
+def test_ambiguous_laptop_request_asks_clarification_without_products():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_laptop_clarify", message="推荐一台笔记本")
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" in event_types
+    assert "product_item" not in event_types
+    question = next(event["question"] for event in events if event["type"] == "clarification_request")
+    assert "轻薄" in question
+
+
+def test_generic_gift_request_asks_clarification_without_cross_category_cards():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_gift_clarify", message="送女朋友礼物")
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" in event_types
+    assert "product_item" not in event_types
+    question = next(event["question"] for event in events if event["type"] == "clarification_request")
+    assert "预算" in question
+
+
+def test_generic_skincare_request_asks_clarification_but_specific_essence_does_not():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    generic_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_skincare_clarify", message="推荐护肤品")
+        )
+    )
+    assert "clarification_request" in [event["type"] for event in generic_events]
+    assert not any(event["type"] == "product_item" for event in generic_events)
+
+    specific_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_skincare_specific", message="推荐精华，预算100以内")
+        )
+    )
+    assert "clarification_request" not in [event["type"] for event in specific_events]
+    product_events = [event for event in specific_events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["sub_category"] == "精华" for event in product_events)
+    assert all(event["product"]["price"] <= 100 for event in product_events)
+
+
 def test_no_match_returns_filter_recovery_options():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())

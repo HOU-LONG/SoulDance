@@ -260,11 +260,7 @@ class ShopGuideAgent:
                 "type": "clarification_request",
                 "message_id": message_id,
                 "question": question,
-                "options": [
-                    {"label": "拍照优先", "message": "拍照优先"},
-                    {"label": "续航优先", "message": "续航优先"},
-                    {"label": "性价比", "message": "性价比优先"},
-                ],
+                "options": _clarification_options(question),
             }
         )
         events.append({"type": "done", "message_id": message_id})
@@ -563,6 +559,32 @@ def _quick_actions_event(
     if extra:
         actions.extend(extra)
     return {"type": "quick_actions", "message_id": message_id, "actions": actions[:5]}
+
+
+def _clarification_options(question: str) -> list[dict[str, str]]:
+    if "笔记本" in question:
+        return [
+            {"label": "轻薄便携", "message": "轻薄便携，预算6000以内"},
+            {"label": "性能优先", "message": "性能优先，预算8000以内"},
+            {"label": "性价比", "message": "性价比优先，预算5000以内"},
+        ]
+    if "送礼" in question:
+        return [
+            {"label": "实用礼物", "message": "实用礼物，预算300以内"},
+            {"label": "惊喜感", "message": "更有惊喜感，预算500以内"},
+            {"label": "稳妥不踩雷", "message": "稳妥不踩雷，预算300以内"},
+        ]
+    if "护肤品" in question:
+        return [
+            {"label": "油皮清爽", "message": "油皮清爽，预算200以内"},
+            {"label": "敏感肌温和", "message": "敏感肌温和，预算300以内"},
+            {"label": "保湿修护", "message": "保湿修护，预算200以内"},
+        ]
+    return [
+        {"label": "拍照优先", "message": "拍照优先，预算4000以内"},
+        {"label": "续航优先", "message": "续航优先，预算4000以内"},
+        {"label": "性价比", "message": "性价比优先，预算3000以内"},
+    ]
 
 
 def _filter_recovery_event(message_id: str, plan: RetrievalPlan) -> dict:

@@ -261,3 +261,62 @@ def test_websocket_cart_operation_can_be_detected_by_semantic_frame_without_keyw
     assert cart_event["product_id"] == primary_product_id
     assert cart_event["cart"]["items"][0]["quantity"] == 2
     assert done_event["type"] == "done"
+
+
+def test_websocket_oral_cart_followup_is_rule_guarded_after_recommendation():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_oral_cart",
+                "message": "推荐一款手机，预算4000，拍照优先",
+            }
+        )
+        primary_product_id = None
+        while True:
+            event = websocket.receive_json()
+            if event["type"] == "product_item" and event["role"] == "primary":
+                primary_product_id = event["product"]["product_id"]
+            if event["type"] == "done":
+                break
+
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_oral_cart",
+                "message": "要这个",
+            }
+        )
+        cart_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    assert cart_event["type"] == "cart_update"
+    assert cart_event["action"] == "add_to_cart"
+    assert cart_event["product_id"] == primary_product_id
+    assert cart_event["cart"]["items"][0]["quantity"] == 1
+    assert done_event["type"] == "done"
+
+
+def test_websocket_oral_cart_followup_without_recommendation_does_not_add_random_product():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_oral_cart_no_context",
+                "message": "就这个来两件",
+            }
+        )
+        cart_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    assert cart_event["type"] == "cart_update"
+    assert cart_event["action"] == "get_cart"
+    assert cart_event["product_id"] is None
+    assert cart_event["cart"]["items"] == []
+    assert done_event["type"] == "done"

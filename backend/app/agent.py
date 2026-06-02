@@ -239,7 +239,6 @@ class ShopGuideAgent:
             for event in _text_delta_events(message_id, text):
                 yield event
             yield _filter_recovery_event(message_id, plan)
-            yield _quick_actions_event(message_id, plan, selected)
             yield {"type": "done", "message_id": message_id}
             for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
                 yield event

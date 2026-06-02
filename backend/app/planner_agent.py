@@ -232,9 +232,13 @@ def _is_small_talk_intent(text: str) -> bool:
         flags=re.I,
     ):
         return False
+    if ("你好" in normalized or "您好" in normalized or re.search(r"h[ae]l+o+|hello|hi|hey", normalized)) and (
+        "你是谁" in normalized or "你能做什么" in normalized or "你是干嘛的" in normalized
+    ):
+        return True
     return bool(
         re.fullmatch(
-            r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁|你是干嘛的|你能做什么)",
+            r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁呀?|你是干嘛的|你能做什么)",
             normalized,
         )
     )

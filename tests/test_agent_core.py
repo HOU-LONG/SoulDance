@@ -272,6 +272,33 @@ def test_small_talk_variants_do_not_trigger_retrieval():
     assert retriever.calls == 0
 
 
+def test_small_talk_identity_combo_stays_small_talk():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    agent = ShopGuideAgent(products, FakeLLMClient(), retriever)
+
+    for index, message in enumerate(["你好，你是谁", "你好，你能做什么", "你是谁呀"]):
+        plan = asyncio.run(
+            agent.plan(
+                ChatRequest(type="user_message", session_id=f"demo_small_talk_combo_plan_{index}", message=message)
+            )
+        )
+        assert plan.intent == "small_talk"
+
+        events = asyncio.run(
+            agent.handle_message(
+                ChatRequest(type="user_message", session_id=f"demo_small_talk_combo_{index}", message=message)
+            )
+        )
+
+        event_types = [event["type"] for event in events]
+        assert "product_item" not in event_types
+        state = next(event for event in events if event["type"] == "assistant_state")
+        assert state["intent"] == "small_talk"
+
+    assert retriever.calls == 0
+
+
 def test_llm_small_talk_intent_is_honored_for_unlisted_greeting():
     products = load_products("ecommerce_agent_dataset")
     retriever = CountingRetriever(products)
@@ -693,6 +720,38 @@ def test_recommendation_streams_understanding_before_products_and_quick_actions(
     assert event_types.index("quick_actions") < event_types.index("done")
     quick_actions = next(event for event in events if event["type"] == "quick_actions")
     assert {action["label"] for action in quick_actions["actions"]} >= {"更便宜", "不要这个品牌"}
+
+
+def test_recovery_without_products_does_not_emit_product_focus_quick_actions():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_no_product_actions",
+                message="我想给大学生买一台轻薄笔记本，预算1元以内，不要苹果",
+            )
+        )
+    )
+
+    assert not [event for event in events if event["type"] == "product_item"]
+    assert any(event["type"] == "filter_recovery_options" for event in events)
+    quick_actions = [event for event in events if event["type"] == "quick_actions"]
+    assert not quick_actions
+
+
+def test_unknown_taxonomy_recovery_does_not_emit_quick_actions():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_towel_no_actions", message="推荐毛巾"))
+    )
+
+    assert "filter_recovery_options" in [event["type"] for event in events]
+    assert "quick_actions" not in [event["type"] for event in events]
 
 
 def test_llm_selection_controls_single_product_card_count():

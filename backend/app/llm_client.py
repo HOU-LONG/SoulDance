@@ -22,9 +22,11 @@ intent 只能是 recommend_product, product_followup, compare_products, cart_ope
 纯寒暄、感谢、询问助手身份等非购物消息输出 small_talk；如果同一句里包含明确购物需求，购物意图优先。
 乱码、自我陈述、情绪表达、没有购物动作也没有明确商品类目的输入输出 unclear_input，不要联想商品。
 示例：`halo`、`hallo`、`hello`、`hi`、`你好`、`在吗`、`谢谢` -> small_talk。
+示例：`你好，你是谁`、`你好，你能做什么`、`你是谁呀` -> small_talk。
 示例：`sdfghjhgfdg`、`我是猪`、`哈哈哈`、`我今天很难过` -> unclear_input。
 示例：`halo，推荐防晒霜`、`你好，预算100以内推荐精华` -> recommend_product。
 示例：`我想买猪肉松`、`推荐毛巾` -> recommend_product。
+如果用户在已有推荐后说 `就这个来两件`、`要这个`、`这个要两件`、`来一个`、`买两件`、`就它了`，输出 cart_operation/add_to_cart，target.reference 用 last_recommendations 或 focus_product。
 followup 偏好变化放在 constraint_edits：add 表示新增或覆盖约束，remove 表示用户明确取消旧约束，relax 表示放宽某类约束。
 自然语言购物车放在 cart_operation，target.reference 可用 focus_product, last_recommendation, last_recommendations, recent_cart_item。
 target.selection_strategy 可用 primary, cheapest, most_expensive, index。

@@ -175,9 +175,13 @@ def _is_small_talk(text: str) -> bool:
         return True
     if _has_shopping_signal(text):
         return False
+    if ("你好" in normalized or "您好" in normalized or re.search(r"h[ae]l+o+|hello|hi|hey", normalized)) and (
+        "你是谁" in normalized or "你能做什么" in normalized or "你是干嘛的" in normalized
+    ):
+        return True
     return bool(
         re.fullmatch(
-            r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁|你是干嘛的|你能做什么)",
+            r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁呀?|你是干嘛的|你能做什么)",
             normalized,
         )
     )
@@ -304,6 +308,11 @@ def _detect_cart_action(text: str) -> str:
     if any(word in text for word in ["数量", "改成", "改为"]):
         return "update_quantity"
     if any(word in text for word in ["购物车", "加购", "加入", "加到"]):
+        return "add_to_cart"
+    if re.search(
+        r"就这个|要这个|这个要|这款要|要这款|就它了|就这款|刚才.*(?:要|来|买)|(?:来|买)[一两二三四五\\d]+[件个](?:这个|这款|它)?$",
+        text or "",
+    ):
         return "add_to_cart"
     return "get_cart"
 

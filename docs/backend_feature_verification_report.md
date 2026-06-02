@@ -66,11 +66,11 @@ export SHOPGUIDE_MEMORY_CACHE_PATH="cache/shopguide_memory.jsonl"
 | RAG retrieval | BM25 plus optional embedding retrieval | To verify |
 | Hard filters | Budget, category, sub-category, excluded terms, excluded brand region, excluded brand | To verify |
 | LLM semantic layer | LLM parses intent; backend rule guards preserve hard constraints | To verify |
-| Small talk routing | Pure greetings and thanks compile to `small_talk` and do not enter product retrieval | To verify |
+| Small talk / unclear routing | Pure greetings compile to `small_talk`; invalid or non-shopping input compiles to `unclear_input`; neither enters product retrieval | To verify |
 | Compiler-style executor | Backend deterministically performs retrieval, filtering, ranking, cart mutation, event rendering | To verify |
 | Streaming API | WebSocket emits ordered assistant/product/cart events | To verify |
 | Active clarification | Emits one-question `clarification_request` for high-uncertainty requests such as generic phone, laptop, gift, or skincare needs | To verify |
-| Product cards | Emits structured `product_item` cards with price, brand, reason, evidence | To verify |
+| Product card admission | Emits structured `product_item` cards only after LLM intent, backend admission, taxonomy/ranker/reranker allow recommendation | To verify |
 | Multi-turn followup | Maintains session constraints and product focus | To verify |
 | Comparison | Compares products from recent recommendation memory | To verify |
 | Scenario bundle | Streams grouped bundle recommendation items | To verify |
@@ -302,6 +302,38 @@ Acceptance:
 - [ ] Text guides the user to provide a shopping need.
 
 English greeting variants such as `hello`, `halo`, and `hallo` should follow the same behavior. In real LLM mode, the semantic parser should classify them as `small_talk`; in fake/no-key mode, the rule fallback should still keep them out of product retrieval.
+
+Invalid or non-shopping inputs:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_unclear_input_001",
+  "message": "sdfghjhgfdg"
+}
+```
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_unclear_input_002",
+  "message": "我是猪"
+}
+```
+
+Acceptance:
+
+- [ ] Retrieval plan intent is `unclear_input`.
+- [ ] `assistant_state` exposes `intent=unclear_input`, `retrieval_mode=no_retrieval`, and `llm_mode`.
+- [ ] Response includes `assistant_state`, `text_delta`, and `done`.
+- [ ] Response does not include `product_item`.
+- [ ] Response does not include `clarification_request`.
+- [ ] Response text asks the user to provide a shopping need instead of inferring a product category.
+
+Product-card admission rule:
+
+- [ ] A product card is emitted only when there is a shopping intent plus backend admission evidence, such as a shopping action, budget/constraint, or a category/sub-category validated by taxonomy.
+- [ ] If LLM incorrectly labels non-shopping text as `recommend_product`, backend admission still blocks retrieval and card emission.
 
 Mixed greeting plus product request:
 

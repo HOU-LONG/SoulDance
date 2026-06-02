@@ -43,6 +43,7 @@ class QueryBuilder:
             "cart_operation": "state_then_action",
             "clarification": "clarification",
             "small_talk": "no_retrieval",
+            "unclear_input": "no_retrieval",
         }.get(intent, "single")
         return RetrievalPlan(
             intent=intent,

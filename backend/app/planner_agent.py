@@ -126,6 +126,8 @@ class PlannerAgent:
             "scenario_bundle": "decompose_parallel",
             "cart_action": "state_then_action",
             "clarification": "clarification",
+            "small_talk": "no_retrieval",
+            "unclear_input": "no_retrieval",
         }.get(intent, "single")
         return RetrievalPlan(
             intent=intent,
@@ -214,7 +216,9 @@ def _detect_intent(text: str, request: ChatRequest) -> str:
         return "compare_products"
     if ("三亚" in text or "海边" in text or "度假" in text) and re.search(r"搭配|一套|方案|从.+到", text):
         return "scenario_bundle"
-    return "recommend_product"
+    if _has_shopping_admission_signal(text) or _detect_category(text):
+        return "recommend_product"
+    return "unclear_input"
 
 
 def _is_small_talk_intent(text: str) -> bool:
@@ -232,6 +236,17 @@ def _is_small_talk_intent(text: str) -> bool:
         re.fullmatch(
             r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁|你是干嘛的|你能做什么)",
             normalized,
+        )
+    )
+
+
+def _has_shopping_admission_signal(text: str) -> bool:
+    return bool(
+        re.search(
+            r"推荐|找|买|想要|想买|看看|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+            r"防晒|精华|护肤|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+            text or "",
+            flags=re.I,
         )
     )
 

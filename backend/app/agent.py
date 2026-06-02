@@ -63,6 +63,7 @@ class ShopGuideAgent:
         plan = self.query_builder.build(ir, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
         plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
+        self._apply_product_admission_gate(plan, request.message)
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         return plan
@@ -102,16 +103,21 @@ class ShopGuideAgent:
             async for event in self._stream_followup(request, ir):
                 yield event
             return
-        if ir.intent == "small_talk":
-            for event in self._build_small_talk_events(ir.intent):
+        if ir.intent in {"small_talk", "unclear_input"}:
+            for event in self._build_no_retrieval_events(ir.intent):
                 yield event
             return
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
         plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
+        self._apply_product_admission_gate(plan, request.message)
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
+        if plan.intent in {"small_talk", "unclear_input"}:
+            for event in self._build_no_retrieval_events(plan.intent):
+                yield event
+            return
         if plan.need_clarification or plan.intent == "clarification":
             for event in self._build_clarification_events(plan):
                 yield event
@@ -300,14 +306,19 @@ class ShopGuideAgent:
         events.append({"type": "done", "message_id": message_id})
         return events
 
-    def _build_small_talk_events(self, intent: str = "small_talk") -> list[dict]:
+    def _build_no_retrieval_events(self, intent: str = "small_talk") -> list[dict]:
         message_id = _message_id()
-        text = "你好，我是你的购物导购助手。你可以直接告诉我购物需求，比如预算、品类、偏好，或者不想要的品牌和成分。"
+        if intent == "unclear_input":
+            label = "未识别到明确购物需求"
+            text = "我还没有理解到明确的购物需求。你可以告诉我想买什么、预算多少，或者有什么偏好和排除条件。"
+        else:
+            label = "回应寒暄"
+            text = "你好，我是你的购物导购助手。你可以直接告诉我购物需求，比如预算、品类、偏好，或者不想要的品牌和成分。"
         events = [
             self._assistant_state(
                 message_id,
                 "chatting",
-                "回应寒暄",
+                label,
                 intent=intent,
                 retrieval_mode="no_retrieval",
             )
@@ -315,6 +326,17 @@ class ShopGuideAgent:
         events.extend(_text_delta_events(message_id, text))
         events.append({"type": "done", "message_id": message_id})
         return events
+
+    def _apply_product_admission_gate(self, plan: RetrievalPlan, message: str) -> None:
+        if plan.intent not in {"recommend_product", "product_followup", "clarification"}:
+            return
+        if _has_product_admission_signal(message, plan, self.taxonomy):
+            return
+        plan.intent = "unclear_input"
+        plan.retrieval_mode = "no_retrieval"
+        plan.need_clarification = False
+        plan.clarification_question = None
+        plan.category = None
 
     def _assistant_state(
         self,
@@ -590,6 +612,36 @@ def _llm_mode(llm_client) -> str:
     if isinstance(llm_client, FakeLLMClient):
         return "fake"
     return "doubao"
+
+
+def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: TaxonomyResolver) -> bool:
+    constraints = plan.hard_constraints
+    if plan.intent in {"product_followup", "clarification"} and (
+        constraints.category
+        or constraints.sub_category
+        or constraints.price_max is not None
+        or constraints.exclude_terms
+        or constraints.exclude_brands
+        or constraints.exclude_brand_regions
+        or plan.soft_preferences
+    ):
+        return True
+    if taxonomy.resolve(message):
+        return True
+    if constraints.category or constraints.sub_category:
+        return True
+    if constraints.price_max is not None or constraints.exclude_terms or constraints.exclude_brands or constraints.exclude_brand_regions:
+        return True
+    if plan.soft_preferences:
+        return True
+    return bool(
+        re.search(
+            r"推荐|找|买|想要|想买|看看|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+            r"礼物|送人|送给",
+            message or "",
+            flags=re.I,
+        )
+    )
 
 
 def _understanding_text(plan: RetrievalPlan) -> str:

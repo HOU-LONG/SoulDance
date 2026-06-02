@@ -264,6 +264,66 @@ def test_llm_small_talk_intent_is_honored_for_unlisted_greeting():
     assert retriever.calls == 0
 
 
+def test_unclear_input_does_not_trigger_retrieval_or_product_cards():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    agent = ShopGuideAgent(products, FakeLLMClient(), retriever)
+
+    for index, message in enumerate(["sdfghjhgfdg", "我是猪"]):
+        plan = asyncio.run(
+            agent.plan(
+                ChatRequest(
+                    type="user_message",
+                    session_id=f"demo_unclear_plan_{index}",
+                    message=message,
+                )
+            )
+        )
+        assert plan.intent == "unclear_input"
+        assert plan.retrieval_mode == "no_retrieval"
+
+        events = asyncio.run(
+            agent.handle_message(
+                ChatRequest(type="user_message", session_id=f"demo_unclear_{index}", message=message)
+            )
+        )
+
+        event_types = [event["type"] for event in events]
+        assert event_types[0] == "assistant_state"
+        assert event_types[-1] == "done"
+        assert "product_item" not in event_types
+        assert "clarification_request" not in event_types
+        state = next(event for event in events if event["type"] == "assistant_state")
+        assert state["intent"] == "unclear_input"
+        assert state["retrieval_mode"] == "no_retrieval"
+        merged_text = "".join(event["text"] for event in events if event["type"] == "text_delta")
+        assert "购物需求" in merged_text
+
+    assert retriever.calls == 0
+
+
+def test_backend_admission_gate_blocks_llm_false_recommend_product_intent():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    llm = SemanticFrameLLM({"intent": "recommend_product"}, {"intent": "recommend_product"})
+    agent = ShopGuideAgent(products, llm, retriever)
+
+    plan = asyncio.run(
+        agent.plan(ChatRequest(type="user_message", session_id="demo_llm_false_positive_plan", message="我是猪"))
+    )
+    assert plan.intent == "unclear_input"
+    assert plan.retrieval_mode == "no_retrieval"
+
+    events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_llm_false_positive", message="我是猪"))
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "product_item" not in event_types
+    assert "clarification_request" not in event_types
+    assert retriever.calls == 0
+
+
 def test_greeting_with_product_request_still_recommends():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())

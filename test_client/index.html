@@ -91,7 +91,7 @@
             <span id="statCount" class="pill"><small>products</small>?</span>
           </div>
         </section>
-        <section class="panel"><div class="head"><h2>测试场景</h2><span>8 项</span></div><div id="scenarios" class="scenarios"></div></section>
+        <section class="panel"><div class="head"><h2>测试场景</h2><span>10 项</span></div><div id="scenarios" class="scenarios"></div></section>
       </aside>
       <main class="workspace">
         <header class="workspace-header head">
@@ -107,7 +107,7 @@
       </aside>
     </div>
     <script>
-      const scenarios = [["含糊手机", "推荐一款手机", "应出现澄清卡片，不出现商品卡片"], ["手机澄清答案", "拍照优先，预算4000以内", "同一 session 下应推荐手机商品"], ["明确手机需求", "推荐一款手机，预算4000，拍照优先", "应直接返回商品，无澄清"], ["含糊笔记本", "推荐一台笔记本", "应出现轻薄/性能/性价比方向澄清"], ["礼物泛需求", "送女朋友礼物", "应询问预算、对象或偏好方向"], ["护肤泛需求", "推荐护肤品", "应询问肤质或功效"], ["明确精华预算", "推荐精华，预算100以内", "应返回精华商品，价格不超过100"], ["未知毛巾类目", "推荐毛巾", "不应出现无关商品，应有恢复选项或无匹配提示"]];
+      const scenarios = [["含糊手机", "推荐一款手机", "应出现澄清卡片，不出现商品卡片"], ["手机澄清答案", "拍照优先，预算4000以内", "同一 session 下应推荐手机商品"], ["明确手机需求", "推荐一款手机，预算4000，拍照优先", "应直接返回商品，无澄清"], ["含糊笔记本", "推荐一台笔记本", "应出现轻薄/性能/性价比方向澄清"], ["礼物泛需求", "送女朋友礼物", "应询问预算、对象或偏好方向"], ["护肤泛需求", "推荐护肤品", "应询问肤质或功效"], ["明确精华预算", "推荐精华，预算100以内", "应返回精华商品，价格不超过100"], ["未知毛巾类目", "推荐毛巾", "不应出现无关商品，应有恢复选项或无匹配提示"], ["无效乱码", "sdfghjhgfdg", "应显示 intent=unclear_input、retrieval=no_retrieval、商品数为0"], ["非购物陈述", "我是猪", "不应联想商品，应只给购物需求引导"]];
       let ws = null;
       let activeAssistant = null;
       let stats = { clarification: false, products: 0, recovery: false, done: false, error: false, intent: "unknown", retrieval: "unknown", events: 0 };

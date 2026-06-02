@@ -35,11 +35,15 @@ def _normalize_intent(frame: ShoppingIntentIR, request: ChatRequest) -> Shopping
         "cart_operation",
         "clarification",
         "small_talk",
+        "unclear_input",
     }:
         intent = rule_intent
     elif intent == "cart_operation" and frame.cart_operation is None:
         guarded = rule_semantic_frame(request)
         frame.cart_operation = guarded.cart_operation
+    elif intent == "cart_operation" and frame.cart_operation is not None:
+        frame.intent = intent
+        return frame
     frame.intent = intent
     return frame
 
@@ -55,7 +59,10 @@ def _canonical_intent(intent: str) -> str:
         "clarify": "clarification",
         "smalltalk": "small_talk",
         "small_talk": "small_talk",
-        "non_shopping": "small_talk",
+        "unclear": "unclear_input",
+        "unclear_input": "unclear_input",
+        "invalid_input": "unclear_input",
+        "non_shopping": "unclear_input",
         "chitchat": "small_talk",
     }
     return aliases.get(intent, intent)

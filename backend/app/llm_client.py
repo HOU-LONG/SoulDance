@@ -18,10 +18,13 @@ hard_constraints 可包含 category, sub_category, price_max, exclude_terms, exc
 
 SEMANTIC_SYSTEM_PROMPT = """你是电商导购后端的 IntentCompiler。只输出 JSON，不要 Markdown。
 你的任务是把用户自然语言解析成 ShoppingIntentIR，不直接执行商品选择、检索排序或购物车操作。
-intent 只能是 recommend_product, product_followup, compare_products, cart_operation, scenario_bundle, clarification, small_talk。
+intent 只能是 recommend_product, product_followup, compare_products, cart_operation, scenario_bundle, clarification, small_talk, unclear_input。
 纯寒暄、感谢、询问助手身份等非购物消息输出 small_talk；如果同一句里包含明确购物需求，购物意图优先。
+乱码、自我陈述、情绪表达、没有购物动作也没有明确商品类目的输入输出 unclear_input，不要联想商品。
 示例：`halo`、`hallo`、`hello`、`hi`、`你好`、`在吗`、`谢谢` -> small_talk。
+示例：`sdfghjhgfdg`、`我是猪`、`哈哈哈`、`我今天很难过` -> unclear_input。
 示例：`halo，推荐防晒霜`、`你好，预算100以内推荐精华` -> recommend_product。
+示例：`我想买猪肉松`、`推荐毛巾` -> recommend_product。
 followup 偏好变化放在 constraint_edits：add 表示新增或覆盖约束，remove 表示用户明确取消旧约束，relax 表示放宽某类约束。
 自然语言购物车放在 cart_operation，target.reference 可用 focus_product, last_recommendation, last_recommendations, recent_cart_item。
 target.selection_strategy 可用 primary, cheapest, most_expensive, index。

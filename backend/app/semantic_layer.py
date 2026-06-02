@@ -67,6 +67,8 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
         )
     if request.type == "user_message" and _is_small_talk(text):
         return SemanticFrame(intent="small_talk")
+    if request.type == "user_message" and not _has_shopping_signal(text):
+        return SemanticFrame(intent="unclear_input")
     edits = ConstraintEdits()
     price_max = _detect_price_max(text)
     if price_max is not None:
@@ -136,6 +138,9 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     guarded = rule_semantic_frame(request)
     if guarded.intent == "small_talk":
         frame.intent = "small_talk"
+        return frame
+    if guarded.intent == "unclear_input" and frame.intent == "recommend_product":
+        frame.intent = "unclear_input"
         return frame
     if guarded.intent == "cart_operation" and frame.cart_operation is None:
         frame.intent = guarded.intent

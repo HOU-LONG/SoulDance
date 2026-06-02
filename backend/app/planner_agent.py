@@ -230,7 +230,7 @@ def _is_small_talk_intent(text: str) -> bool:
         return False
     return bool(
         re.fullmatch(
-            r"(你好|您好|hello|hi|hey|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁|你是干嘛的|你能做什么)",
+            r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁|你是干嘛的|你能做什么)",
             normalized,
         )
     )

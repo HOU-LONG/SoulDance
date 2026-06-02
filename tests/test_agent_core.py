@@ -212,7 +212,7 @@ def test_small_talk_variants_do_not_trigger_retrieval():
     retriever = CountingRetriever(products)
     agent = ShopGuideAgent(products, FakeLLMClient(), retriever)
 
-    for index, message in enumerate(["hello", "在吗", "谢谢", "你是谁"]):
+    for index, message in enumerate(["hello", "halo", "hallo", "在吗", "谢谢", "你是谁"]):
         events = asyncio.run(
             agent.handle_message(
                 ChatRequest(type="user_message", session_id=f"demo_small_talk_{index}", message=message)
@@ -225,6 +225,27 @@ def test_small_talk_variants_do_not_trigger_retrieval():
         assert "product_item" not in event_types
         assert "clarification_request" not in event_types
 
+    assert retriever.calls == 0
+
+
+def test_llm_small_talk_intent_is_honored_for_unlisted_greeting():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    llm = SemanticFrameLLM({"intent": "small_talk"}, {"intent": "small_talk"})
+    agent = ShopGuideAgent(products, llm, retriever)
+
+    plan = asyncio.run(agent.plan(ChatRequest(type="user_message", session_id="demo_halo_plan", message="halo")))
+    assert plan.intent == "small_talk"
+
+    events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_halo", message="halo"))
+    )
+
+    event_types = [event["type"] for event in events]
+    assert event_types[0] == "assistant_state"
+    assert event_types[-1] == "done"
+    assert "product_item" not in event_types
+    assert "clarification_request" not in event_types
     assert retriever.calls == 0
 
 

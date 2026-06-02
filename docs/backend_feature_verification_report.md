@@ -89,7 +89,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-44 passed, 1 warning
+45 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -97,7 +97,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 44 tests pass.
+- [ ] All 45 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -297,6 +297,8 @@ Acceptance:
 - [ ] Response does not include `product_item`.
 - [ ] Response does not include `clarification_request`.
 - [ ] Text guides the user to provide a shopping need.
+
+English greeting variants such as `hello`, `halo`, and `hallo` should follow the same behavior. In real LLM mode, the semantic parser should classify them as `small_talk`; in fake/no-key mode, the rule fallback should still keep them out of product retrieval.
 
 Mixed greeting plus product request:
 
@@ -615,7 +617,7 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `44 passed`.
+- [ ] Full test suite returns `45 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.

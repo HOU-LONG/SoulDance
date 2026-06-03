@@ -62,6 +62,9 @@ class ShopGuideAgent:
         context = self.sessions.get(request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
         ir = await self.intent_compiler.compile(request, context)
+        if _is_pending_clarification_answer(context, request, ir):
+            ir.intent = "recommend_product"
+            _apply_pending_answer_preferences(ir, request.message)
         self._prepare_context_for_turn(context, request, ir)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
@@ -103,6 +106,9 @@ class ShopGuideAgent:
         context = self.sessions.get(request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
         ir = compiled_ir or await self.intent_compiler.compile(request, context)
+        if _is_pending_clarification_answer(context, request, ir):
+            ir.intent = "recommend_product"
+            _apply_pending_answer_preferences(ir, request.message)
         if request.type == "product_followup" or (request.type == "user_message" and ir.intent == "product_followup"):
             async for event in self._stream_followup(request, ir):
                 yield event
@@ -219,18 +225,30 @@ class ShopGuideAgent:
             self._remember_recommendations(context, plan, ranked)
         if ranked:
             replacement = _product_card(ranked[0])
-            yield {
+            replacement_event = {
                 "type": "replacement_product",
                 "message_id": message_id,
                 "focus_product_id": request.focus_product_id,
                 "reason": ranked[0].reason,
                 "product": replacement.model_dump(mode="json"),
             }
+            yield replacement_event
             text_parts: list[str] = []
             async for event in self._stream_generate_text_events(message_id, request, plan, ranked, focus_product):
                 text_parts.append(event["text"])
                 yield event
             text = "".join(text_parts)
+            if request.type == "user_message":
+                yield {"type": "products_start", "message_id": message_id}
+                for index, item in enumerate(ranked):
+                    yield {
+                        "type": "product_item",
+                        "message_id": message_id,
+                        "index": index,
+                        "role": "primary" if index == 0 else "alternative",
+                        "product": _product_card(item).model_dump(mode="json"),
+                    }
+                yield {"type": "products_done", "message_id": message_id}
             yield _quick_actions_event(message_id, plan, ranked)
         else:
             text = _no_match_text(plan)
@@ -853,6 +871,35 @@ def _looks_like_clarification_answer(message: str, ir) -> bool:
     return bool(re.search(r"预算|以内|以下|拍照|续航|性价比|性能|轻薄|便携|清爽|温和|保湿|修护", message or ""))
 
 
+def _is_pending_clarification_answer(context: SessionContext, request: ChatRequest, ir) -> bool:
+    return (
+        request.type == "user_message"
+        and ir.intent == "unclear_input"
+        and context.state.pending_clarification is not None
+        and _looks_like_clarification_answer(request.message, ir)
+    )
+
+
+def _apply_pending_answer_preferences(ir, message: str) -> None:
+    soft = ir.constraint_edits.add.soft_preferences
+    if "拍照" in message:
+        soft["priority"] = "拍照"
+    if "续航" in message:
+        soft["priority"] = "续航"
+    if "性价比" in message:
+        soft["priority"] = "性价比"
+    if "轻薄" in message or "便携" in message:
+        soft["priority"] = "轻薄便携"
+    if "性能" in message or "游戏" in message:
+        soft["priority"] = "性能优先"
+    if "清爽" in message:
+        soft["texture"] = "清爽"
+    if "温和" in message:
+        soft["texture"] = "温和"
+    if "保湿" in message or "修护" in message:
+        soft["effect"] = "保湿修护"
+
+
 def _llm_mode(llm_client) -> str:
     if isinstance(llm_client, FakeLLMClient):
         return "fake"
@@ -956,11 +1003,20 @@ def _quick_actions_event(
     extra: list[dict] | None = None,
 ) -> dict:
     focus_product_id = ranked[0].product.product_id if ranked else None
+    focus_brand = ranked[0].product.brand if ranked else None
     actions = [
         {"label": "更便宜", "message": "换个更便宜的", "payload": {"focus_product_id": focus_product_id}},
-        {"label": "不要这个品牌", "message": "不要这个品牌，换一款", "payload": {"focus_product_id": focus_product_id}},
         {"label": "更适合户外", "message": "换个更适合户外的", "payload": {"focus_product_id": focus_product_id}},
     ]
+    if focus_brand:
+        actions.insert(
+            1,
+            {
+                "label": f"不要{focus_brand}",
+                "message": f"不要{focus_brand}，换一款",
+                "payload": {"focus_product_id": focus_product_id},
+            },
+        )
     if plan.hard_constraints.price_max is not None:
         actions.insert(
             1,
@@ -978,32 +1034,32 @@ def _quick_actions_event(
 def _clarification_options(question: str) -> list[dict[str, str]]:
     if "笔记本" in question:
         return [
-            {"label": "轻薄便携", "message": "轻薄便携，预算6000以内"},
-            {"label": "性能优先", "message": "性能优先，预算8000以内"},
-            {"label": "性价比", "message": "性价比优先，预算5000以内"},
+            {"label": "轻薄便携", "message": "轻薄便携"},
+            {"label": "性能优先", "message": "性能优先"},
+            {"label": "性价比", "message": "性价比优先"},
         ]
     if "送礼" in question:
         return [
-            {"label": "实用礼物", "message": "实用礼物，预算300以内"},
-            {"label": "惊喜感", "message": "更有惊喜感，预算500以内"},
-            {"label": "稳妥不踩雷", "message": "稳妥不踩雷，预算300以内"},
+            {"label": "实用礼物", "message": "实用礼物"},
+            {"label": "惊喜感", "message": "更有惊喜感"},
+            {"label": "稳妥不踩雷", "message": "稳妥不踩雷"},
         ]
     if "选鞋" in question:
         return [
-            {"label": "跑步训练", "message": "跑步训练，预算500以内"},
-            {"label": "篮球运动", "message": "篮球运动，预算800以内"},
-            {"label": "户外通勤", "message": "户外通勤，预算600以内"},
+            {"label": "跑步训练", "message": "跑步训练"},
+            {"label": "篮球运动", "message": "篮球运动"},
+            {"label": "户外通勤", "message": "户外通勤"},
         ]
     if "护肤品" in question:
         return [
-            {"label": "油皮清爽", "message": "油皮清爽，预算200以内"},
-            {"label": "敏感肌温和", "message": "敏感肌温和，预算300以内"},
-            {"label": "保湿修护", "message": "保湿修护，预算200以内"},
+            {"label": "油皮清爽", "message": "油皮清爽"},
+            {"label": "敏感肌温和", "message": "敏感肌温和"},
+            {"label": "保湿修护", "message": "保湿修护"},
         ]
     return [
-        {"label": "拍照优先", "message": "拍照优先，预算4000以内"},
-        {"label": "续航优先", "message": "续航优先，预算4000以内"},
-        {"label": "性价比", "message": "性价比优先，预算3000以内"},
+        {"label": "拍照优先", "message": "拍照优先"},
+        {"label": "续航优先", "message": "续航优先"},
+        {"label": "性价比", "message": "性价比优先"},
     ]
 
 

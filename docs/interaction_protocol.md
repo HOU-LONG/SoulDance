@@ -27,13 +27,13 @@ This puts useful text on screen before cards arrive, runs LLM product selection 
 - `assistant_state.selection_mode`, `assistant_state.candidate_count`, and `assistant_state.selected_count` are optional fields showing LLM product-card selection status.
 - `assistant_state.context_action` is an optional field showing whether the turn is a `new_task`, `clarification_answer`, `followup`, or normal same-task turn.
 - `small_talk` responses do not use a dedicated event; clients receive `assistant_state`, `text_delta`, and `done`.
-- `quick_actions`: low-cost refinement actions such as `更便宜`, `不要这个品牌`, `更适合户外`.
+- `quick_actions`: low-cost refinement actions such as `更便宜`, `不要 Apple`, `更适合户外`. Brand actions name the current primary product brand instead of using the ambiguous `这个品牌`.
 - `clarification_request`: used only when recommending immediately would be unreliable.
 - `comparison_result`: compares products from `SessionContext.last_product_ids`.
 - `filter_recovery_options`: gives safe relaxation choices when no product satisfies hard constraints.
 - `bundle_start`, `bundle_item`, `bundle_done`: streams scenario bundle recommendations by group.
 
-Existing clients can ignore unknown events and continue to consume `text_delta`, `product_item`, `replacement_product`, `cart_update`, and `done`.
+Existing clients can ignore unknown events and continue to consume `text_delta`, `product_item`, `replacement_product`, `cart_update`, and `done`. Plain chat follow-up replacements emit standard `product_item` cards; `replacement_product` is kept for product-detail compatibility.
 
 ## Product Card Admission
 

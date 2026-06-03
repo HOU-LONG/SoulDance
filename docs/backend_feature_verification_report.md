@@ -91,7 +91,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-71 passed, 1 warning
+75 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -99,7 +99,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 71 tests pass.
+- [ ] All 75 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -831,13 +831,16 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `71 passed`.
+- [ ] Full test suite returns `75 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.
 - [ ] Pure greetings and thanks do not trigger product retrieval or product cards.
 - [ ] Invalid/self-statement inputs such as `我是猪` and `sdfghjhgfdg` do not trigger product retrieval or product cards.
 - [ ] Product cards are emitted after LLM product selection and backend final validation.
+- [ ] Clarification option messages such as 性价比 only add preferences and do not create hidden budgets.
+- [ ] Brand quick actions name the current primary brand, for example 不要 Apple, rather than 不要这个品牌.
+- [ ] Plain chat follow-up replacements emit standard product_item cards when alternatives exist.
 - [ ] Product card count is dynamic and does not force exactly 3 cards.
 - [ ] Active clarification triggers only for high-uncertainty requests and does not block specific requests.
 - [ ] Multi-turn followup preserves previous constraints.

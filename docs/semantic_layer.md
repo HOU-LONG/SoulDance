@@ -12,7 +12,7 @@ For short contextual messages, the LLM receives the current focus product, recen
 
 - `换个更便宜的` should parse as `product_followup` with `response_goal=recommend_cheaper_alternative`.
 - `刚刚那个是什么？` should parse as `product_followup` with `response_goal=explain_focus_product`.
-- `不要这个品牌` should parse as `product_followup` with `response_goal=exclude_current_brand`.
+- `不要 Apple` / `不要华为` should parse as `product_followup` with `response_goal=exclude_current_brand`; UI quick actions should name the current primary brand instead of saying `这个品牌`.
 
 If no session focus exists, these short messages are not allowed to trigger random retrieval.
 

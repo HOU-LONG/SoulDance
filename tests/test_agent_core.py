@@ -70,6 +70,31 @@ class ProductSelectionLLM(FakeLLMClient):
         )
 
 
+class SemanticSelectionLLM(FakeLLMClient):
+    def __init__(self, semantic_frames=None, selected_ids=None):
+        self.semantic_frames = list(semantic_frames or [])
+        self.selected_ids = list(selected_ids or [])
+
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        if self.semantic_frames:
+            return json.dumps(self.semantic_frames.pop(0), ensure_ascii=False)
+        return json.dumps({"intent": "recommend_product"}, ensure_ascii=False)
+
+    async def select_products(self, user_message, plan, candidates):
+        selected_ids = [product_id for product_id in self.selected_ids if any(c.product.product_id == product_id for c in candidates)]
+        if not selected_ids:
+            selected_ids = [item.product.product_id for item in candidates[:1]]
+        return json.dumps(
+            {
+                "should_recommend": bool(selected_ids),
+                "need_clarification": False,
+                "selected_product_ids": selected_ids,
+                "reasons": {product_id: f"LLM选择{product_id}" for product_id in selected_ids},
+            },
+            ensure_ascii=False,
+        )
+
+
 class HumanizedChitchatLLM(FakeLLMClient):
     def __init__(self):
         self.messages = []
@@ -902,6 +927,75 @@ def test_llm_product_followup_can_exclude_current_brand_from_user_message():
         assert "filter_recovery_options" in [event["type"] for event in second_events]
 
 
+def test_chat_followup_recommendation_emits_standard_product_item_card():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticSelectionLLM(
+        semantic_frames=[
+            {"intent": "recommend_product"},
+            {
+                "intent": "product_followup",
+                "target": {"reference": "focus_product", "selection_strategy": "primary"},
+                "response_goal": "exclude_current_brand",
+            },
+        ],
+        selected_ids=["p_digital_020"],
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_chat_followup_product_item",
+                message="推荐一款笔记本电脑，预算10000以内，轻薄便携",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event["type"] == "product_item")
+    assert "Apple" in primary["product"]["brand"] or "苹果" in primary["product"]["brand"]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_chat_followup_product_item",
+                message="不要 Apple，换一款",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in second_events]
+    product_events = [event for event in second_events if event["type"] == "product_item"]
+    assert "products_start" in event_types
+    assert product_events
+    assert all("Apple" not in event["product"]["brand"] and "苹果" not in event["product"]["brand"] for event in product_events)
+
+
+def test_brand_quick_action_names_primary_brand_instead_of_this_brand():
+    products = load_products("ecommerce_agent_dataset")
+    llm = ProductSelectionLLM(["p_digital_020"])
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_brand_action_names_primary",
+                message="推荐一款笔记本电脑，预算10000以内，轻薄便携",
+            )
+        )
+    )
+
+    primary = next(event for event in events if event["type"] == "product_item")
+    assert "Apple" in primary["product"]["brand"] or "苹果" in primary["product"]["brand"]
+    quick_actions = next(event for event in events if event["type"] == "quick_actions")
+    labels = [action["label"] for action in quick_actions["actions"]]
+    messages = [action["message"] for action in quick_actions["actions"]]
+    assert "不要这个品牌" not in labels
+    assert any("不要" in label and ("Apple" in label or "苹果" in label) for label in labels)
+    assert any("不要" in message and ("Apple" in message or "苹果" in message) for message in messages)
+
+
 def test_semantic_llm_receives_focus_product_and_recommendation_summaries():
     products = load_products("ecommerce_agent_dataset")
     llm = ContextRecordingSemanticLLM(
@@ -1141,7 +1235,10 @@ def test_recommendation_streams_understanding_before_products_and_quick_actions(
     assert event_types.index("products_done") < event_types.index("quick_actions")
     assert event_types.index("quick_actions") < event_types.index("done")
     quick_actions = next(event for event in events if event["type"] == "quick_actions")
-    assert {action["label"] for action in quick_actions["actions"]} >= {"更便宜", "不要这个品牌"}
+    labels = {action["label"] for action in quick_actions["actions"]}
+    assert "更便宜" in labels
+    assert "不要这个品牌" not in labels
+    assert any(label.startswith("不要") for label in labels)
 
 
 def test_recovery_without_products_does_not_emit_product_focus_quick_actions():
@@ -1450,6 +1547,57 @@ def test_clarification_preference_answer_inherits_pending_category():
         assert "filter_recovery_options" in event_types
     plan = agent.sessions.get("demo_pending_answer").last_plan
     assert plan.hard_constraints.sub_category == "笔记本电脑"
+    assert plan.soft_preferences["priority"] == "性价比"
+
+
+def test_clarification_option_preference_does_not_add_hidden_budget():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_pending_no_hidden_budget", message="我要一个笔记本电脑")
+        )
+    )
+    clarification = next(event for event in first_events if event["type"] == "clarification_request")
+    value_option = next(option for option in clarification["options"] if option["label"] == "性价比")
+    assert "预算" not in value_option["message"]
+    assert "5000" not in value_option["message"]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_pending_no_hidden_budget",
+                message=value_option["message"],
+            )
+        )
+    )
+
+    assert "clarification_request" not in [event["type"] for event in second_events]
+    plan = agent.sessions.get("demo_pending_no_hidden_budget").last_plan
+    assert plan.hard_constraints.sub_category == "笔记本电脑"
+    assert plan.hard_constraints.price_max is None
+    assert plan.soft_preferences["priority"] == "性价比"
+
+
+def test_explicit_budget_in_clarification_answer_is_still_hard_constraint():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_pending_explicit_budget", message="我要一个笔记本电脑")
+        )
+    )
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_pending_explicit_budget", message="性价比优先，预算5000以内")
+        )
+    )
+
+    plan = agent.sessions.get("demo_pending_explicit_budget").last_plan
+    assert plan.hard_constraints.price_max == 5000
     assert plan.soft_preferences["priority"] == "性价比"
 
 

@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from .models import HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR
 from .planner_agent import _clarification_policy, _detect_category, _parent_category
+from .taxonomy import TaxonomyResolver
 
 
 class QueryBuilder:
     """Deterministically compiles ShoppingIntentIR + SessionState into a RetrievalPlan."""
 
+    def __init__(self, taxonomy: TaxonomyResolver | None = None):
+        self.taxonomy = taxonomy
+
     def build(self, ir: ShoppingIntentIR, context: SessionContext, user_message: str) -> RetrievalPlan:
         hard = context.state.constraint_state.hard.model_copy(deep=True)
         soft = dict(context.state.constraint_state.soft)
-        _fill_category_from_text(hard, user_message)
+        _fill_category_from_text(hard, user_message, self.taxonomy)
         for key, value in ir.query_intent.soft_preferences.items():
             if value:
                 soft.setdefault(key, value)
@@ -57,9 +61,16 @@ class QueryBuilder:
         )
 
 
-def _fill_category_from_text(hard: HardConstraints, text: str) -> None:
+def _fill_category_from_text(hard: HardConstraints, text: str, taxonomy: TaxonomyResolver | None = None) -> None:
     if hard.category and hard.sub_category:
         return
+    if taxonomy:
+        match = taxonomy.resolve_task_object(text or "")
+        if match:
+            hard.category = hard.category or match.category
+            if match.sub_category:
+                hard.sub_category = hard.sub_category or match.sub_category
+            return
     category = _detect_category(text or "")
     if not category:
         return

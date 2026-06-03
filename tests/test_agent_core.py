@@ -1470,6 +1470,106 @@ def test_ambiguous_laptop_request_asks_clarification_without_products():
     assert "轻薄" in question
 
 
+def test_ambiguous_computer_request_asks_clarification_without_products():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_computer_clarify", message="我要一个电脑")
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" in event_types
+    assert "product_item" not in event_types
+    question = next(event["question"] for event in events if event["type"] == "clarification_request")
+    assert "轻薄" in question
+    plan = agent.sessions.get("demo_computer_clarify").last_plan
+    assert plan.hard_constraints.sub_category == "笔记本电脑"
+
+
+def test_generic_shoe_request_after_computer_pending_switches_task():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_computer_to_shoe", message="我要一个电脑")
+        )
+    )
+    assert "clarification_request" in [event["type"] for event in first_events]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_computer_to_shoe", message="我想要个鞋")
+        )
+    )
+
+    event_types = [event["type"] for event in second_events]
+    assert "product_item" not in event_types
+    assert "clarification_request" in event_types
+    question = next(event["question"] for event in second_events if event["type"] == "clarification_request")
+    assert "笔记本" not in question
+    assert "电脑" not in question
+    assert any(word in question for word in ["跑步", "篮球", "户外", "通勤"])
+    options = next(event["options"] for event in second_events if event["type"] == "clarification_request")
+    option_labels = [option["label"] for option in options]
+    assert any("跑步" in label for label in option_labels)
+    assert any("篮球" in label for label in option_labels)
+    plan = agent.sessions.get("demo_computer_to_shoe").last_plan
+    assert plan.hard_constraints.category == "服饰运动"
+    assert plan.hard_constraints.sub_category is None
+
+
+def test_rejecting_computer_then_requesting_shoes_clears_pending_computer():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_reject_computer_to_shoe", message="我要一个电脑")
+        )
+    )
+    assert "clarification_request" in [event["type"] for event in first_events]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_reject_computer_to_shoe",
+                message="我不想要笔记本了，我想要个鞋",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in second_events]
+    assert "clarification_request" in event_types
+    question = next(event["question"] for event in second_events if event["type"] == "clarification_request")
+    assert "笔记本" not in question
+    assert "电脑" not in question
+    plan = agent.sessions.get("demo_reject_computer_to_shoe").last_plan
+    assert plan.hard_constraints.category == "服饰运动"
+    assert plan.hard_constraints.sub_category is None
+
+
+def test_explicit_running_shoes_request_uses_running_shoes_not_generic_shoe_clarification():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_running_shoes", message="我要跑鞋")
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["sub_category"] == "跑步鞋" for event in product_events)
+
+
 def test_generic_gift_request_asks_clarification_without_cross_category_cards():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())

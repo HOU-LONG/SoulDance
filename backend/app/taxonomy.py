@@ -8,6 +8,12 @@ from .models import HardConstraints, Product
 
 ROOT_CATEGORIES = {"美妆护肤", "数码电子", "服饰运动", "食品饮料"}
 
+GENERIC_TASK_ALIASES = {
+    "鞋": "服饰运动",
+    "鞋子": "服饰运动",
+    "买双鞋": "服饰运动",
+}
+
 DEFAULT_ALIASES = {
     "防晒霜": "防晒",
     "防晒乳": "防晒",
@@ -160,7 +166,7 @@ class TaxonomyResolver:
                 constraints.category = match.category
                 if match.sub_category:
                     constraints.sub_category = match.sub_category
-        if text and not constraints.sub_category:
+        if text and not constraints.category and not constraints.sub_category:
             match = self.resolve(text)
             if match:
                 changed |= constraints.category != match.category or constraints.sub_category != match.sub_category
@@ -171,6 +177,38 @@ class TaxonomyResolver:
     def is_known_request(self, text: str | None) -> bool:
         return self.resolve(text) is not None
 
+    def resolve_task_object(self, text: str | None) -> TaxonomyMatch | None:
+        positive_tail = _latest_positive_request_tail(text or "")
+        if positive_tail and _normalize(positive_tail) != _normalize(text or ""):
+            match = self.resolve(positive_tail)
+            if match:
+                return match
+            generic = self._resolve_generic_task_object(positive_tail)
+            if generic:
+                return generic
+        match = self.resolve(text)
+        if match:
+            return match
+        return self._resolve_generic_task_object(text)
+
+    def _resolve_generic_task_object(self, text: str | None) -> TaxonomyMatch | None:
+        normalized = _normalize(text or "")
+        for alias, category in GENERIC_TASK_ALIASES.items():
+            key = _normalize(alias)
+            if key and key in normalized and category in self.categories:
+                return TaxonomyMatch(category=category, sub_category=None, matched_text=alias)
+        return None
+
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", "", text.lower())
+
+
+def _latest_positive_request_tail(text: str) -> str | None:
+    normalized = _normalize(text or "")
+    if not normalized:
+        return None
+    matches = list(re.finditer(r"(?<!不)(?:想要|想买|我要|要个|要一|买|推荐|找|换成)", normalized))
+    if not matches:
+        return None
+    return normalized[matches[-1].end() :]

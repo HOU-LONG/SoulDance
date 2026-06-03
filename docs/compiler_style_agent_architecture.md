@@ -92,6 +92,7 @@ Important rules:
 - `constraint_state.hard` is the current source of truth for hard constraints.
 - `pending_clarification` records the category/sub-category and question for the next preference-only clarification answer.
 - `current_task` marks the active shopping task; explicit new taxonomy requests reset conflicting task constraints.
+- Task switching uses a task-object resolver before pending clarification inheritance. Specific objects such as `跑鞋` bind to real sub-categories; generic objects such as `鞋` bind only to a broad task category and trigger clarification instead of forcing a fake sub-category.
 - `recommendation_memory.items` is the source for "第一款 / 第二款 / 最便宜".
 - `active_focus.product_id` is the source for product BottomSheet followup.
 - `cart_memory.recent_product_id` tracks recent cart target.

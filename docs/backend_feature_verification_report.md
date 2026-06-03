@@ -91,7 +91,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-67 passed, 1 warning
+71 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -99,7 +99,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 67 tests pass.
+- [ ] All 71 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -505,6 +505,47 @@ Expected:
 - `assistant_state.intent` is `unclear_input`.
 - No retrieval and no product cards.
 
+### 10.2 Task Switching and Generic Category Clarification
+
+Step 1:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_task_switch_001",
+  "message": "我要一个电脑"
+}
+```
+
+Expected:
+
+- Response includes `clarification_request`.
+- No `product_item`.
+- Question asks about laptop/computer preferences such as lightness, performance, or value.
+
+Step 2 in the same session:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_task_switch_001",
+  "message": "我想要个鞋"
+}
+```
+
+Expected:
+
+- Response switches away from computer/laptop pending clarification.
+- Response includes a shoe-related `clarification_request`, such as running, basketball, outdoor/commute.
+- Question and options must not mention computer or laptop.
+- No product card is emitted for the generic word `鞋`.
+
+Also verify:
+
+- `我不想要笔记本了，我想要个鞋` clears the computer task and enters the same shoe clarification.
+- `我要跑鞋` is specific enough to recommend or filter `跑步鞋`, not generic shoe clarification.
+- A preference-only answer after computer clarification, such as `轻薄便携，预算6000以内`, still inherits the computer task.
+
 ## 11. Comparison Verification
 
 Step 1:
@@ -790,7 +831,7 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `67 passed`.
+- [ ] Full test suite returns `71 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.

@@ -52,11 +52,11 @@ class ShopGuideAgent:
         self.semantic_parser = SemanticParser(self.llm_client)
         self.intent_compiler = IntentCompiler(self.llm_client, self.semantic_parser)
         self.state_reducer = StateReducer()
-        self.query_builder = QueryBuilder()
         self.reference_resolver = ReferenceResolver(self.product_map)
         self.tts = tts_adapter or TTSAdapter()
         self.memory_cache = memory_cache
         self.taxonomy = TaxonomyResolver.from_products(products)
+        self.query_builder = QueryBuilder(self.taxonomy)
 
     async def plan(self, request: ChatRequest) -> RetrievalPlan:
         context = self.sessions.get(request.session_id)
@@ -469,7 +469,7 @@ class ShopGuideAgent:
             return "followup"
         if ir.intent not in {"recommend_product", "clarification"}:
             return ir.intent
-        explicit_match = self.taxonomy.resolve(request.message)
+        explicit_match = self.taxonomy.resolve_task_object(request.message)
         pending = context.state.pending_clarification
         if explicit_match:
             current = context.state.constraint_state.hard
@@ -987,6 +987,12 @@ def _clarification_options(question: str) -> list[dict[str, str]]:
             {"label": "实用礼物", "message": "实用礼物，预算300以内"},
             {"label": "惊喜感", "message": "更有惊喜感，预算500以内"},
             {"label": "稳妥不踩雷", "message": "稳妥不踩雷，预算300以内"},
+        ]
+    if "选鞋" in question:
+        return [
+            {"label": "跑步训练", "message": "跑步训练，预算500以内"},
+            {"label": "篮球运动", "message": "篮球运动，预算800以内"},
+            {"label": "户外通勤", "message": "户外通勤，预算600以内"},
         ]
     if "护肤品" in question:
         return [

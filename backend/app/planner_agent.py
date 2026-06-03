@@ -23,6 +23,7 @@ CATEGORY_ALIASES = {
     "笔记本": "笔记本电脑",
     "轻薄本": "笔记本电脑",
     "电脑本": "笔记本电脑",
+    "电脑": "笔记本电脑",
     "耳机": "真无线耳机",
     "跑鞋": "跑步鞋",
     "跑步鞋": "跑步鞋",
@@ -268,6 +269,10 @@ def _clarification_policy(
         return True, "选手机我需要先知道你更看重拍照、续航还是性价比？也可以直接告诉我预算。"
     if category == "笔记本电脑" and constraints.price_max is None and "priority" not in soft:
         return True, "选笔记本我需要先知道你更看重轻薄便携、性能，还是性价比？也可以直接告诉我预算。"
+    if category == "平板电脑" and constraints.price_max is None and "priority" not in soft:
+        return True, "选平板我需要先知道你更看重便携、性能，还是性价比？也可以直接告诉我预算。"
+    if category == "服饰运动" and constraints.sub_category is None and _is_generic_shoe_request(text):
+        return True, "选鞋我需要先知道你主要用于跑步、篮球，还是户外/通勤？也可以直接告诉我预算。"
     if _is_generic_gift_request(text) and (constraints.price_max is None or "recipient" not in soft):
         return True, "送礼我需要先确认预算和对象：更偏实用、惊喜感，还是稳妥不踩雷？"
     if category == "美妆护肤" and constraints.sub_category is None and constraints.price_max is None:
@@ -280,12 +285,16 @@ def _is_generic_gift_request(text: str) -> bool:
     return bool(re.search(r"送人|送给|礼物|生日|女朋友|男朋友|父母|长辈", text or ""))
 
 
+def _is_generic_shoe_request(text: str) -> bool:
+    return bool(re.search(r"鞋子?|买双鞋|一双鞋", text or "")) and not re.search(r"跑鞋|跑步鞋|篮球鞋|徒步鞋|登山鞋", text or "")
+
+
 def _parent_category(sub_category: str | None) -> str | None:
     if sub_category in {"防晒", "洁面", "精华", "面霜"}:
         return "美妆护肤"
     if sub_category in {"智能手机", "真无线耳机", "平板电脑", "笔记本电脑"}:
         return "数码电子"
-    if sub_category in {"跑步鞋", "篮球鞋", "短袖T恤", "背包"}:
+    if sub_category in {"跑步鞋", "篮球鞋", "徒步鞋", "短袖T恤", "背包"}:
         return "服饰运动"
     if sub_category in {"咖啡", "茶饮", "方便食品"}:
         return "食品饮料"

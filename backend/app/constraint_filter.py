@@ -11,6 +11,16 @@ TERM_SYNONYMS = {
 }
 
 
+BRAND_ALIASES = {
+    "华为": ["华为", "huawei"],
+    "苹果": ["苹果", "apple"],
+    "小米": ["小米", "xiaomi"],
+    "荣耀": ["荣耀", "honor"],
+    "oppo": ["oppo"],
+    "vivo": ["vivo"],
+}
+
+
 def hard_filter(product: Product, constraints: HardConstraints) -> bool:
     if constraints.category and constraints.category not in {product.category, product.sub_category}:
         return False
@@ -21,7 +31,7 @@ def hard_filter(product: Product, constraints: HardConstraints) -> bool:
     if constraints.exclude_brand_regions and product.brand_region in constraints.exclude_brand_regions:
         return False
     for brand in constraints.exclude_brands:
-        if brand and brand.lower() in product.brand.lower():
+        if _brand_matches(product, brand):
             return False
     haystack = product.search_text
     for term in constraints.exclude_terms:
@@ -36,6 +46,9 @@ def explain_filter(product: Product, constraints: HardConstraints) -> str | None
         return f"价格 {product.price:.0f} 元超过预算 {constraints.price_max:.0f} 元"
     if constraints.exclude_brand_regions and product.brand_region in constraints.exclude_brand_regions:
         return f"品牌地区为{product.brand_region}，不符合排除条件"
+    for brand in constraints.exclude_brands:
+        if _brand_matches(product, brand):
+            return f"品牌 {product.brand} 命中排除品牌「{brand}」"
     for term in constraints.exclude_terms:
         for synonym in TERM_SYNONYMS.get(term, [term]):
             if _contains_forbidden_term(product.search_text, synonym):
@@ -56,3 +69,39 @@ def _contains_forbidden_term(text: str, term: str) -> bool:
             start = index + len(term)
             continue
         return True
+
+
+def canonical_brand(value: str) -> str:
+    lowered = value.strip().lower()
+    for canonical, aliases in BRAND_ALIASES.items():
+        if lowered == canonical.lower() or lowered in aliases:
+            return canonical
+    return value.strip()
+
+
+def extract_excluded_brands(text: str) -> list[str]:
+    if not any(marker in text for marker in ["不要", "不考虑", "排除", "避开", "别", "非"]):
+        return []
+    brands: list[str] = []
+    lowered = text.lower()
+    for canonical, aliases in BRAND_ALIASES.items():
+        if any(alias.lower() in lowered for alias in aliases):
+            brands.append(canonical)
+    return _dedupe(brands)
+
+
+def _brand_matches(product: Product, excluded_brand: str) -> bool:
+    excluded_brand = excluded_brand.strip()
+    if not excluded_brand:
+        return False
+    aliases = BRAND_ALIASES.get(canonical_brand(excluded_brand), [excluded_brand])
+    haystack = f"{product.brand} {product.title} {product.search_text}".lower()
+    return any(alias.lower() in haystack for alias in aliases)
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        if value and value not in result:
+            result.append(value)
+    return result

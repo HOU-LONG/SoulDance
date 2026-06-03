@@ -6,7 +6,7 @@ import re
 import uuid
 
 from .cart import CartService
-from .constraint_filter import hard_filter
+from .constraint_filter import canonical_brand, extract_excluded_brands, hard_filter
 from .embedding_retriever import BM25OnlyRetriever
 from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
@@ -212,11 +212,15 @@ class ShopGuideAgent:
             context.state.constraint_state.hard.price_max = plan.hard_constraints.price_max
             plan.soft_preferences["price_preference"] = "更便宜"
             context.state.constraint_state.soft["price_preference"] = "更便宜"
+        explicit_excluded_brands = extract_excluded_brands(request.message)
         if focus_product and _wants_different_brand(request.message, ir):
-            plan.hard_constraints.exclude_brands = _dedupe(plan.hard_constraints.exclude_brands + [focus_product.brand])
+            explicit_excluded_brands.append(canonical_brand(focus_product.brand))
+        if explicit_excluded_brands:
+            plan.hard_constraints.exclude_brands = _dedupe(plan.hard_constraints.exclude_brands + explicit_excluded_brands)
             context.state.constraint_state.hard.exclude_brands = list(plan.hard_constraints.exclude_brands)
-            context.negative_feedback.append(f"不要品牌:{focus_product.brand}")
-            context.state.user_profile.negative_preferences.append(f"不要品牌:{focus_product.brand}")
+            for brand in explicit_excluded_brands:
+                context.negative_feedback.append(f"不要品牌:{brand}")
+                context.state.user_profile.negative_preferences.append(f"不要品牌:{brand}")
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         message_id = _message_id()
@@ -224,7 +228,7 @@ class ShopGuideAgent:
         intro = "我来说明刚刚那款商品。" if is_explain_request else _followup_intro(plan)
         label = "正在解释当前商品" if is_explain_request else "正在按当前商品上下文重新筛选"
         phase = "explaining" if is_explain_request else "retrieving"
-        yield self._assistant_state(message_id, phase, label, plan)
+        yield self._assistant_state(message_id, phase, label, plan, memory_mode="disabled_for_followup")
         for event in _text_delta_events(message_id, intro):
             yield event
         if is_explain_request:
@@ -235,7 +239,7 @@ class ShopGuideAgent:
             for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
                 yield event
             return
-        ranked = self.retrieve_and_rank(plan)
+        ranked = [item for item in self.retrieve_and_rank(plan) if hard_filter(item.product, plan.hard_constraints)]
         if ranked:
             self._remember_recommendations(context, plan, ranked)
         if ranked:
@@ -280,7 +284,7 @@ class ShopGuideAgent:
         return [event async for event in self._stream_recommendation_events(request, plan, ranked)]
 
     def _get_recommendation_memory_hit(self, plan: RetrievalPlan, message: str) -> RecommendationMemoryHit | None:
-        if not self.recommendation_memory or plan.intent not in {"recommend_product", "product_followup"}:
+        if not self.recommendation_memory or plan.intent != "recommend_product":
             return None
         return self.recommendation_memory.get(plan, message, self.product_map)
 
@@ -1220,7 +1224,9 @@ def _wants_cheaper_alternative(text: str, ir) -> bool:
 def _wants_different_brand(text: str, ir=None) -> bool:
     if ir is not None and ir.response_goal == "exclude_current_brand":
         return True
-    return any(word in text for word in ["不要这个品牌", "换个品牌", "别的品牌", "不要这个牌子"])
+    return bool(extract_excluded_brands(text)) or any(
+        word in text for word in ["不要这个品牌", "换个品牌", "别的品牌", "不要这个牌子"]
+    )
 
 
 def _focus_product_explanation(product: Product, context: SessionContext) -> str:

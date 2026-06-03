@@ -110,6 +110,9 @@ class RecommendationMemoryHit:
 class RecommendationMemoryCache:
     """Structured product-decision memory above retrieval/rank cache."""
 
+    SEMANTIC_SCAN_LIMIT = 100
+    SEMANTIC_MIN_SCORE = 0.25
+
     def __init__(self, path: str | Path | None = None, catalog_fingerprint: str = "demo_catalog_v1"):
         self.path = Path(path) if path else None
         self.catalog_fingerprint = catalog_fingerprint
@@ -213,21 +216,25 @@ class RecommendationMemoryCache:
             "plan_category": plan.category,
         }
         current_constraints = _sort_lists(plan.hard_constraints.model_dump(mode="json"))
+        current_preferences = dict(sorted(plan.soft_preferences.items()))
         current_tokens = _memory_tokens(message or plan.retrieval_query)
         best_row = None
         best_score = 0.0
-        for row in self._items.values():
+        rows = list(self._items.values())[-self.SEMANTIC_SCAN_LIMIT :]
+        for row in rows:
             if row.get("catalog_fingerprint") != self.catalog_fingerprint:
                 continue
             if row.get("taxonomy") != current_taxonomy:
                 continue
             if row.get("hard_constraints") != current_constraints:
                 continue
+            if row.get("soft_preferences", {}) != current_preferences:
+                continue
             score = _token_similarity(current_tokens, _memory_tokens(str(row.get("normalized_query", ""))))
             if score > best_score:
                 best_score = score
                 best_row = row
-        if best_row and (best_score >= 0.34 or (plan.hard_constraints.sub_category and best_row.get("taxonomy") == current_taxonomy)):
+        if best_row and best_score >= self.SEMANTIC_MIN_SCORE:
             return best_row
         return None
 

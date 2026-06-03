@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .constraint_filter import extract_excluded_brands
 from .models import CartOperation, ChatRequest, ConstraintEdits, HardConstraints, ProductReference, RetrievalPlan, SemanticFrame, SessionContext
 
 
@@ -104,8 +105,7 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
             edits.add.exclude_terms.append("酒精")
         if "日系" in text or "日本" in text:
             edits.add.exclude_brand_regions.append("日本")
-        if "苹果" in text or "Apple" in text or "apple" in text:
-            edits.add.exclude_brands.append("苹果")
+        edits.add.exclude_brands.extend(extract_excluded_brands(text))
     soft = edits.add.soft_preferences
     if "拍照" in text:
         soft["priority"] = "拍照"

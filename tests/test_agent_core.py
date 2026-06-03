@@ -3,6 +3,7 @@ import json
 
 from backend.app.agent import ShopGuideAgent
 from backend.app.cart import CartService
+from backend.app.constraint_filter import explain_filter, hard_filter
 from backend.app.data_loader import load_products
 from backend.app.llm_client import (
     RESPONSE_SYSTEM_PROMPT,
@@ -11,7 +12,7 @@ from backend.app.llm_client import (
     _response_evidence_payload,
 )
 from backend.app.memory_cache import RecommendationMemoryCache, StructuredMemoryCache
-from backend.app.models import ChatRequest, Product, RankedProduct
+from backend.app.models import ChatRequest, HardConstraints, Product, RankedProduct
 from backend.app.taxonomy import TaxonomyResolver
 
 
@@ -100,6 +101,33 @@ class SemanticSelectionLLM(FakeLLMClient):
             },
             ensure_ascii=False,
         )
+
+
+def test_hard_filter_excludes_brand_aliases_and_explains_reason():
+    huawei_product = Product(
+        product_id="demo_huawei",
+        title="HUAWEI Mate 测试手机",
+        brand="HUAWEI",
+        category="数码电子",
+        sub_category="智能手机",
+        price=3999,
+        image_path="",
+        search_text="HUAWEI Mate 测试手机",
+    )
+    apple_product = Product(
+        product_id="demo_apple",
+        title="苹果 MacBook 测试笔记本",
+        brand="苹果",
+        category="数码电子",
+        sub_category="笔记本电脑",
+        price=8999,
+        image_path="",
+        search_text="苹果 Apple MacBook 测试笔记本",
+    )
+
+    assert not hard_filter(huawei_product, HardConstraints(exclude_brands=["华为"]))
+    assert not hard_filter(apple_product, HardConstraints(exclude_brands=["Apple"]))
+    assert "华为" in explain_filter(huawei_product, HardConstraints(exclude_brands=["华为"]))
 
 
 class HumanizedChitchatLLM(FakeLLMClient):
@@ -700,7 +728,7 @@ def test_recommendation_memory_semantic_hit_for_compatible_query():
         agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_1", message="推荐防晒霜"))
     )
     second_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_2", message="想买一款清爽防晒"))
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_2", message="想买一款防晒霜"))
     )
 
     second_products = [event["product"]["product_id"] for event in second_events if event["type"] == "product_item"]
@@ -709,6 +737,24 @@ def test_recommendation_memory_semantic_hit_for_compatible_query():
     assert llm.calls == 1
     assert memory.stats()["semantic_hits"] == 1
     assert any(event.get("memory_mode") == "semantic_hit" for event in second_events if event["type"] == "assistant_state")
+
+
+def test_recommendation_memory_semantic_hit_requires_soft_preference_compatibility():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    memory = RecommendationMemoryCache()
+    agent = ShopGuideAgent(products, ProductSelectionLLM(["p_beauty_001"]), retriever, recommendation_memory=memory)
+
+    asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_strict_1", message="推荐防晒霜"))
+    )
+    second_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_strict_2", message="推荐清爽防晒"))
+    )
+
+    assert memory.stats()["semantic_hits"] == 0
+    assert retriever.calls == 2
+    assert all(event.get("memory_mode") != "semantic_hit" for event in second_events if event["type"] == "assistant_state")
 
 
 def test_recommendation_memory_is_not_used_for_unclear_input():
@@ -1059,6 +1105,59 @@ def test_chat_followup_recommendation_emits_standard_product_item_card():
     assert "products_start" in event_types
     assert product_events
     assert all("Apple" not in event["product"]["brand"] and "苹果" not in event["product"]["brand"] for event in product_events)
+
+
+def test_chat_followup_explicit_huawei_exclusion_filters_alias_brand():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticSelectionLLM(
+        semantic_frames=[
+            {"intent": "recommend_product"},
+            {
+                "intent": "product_followup",
+                "target": {"reference": "focus_product", "selection_strategy": "primary"},
+                "response_goal": "exclude_current_brand",
+            },
+        ],
+        selected_ids=["p_digital_002"],
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_chat_followup_huawei",
+                message="我想要华为手机，预算8000，拍照优先",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event["type"] == "product_item")
+    assert "华为" in primary["product"]["brand"] or "HUAWEI" in primary["product"]["name"]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_chat_followup_huawei",
+                message="不要华为，换一款",
+            )
+        )
+    )
+
+    cards = [
+        event["product"]
+        for event in second_events
+        if event["type"] in {"replacement_product", "product_item"}
+    ]
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    assert states[0].get("memory_mode") == "disabled_for_followup"
+    if cards:
+        for product in cards:
+            text = f"{product['brand']} {product['name']}".lower()
+            assert "华为" not in text
+            assert "huawei" not in text
+    else:
+        assert "filter_recovery_options" in [event["type"] for event in second_events]
 
 
 def test_brand_quick_action_names_primary_brand_instead_of_this_brand():

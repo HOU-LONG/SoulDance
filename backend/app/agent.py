@@ -48,7 +48,7 @@ class ShopGuideAgent:
         self.llm_client = llm_client or FakeLLMClient()
         self.retriever = retriever or BM25OnlyRetriever(products)
         self.sessions = session_store or SessionStore()
-        self.planner = PlannerAgent(self.llm_client)
+        self.planner = PlannerAgent()
         self.semantic_parser = SemanticParser(self.llm_client)
         self.intent_compiler = IntentCompiler(self.llm_client, self.semantic_parser)
         self.state_reducer = StateReducer()

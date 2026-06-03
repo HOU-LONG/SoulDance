@@ -18,7 +18,7 @@ quick_actions
 done
 ```
 
-This puts useful text on screen before cards arrive, runs LLM product selection over backend candidates, streams the grounded explanation, and then emits final product cards.
+This puts useful text on screen before cards arrive, runs LLM product selection over backend candidates, streams the grounded explanation, and then emits final product cards. The grounded explanation is LLM-written from final evidence: it presents one primary recommendation and briefly distinguishes alternatives when present.
 
 ## Optional Events
 
@@ -49,7 +49,7 @@ backend final validation
 grounded explanation text
 ```
 
-The LLM can only select product IDs from the candidate pool. The backend discards IDs outside the pool and re-checks hard constraints before streaming cards. The final count is dynamic, with a demo cap of 4 cards.
+The LLM can only select product IDs from the candidate pool. The backend discards IDs outside the pool and re-checks hard constraints before streaming cards. The final count is dynamic, with a demo cap of 4 cards; the response evidence payload also includes up to 4 final allowed products.
 
 ## Natural Language Cart
 

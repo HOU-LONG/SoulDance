@@ -4,9 +4,14 @@ import json
 from backend.app.agent import ShopGuideAgent
 from backend.app.cart import CartService
 from backend.app.data_loader import load_products
-from backend.app.llm_client import DoubaoLLMClient, FakeLLMClient
+from backend.app.llm_client import (
+    RESPONSE_SYSTEM_PROMPT,
+    DoubaoLLMClient,
+    FakeLLMClient,
+    _response_evidence_payload,
+)
 from backend.app.memory_cache import StructuredMemoryCache
-from backend.app.models import ChatRequest, Product
+from backend.app.models import ChatRequest, Product, RankedProduct
 from backend.app.taxonomy import TaxonomyResolver
 
 
@@ -196,13 +201,7 @@ class JsonModeFallbackClient:
 
 
 class NoPlannerSemanticLLM(SemanticFrameLLM):
-    def __init__(self, *frames):
-        super().__init__(*frames)
-        self.plan_calls = 0
-
-    async def plan(self, message, context=None):
-        self.plan_calls += 1
-        raise AssertionError("main agent flow must not call llm.plan()")
+    pass
 
 
 def test_load_products_reads_dataset():
@@ -1077,6 +1076,33 @@ def test_contextual_llm_judge_recovers_followup_when_primary_semantic_parse_is_u
     assert states[0]["retrieval_mode"] == "product_focus_retrieval"
 
 
+def test_llm_clients_do_not_expose_legacy_plan_method():
+    assert not hasattr(FakeLLMClient(), "plan")
+    assert not hasattr(DoubaoLLMClient, "plan")
+
+
+def test_response_prompt_mentions_primary_and_alternative_differences():
+    assert "主推一个" in RESPONSE_SYSTEM_PROMPT
+    assert "备选差异" in RESPONSE_SYSTEM_PROMPT
+
+
+def test_response_evidence_payload_includes_four_allowed_products():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    plan = asyncio.run(
+        agent.plan(ChatRequest(type="user_message", session_id="demo_payload_four", message="推荐数码电子产品，预算20000"))
+    )
+    ranked = [
+        RankedProduct(product=item.product, score=item.score, reason=item.reason, evidence=item.evidence, tier=item.tier)
+        for item in agent.retrieve_and_rank(plan)[:4]
+    ]
+
+    payload = _response_evidence_payload(plan, ranked)
+
+    assert len(payload["allowed_products"]) == 4
+    assert payload["selected_primary"] == ranked[0].product.product_id
+
+
 def test_recommendation_uses_single_intent_compiler_without_llm_plan():
     products = load_products("ecommerce_agent_dataset")
     llm = NoPlannerSemanticLLM(
@@ -1111,7 +1137,6 @@ def test_recommendation_uses_single_intent_compiler_without_llm_plan():
         )
     )
 
-    assert llm.plan_calls == 0
     assert any(event["type"] == "product_item" for event in events)
     context = agent.sessions.get("demo_single_parse")
     assert context.state.constraint_state.hard.sub_category == "防晒"

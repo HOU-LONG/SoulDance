@@ -18,7 +18,7 @@ Client Request
 
 The important boundary is simple:
 
-- LLM may parse intent, choose product IDs from backend candidates, and write final natural-language explanation.
+- The same LLM client is used in three controlled roles: parse intent, choose product IDs from backend candidates, and write final natural-language explanation.
 - Backend deterministically executes session state updates, retrieval, hard filtering, ranking, reference resolution, cart mutation, final product validation, and event rendering.
 - LLM never mutates cart state, bypasses hard filters, invents usable product IDs, or controls product card event order.
 
@@ -34,7 +34,7 @@ backend/app/ranker.py               Hard filter + deterministic scoring.
 backend/app/cart.py                 Cart state machine.
 ```
 
-`planner_agent.py` is still present for compatibility and old rule helpers, but the main recommend/followup/cart flow no longer calls `llm.plan()`.
+The legacy LLM planner has been removed. `planner_agent.py` remains only for compatibility rule helpers used by guards and debug planning; it does not call the LLM.
 
 ## ShoppingIntentIR
 
@@ -175,7 +175,7 @@ LLM response writing receives an evidence payload shaped like:
 }
 ```
 
-Its output only becomes `text_delta`. It cannot modify:
+Its output only becomes `text_delta`. It should explain one primary recommendation and briefly distinguish alternatives when multiple `allowed_products` are present. It cannot modify:
 
 - `product_item`
 - prices
@@ -216,7 +216,7 @@ env/venv_shopguide_backend/bin/python -m pytest -q
 
 Key regression tests cover:
 
-- main flow does not call `llm.plan()`;
+- no legacy LLM planner or `llm.plan()` path remains;
 - followup edits update `SessionState.constraint_state`;
 - hallucinated cart `product_id` is ignored;
 - explicit and natural-language cart actions share deterministic cart execution;

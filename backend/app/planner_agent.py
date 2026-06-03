@@ -36,13 +36,6 @@ class PlannerAgent:
         self.llm_client = llm_client
 
     async def create_plan(self, request: ChatRequest, context: SessionContext | None = None) -> RetrievalPlan:
-        if self.llm_client:
-            try:
-                raw = await self.llm_client.plan(request.message, context)
-                plan = self._parse_llm_plan(raw)
-                return self._merge_rule_guards(plan, request, context)
-            except Exception:
-                pass
         return self.rule_plan(request, context)
 
     def rule_plan(self, request: ChatRequest, context: SessionContext | None = None) -> RetrievalPlan:

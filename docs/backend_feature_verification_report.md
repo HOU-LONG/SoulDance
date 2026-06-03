@@ -91,7 +91,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-78 passed, 1 warning
+82 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -99,7 +99,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 78 tests pass.
+- [ ] All 82 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -143,7 +143,7 @@ Acceptance:
 
 - [ ] `/health` returns HTTP 200.
 - [ ] `product_count` is 100.
-- [ ] `memory_cache` stats are present.
+- [ ] `memory_cache`, `recommendation_memory`, and `structured_rank_cache` stats are present.
 - [ ] `llm` is `doubao` for real LLM verification.
 
 ## 5. Product API Verification
@@ -831,7 +831,7 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `78 passed`.
+- [ ] Full test suite returns `82 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.
@@ -849,5 +849,6 @@ Suggested severity:
 - [ ] Natural-language cart operations work.
 - [ ] Oral cart follow-up such as `就这个来两件` works only when session context has a recent product.
 - [ ] Structured cache hits repeated equivalent requests.
+- [ ] Recommendation memory exact/semantic hits skip retriever/ranker and LLM selection after validation.
 - [ ] Evidence reranker filters obvious noisy comments.
 - [ ] No API key is committed or printed in logs.

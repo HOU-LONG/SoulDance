@@ -70,6 +70,34 @@ export SHOPGUIDE_MEMORY_CACHE_PATH="cache/shopguide_memory.jsonl"
 
 When enabled, cache writes append JSONL rows and startup reloads the latest rows by key.
 
+
+## Recommendation Memory Cache
+
+The backend now has a higher-level recommendation memory above the existing retrieval/rank cache.
+
+Runtime order:
+
+```text
+semantic parse / backend admission / taxonomy
+-> recommendation memory exact hit
+-> recommendation memory semantic hit
+-> retrieval/rank cache
+-> normal retriever/ranker/LLM selection
+```
+
+`RecommendationMemoryCache` stores structured product decisions, not full final answers:
+
+- normalized query
+- taxonomy and hard constraints
+- selected product ids and roles
+- selected reasons and evidence
+- short response summary
+- catalog and prompt version markers
+
+On exact or semantic hit, the backend reconstructs selected products, re-runs hard filtering and taxonomy validation, skips retriever/ranker and LLM product selection, then emits normal `product_item` events. The `assistant_state.memory_mode` field reports `exact_hit`, `semantic_hit`, or `miss` for verification UIs.
+
+The first semantic version is intentionally conservative and dependency-free: it only reuses entries with compatible taxonomy and identical hard constraints, using lightweight token overlap as a similarity signal.
+
 ## Evidence Reranker
 
 Changed module:

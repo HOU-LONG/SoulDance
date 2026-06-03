@@ -10,7 +10,7 @@ from backend.app.llm_client import (
     FakeLLMClient,
     _response_evidence_payload,
 )
-from backend.app.memory_cache import StructuredMemoryCache
+from backend.app.memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from backend.app.models import ChatRequest, Product, RankedProduct
 from backend.app.taxonomy import TaxonomyResolver
 
@@ -61,8 +61,10 @@ class ProductSelectionLLM(FakeLLMClient):
         self.selected_ids = list(selected_ids)
         self.clarify = clarify
         self.candidate_count = 0
+        self.calls = 0
 
     async def select_products(self, user_message, plan, candidates):
+        self.calls += 1
         self.candidate_count = len(candidates)
         return json.dumps(
             {
@@ -633,6 +635,95 @@ def test_structured_memory_cache_does_not_cross_hard_constraints():
 
     assert retriever.calls == 2
     assert cache.stats()["misses"] == 2
+
+
+def test_recommendation_memory_exact_hit_skips_retriever_and_llm_selection():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    probe_plan = asyncio.run(
+        probe_agent.plan(ChatRequest(type="user_message", session_id="demo_rec_memory_probe", message="推荐防晒霜"))
+    )
+    selected_ids = [item.product.product_id for item in probe_agent.retrieve_and_rank(probe_plan)[:2]]
+    llm = ProductSelectionLLM(selected_ids)
+    memory = RecommendationMemoryCache()
+    agent = ShopGuideAgent(products, llm, retriever, recommendation_memory=memory)
+
+    first_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_memory_1", message="推荐防晒霜"))
+    )
+    second_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_memory_2", message="推荐防晒霜"))
+    )
+
+    first_products = [event["product"]["product_id"] for event in first_events if event["type"] == "product_item"]
+    second_products = [event["product"]["product_id"] for event in second_events if event["type"] == "product_item"]
+    second_states = [event for event in second_events if event["type"] == "assistant_state"]
+    assert first_products == second_products == selected_ids
+    assert retriever.calls == 1
+    assert llm.calls == 1
+    assert memory.stats()["exact_hits"] == 1
+    assert any(state.get("memory_mode") == "exact_hit" for state in second_states)
+
+
+def test_recommendation_memory_does_not_cross_hard_constraints():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    memory = RecommendationMemoryCache()
+    agent = ShopGuideAgent(products, ProductSelectionLLM([]), retriever, recommendation_memory=memory)
+
+    asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_constraint_1", message="推荐防晒霜"))
+    )
+    asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_constraint_2", message="推荐防晒霜，预算1元以内"))
+    )
+
+    assert memory.stats()["exact_hits"] == 0
+    assert memory.stats()["semantic_hits"] == 0
+    assert memory.stats()["misses"] >= 2
+
+
+def test_recommendation_memory_semantic_hit_for_compatible_query():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    probe_plan = asyncio.run(
+        probe_agent.plan(ChatRequest(type="user_message", session_id="demo_rec_sem_probe", message="推荐防晒霜"))
+    )
+    selected_ids = [item.product.product_id for item in probe_agent.retrieve_and_rank(probe_plan)[:1]]
+    llm = ProductSelectionLLM(selected_ids)
+    memory = RecommendationMemoryCache()
+    agent = ShopGuideAgent(products, llm, retriever, recommendation_memory=memory)
+
+    asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_1", message="推荐防晒霜"))
+    )
+    second_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_2", message="想买一款清爽防晒"))
+    )
+
+    second_products = [event["product"]["product_id"] for event in second_events if event["type"] == "product_item"]
+    assert second_products == selected_ids
+    assert retriever.calls == 1
+    assert llm.calls == 1
+    assert memory.stats()["semantic_hits"] == 1
+    assert any(event.get("memory_mode") == "semantic_hit" for event in second_events if event["type"] == "assistant_state")
+
+
+def test_recommendation_memory_is_not_used_for_unclear_input():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    memory = RecommendationMemoryCache()
+    agent = ShopGuideAgent(products, FakeLLMClient(), retriever, recommendation_memory=memory)
+
+    events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_unclear", message="我是猪"))
+    )
+
+    assert retriever.calls == 0
+    assert memory.stats()["misses"] == 0
+    assert "product_item" not in [event["type"] for event in events]
 
 
 def test_product_followup_inherits_original_constraints():

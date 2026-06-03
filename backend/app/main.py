@@ -10,7 +10,7 @@ from .config import Settings, get_settings
 from .data_loader import load_products
 from .embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
 from .llm_client import DoubaoLLMClient, FakeLLMClient
-from .memory_cache import StructuredMemoryCache
+from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest
 
 
@@ -29,7 +29,14 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
         )
     )
     memory_cache = StructuredMemoryCache(settings.memory_cache_path or None)
-    agent = ShopGuideAgent(products, llm_client, retriever, memory_cache=memory_cache)
+    recommendation_memory = RecommendationMemoryCache(_recommendation_memory_path(settings.memory_cache_path))
+    agent = ShopGuideAgent(
+        products,
+        llm_client,
+        retriever,
+        memory_cache=memory_cache,
+        recommendation_memory=recommendation_memory,
+    )
     cart = CartService(products)
     product_map = {product.product_id: product for product in products}
 
@@ -46,6 +53,8 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
             "llm": "fake" if isinstance(llm_client, FakeLLMClient) else "doubao",
             "retriever": _retriever_label(retriever),
             "memory_cache": memory_cache.stats(),
+            "recommendation_memory": recommendation_memory.stats(),
+            "structured_rank_cache": memory_cache.stats(),
         }
 
     @app.get("/api/products")
@@ -150,6 +159,12 @@ def _product_summary(product):
         "image_path": product.image_path,
     }
 
+
+
+def _recommendation_memory_path(path: str) -> str | None:
+    if not path:
+        return None
+    return path + ".recommendation.jsonl"
 
 def _retriever_label(retriever) -> str:
     if isinstance(retriever, BM25OnlyRetriever):

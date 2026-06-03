@@ -26,6 +26,7 @@ This puts useful text on screen before cards arrive, runs LLM product selection 
 - `assistant_state.intent`, `assistant_state.retrieval_mode`, and `assistant_state.llm_mode` are optional debug fields for verification UIs.
 - `assistant_state.selection_mode`, `assistant_state.candidate_count`, and `assistant_state.selected_count` are optional fields showing LLM product-card selection status.
 - `assistant_state.context_action` is an optional field showing whether the turn is a `new_task`, `clarification_answer`, `followup`, or normal same-task turn.
+- `assistant_state.memory_mode` is an optional field showing recommendation memory state: `miss`, `exact_hit`, `semantic_hit`, or rank-cache related diagnostics.
 - `small_talk` responses do not use a dedicated event; clients receive `assistant_state`, `text_delta`, and `done`.
 - `quick_actions`: low-cost refinement actions such as `更便宜`, `不要 Apple`, `更适合户外`. Brand actions name the current primary product brand instead of using the ambiguous `这个品牌`.
 - `clarification_request`: used only when recommending immediately would be unreliable.

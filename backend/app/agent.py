@@ -10,7 +10,7 @@ from .constraint_filter import hard_filter
 from .embedding_retriever import BM25OnlyRetriever
 from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
-from .memory_cache import StructuredMemoryCache
+from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, StructuredMemoryCache
 from .models import (
     ChatRequest,
     HardConstraints,
@@ -42,6 +42,7 @@ class ShopGuideAgent:
         session_store: SessionStore | None = None,
         tts_adapter: TTSAdapter | None = None,
         memory_cache: StructuredMemoryCache | None = None,
+        recommendation_memory: RecommendationMemoryCache | None = None,
     ):
         self.products = products
         self.product_map = {product.product_id: product for product in products}
@@ -55,6 +56,7 @@ class ShopGuideAgent:
         self.reference_resolver = ReferenceResolver(self.product_map)
         self.tts = tts_adapter or TTSAdapter()
         self.memory_cache = memory_cache
+        self.recommendation_memory = recommendation_memory
         self.taxonomy = TaxonomyResolver.from_products(products)
         self.query_builder = QueryBuilder(self.taxonomy)
 
@@ -149,6 +151,19 @@ class ShopGuideAgent:
                 yield event
             yield _filter_recovery_event(message_id, plan)
             yield {"type": "done", "message_id": message_id}
+            return
+        memory_hit = self._get_recommendation_memory_hit(plan, request.message)
+        if memory_hit is not None:
+            async for event in self._stream_recommendation_events(
+                request,
+                plan,
+                memory_hit.ranked,
+                context_action,
+                memory_mode=memory_hit.mode,
+                selected_override=memory_hit.ranked,
+                cached_summary=memory_hit.summary,
+            ):
+                yield event
             return
         ranked = self.retrieve_and_rank(plan)
         async for event in self._stream_recommendation_events(request, plan, ranked, context_action):
@@ -264,12 +279,20 @@ class ShopGuideAgent:
     ) -> list[dict]:
         return [event async for event in self._stream_recommendation_events(request, plan, ranked)]
 
+    def _get_recommendation_memory_hit(self, plan: RetrievalPlan, message: str) -> RecommendationMemoryHit | None:
+        if not self.recommendation_memory or plan.intent not in {"recommend_product", "product_followup"}:
+            return None
+        return self.recommendation_memory.get(plan, message, self.product_map)
+
     async def _stream_recommendation_events(
         self,
         request: ChatRequest,
         plan: RetrievalPlan,
         ranked: list[RankedProduct],
         context_action: str = "same_task",
+        memory_mode: str = "miss",
+        selected_override: list[RankedProduct] | None = None,
+        cached_summary: str | None = None,
     ) -> AsyncIterator[dict]:
         message_id = _message_id()
         intro = _understanding_text(plan)
@@ -281,19 +304,21 @@ class ShopGuideAgent:
             selection_mode="llm_selection",
             candidate_count=len(ranked),
             context_action=context_action,
+            memory_mode=memory_mode,
         )
         for event in _text_delta_events(message_id, intro):
             yield event
-        selected = await self._select_products(request, plan, ranked)
+        selected = selected_override or await self._select_products(request, plan, ranked)
         yield self._assistant_state(
             message_id,
             "selecting",
             "已完成候选商品决策",
             plan,
-            selection_mode="llm_selection",
+            selection_mode="memory_hit" if selected_override is not None else "llm_selection",
             candidate_count=len(ranked),
             selected_count=len(selected),
             context_action=context_action,
+            memory_mode=memory_mode,
         )
         if not selected:
             context = self.sessions.get(request.session_id)
@@ -308,10 +333,17 @@ class ShopGuideAgent:
             return
         context = self.sessions.get(request.session_id)
         self._remember_recommendations(context, plan, selected)
+        if self.recommendation_memory and selected_override is None:
+            self.recommendation_memory.put(plan, request.message, selected)
         text_parts: list[str] = []
-        async for event in self._stream_generate_text_events(message_id, request, plan, selected, None):
-            text_parts.append(event["text"])
-            yield event
+        if cached_summary:
+            for event in _text_delta_events(message_id, cached_summary):
+                text_parts.append(event["text"])
+                yield event
+        else:
+            async for event in self._stream_generate_text_events(message_id, request, plan, selected, None):
+                text_parts.append(event["text"])
+                yield event
         text = "".join(text_parts)
         yield {"type": "products_start", "message_id": message_id}
         for index, item in enumerate(selected):
@@ -530,6 +562,7 @@ class ShopGuideAgent:
         candidate_count: int | None = None,
         selected_count: int | None = None,
         context_action: str | None = None,
+        memory_mode: str | None = None,
     ) -> dict:
         return _assistant_state(
             message_id,
@@ -542,6 +575,7 @@ class ShopGuideAgent:
             candidate_count=candidate_count,
             selected_count=selected_count,
             context_action=context_action,
+            memory_mode=memory_mode,
         )
 
     def _build_comparison_events(self, request: ChatRequest) -> list[dict]:
@@ -804,6 +838,7 @@ def _assistant_state(
     candidate_count: int | None = None,
     selected_count: int | None = None,
     context_action: str | None = None,
+    memory_mode: str | None = None,
 ) -> dict:
     event = {"type": "assistant_state", "message_id": message_id, "phase": phase, "label": label}
     if intent:
@@ -820,6 +855,8 @@ def _assistant_state(
         event["selected_count"] = selected_count
     if context_action:
         event["context_action"] = context_action
+    if memory_mode:
+        event["memory_mode"] = memory_mode
     return event
 
 

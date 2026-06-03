@@ -4,7 +4,7 @@ import json
 from backend.app.agent import ShopGuideAgent
 from backend.app.cart import CartService
 from backend.app.data_loader import load_products
-from backend.app.llm_client import FakeLLMClient
+from backend.app.llm_client import DoubaoLLMClient, FakeLLMClient
 from backend.app.memory_cache import StructuredMemoryCache
 from backend.app.models import ChatRequest, Product
 from backend.app.taxonomy import TaxonomyResolver
@@ -88,6 +88,86 @@ class SemanticFrameLLM(FakeLLMClient):
         if not self.frames:
             return "{}"
         return json.dumps(self.frames.pop(0), ensure_ascii=False)
+
+
+class ContextRecordingSemanticLLM(FakeLLMClient):
+    def __init__(self, *frames):
+        self.frames = list(frames)
+        self.contexts = []
+
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        self.contexts.append(context)
+        if not self.frames:
+            return "{}"
+        return json.dumps(self.frames.pop(0), ensure_ascii=False)
+
+
+class ContextualFallbackLLM(FakeLLMClient):
+    def __init__(self, primary_frames, contextual_frames):
+        self.primary_frames = list(primary_frames)
+        self.contextual_frames = list(contextual_frames)
+        self.contextual_calls = []
+
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        if self.primary_frames:
+            return json.dumps(self.primary_frames.pop(0), ensure_ascii=False)
+        return json.dumps({"intent": "unclear_input"}, ensure_ascii=False)
+
+    async def classify_contextual_followup(self, message, context):
+        self.contextual_calls.append((message, context))
+        if not self.contextual_frames:
+            return json.dumps({"intent": "unclear_input"}, ensure_ascii=False)
+        return json.dumps(self.contextual_frames.pop(0), ensure_ascii=False)
+
+
+class RawSemanticLLM(FakeLLMClient):
+    def __init__(self, *raw_frames):
+        self.raw_frames = list(raw_frames)
+
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        if not self.raw_frames:
+            return "{}"
+        return self.raw_frames.pop(0)
+
+
+class UnsupportedJsonModeError(Exception):
+    pass
+
+
+class FakeChatCompletionMessage:
+    def __init__(self, content):
+        self.content = content
+
+
+class FakeChatCompletionChoice:
+    def __init__(self, content):
+        self.message = FakeChatCompletionMessage(content)
+
+
+class FakeChatCompletionResponse:
+    def __init__(self, content):
+        self.choices = [FakeChatCompletionChoice(content)]
+
+
+class JsonModeFallbackCompletions:
+    def __init__(self, content):
+        self.calls = []
+        self.content = content
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs.get("response_format") == {"type": "json_object"}:
+            raise UnsupportedJsonModeError(
+                "The parameter `response_format.type` specified in the request are not valid: "
+                "`json_object` is not supported by this model."
+            )
+        return FakeChatCompletionResponse(self.content)
+
+
+class JsonModeFallbackClient:
+    def __init__(self, content):
+        self.chat = type("Chat", (), {})()
+        self.chat.completions = JsonModeFallbackCompletions(content)
 
 
 class NoPlannerSemanticLLM(SemanticFrameLLM):
@@ -318,6 +398,73 @@ def test_llm_small_talk_intent_is_honored_for_unlisted_greeting():
     assert "product_item" not in event_types
     assert "clarification_request" not in event_types
     assert retriever.calls == 0
+
+
+def test_doubao_semantic_parse_retries_without_json_mode_when_model_rejects_response_format():
+    content = json.dumps(
+        {
+            "intent": "product_followup",
+            "target": {"reference": "focus_product"},
+            "response_goal": "explain_focus_product",
+        },
+        ensure_ascii=False,
+    )
+    client = object.__new__(DoubaoLLMClient)
+    client.model = "doubao-test"
+    client.client = JsonModeFallbackClient(content)
+
+    raw = asyncio.run(
+        client.parse_semantic_frame(
+            "刚刚那个是什么？",
+            {"has_focus_product": True, "focus_product": {"product_id": "p1"}},
+        )
+    )
+
+    assert json.loads(raw)["intent"] == "product_followup"
+    calls = client.client.chat.completions.calls
+    assert len(calls) == 2
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in calls[1]
+
+
+def test_semantic_parser_normalizes_empty_list_constraint_patches_from_llm():
+    products = load_products("ecommerce_agent_dataset")
+    llm = RawSemanticLLM(
+        json.dumps({"intent": "recommend_product"}, ensure_ascii=False),
+        json.dumps(
+            {
+                "intent": "product_followup",
+                "target": {"reference": "focus_product"},
+                "response_goal": "explain_focus_product",
+                "constraint_edits": {"add": {}, "remove": [], "relax": []},
+                "query_intent": {},
+            },
+            ensure_ascii=False,
+        ),
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_empty_list_patch",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_empty_list_patch",
+                message="刚刚那个是什么？",
+            )
+        )
+    )
+
+    state = next(event for event in events if event["type"] == "assistant_state")
+    assert state["intent"] == "product_followup"
 
 
 def test_unclear_input_does_not_trigger_retrieval_or_product_cards():
@@ -559,6 +706,281 @@ def test_followup_uses_semantic_constraint_edits_to_remove_old_constraints():
     assert updated_plan.hard_constraints.price_max == 100
     assert "酒精" not in updated_plan.hard_constraints.exclude_terms
     assert updated_plan.hard_constraints.sub_category == "洁面"
+
+
+def test_llm_product_followup_from_user_message_is_not_downgraded_to_unclear_input():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM(
+        {"intent": "recommend_product"},
+        {
+            "intent": "product_followup",
+            "target": {"reference": "focus_product", "selection_strategy": "primary"},
+            "constraint_edits": {"add": {"soft_preferences": {"price_preference": "更便宜"}}},
+            "response_goal": "recommend_cheaper_alternative",
+        },
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_followup_cheaper",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event["type"] == "product_item")
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_followup_cheaper",
+                message="换个更便宜的",
+            )
+        )
+    )
+
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    assert states[0]["intent"] == "product_followup"
+    assert states[0]["retrieval_mode"] == "product_focus_retrieval"
+    assert not any(event.get("intent") == "unclear_input" for event in states)
+    replacement_events = [event for event in second_events if event["type"] == "replacement_product"]
+    if replacement_events:
+        replacement = replacement_events[0]
+        assert replacement["product"]["sub_category"] == primary["product"]["sub_category"]
+        assert replacement["product"]["price"] < primary["product"]["price"]
+    else:
+        assert "filter_recovery_options" in [event["type"] for event in second_events]
+
+
+def test_llm_product_followup_can_explain_focus_product_without_new_card():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM(
+        {"intent": "recommend_product"},
+        {
+            "intent": "product_followup",
+            "target": {"reference": "focus_product", "selection_strategy": "primary"},
+            "response_goal": "explain_focus_product",
+        },
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_followup_explain",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event["type"] == "product_item")
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_followup_explain",
+                message="刚刚那个是什么？",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in second_events]
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    merged_text = "".join(event["text"] for event in second_events if event["type"] == "text_delta")
+    assert states[0]["intent"] == "product_followup"
+    assert "replacement_product" not in event_types
+    assert "product_item" not in event_types
+    assert primary["product"]["name"] in merged_text
+
+
+def test_no_match_followup_preserves_focus_for_later_explanation():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM(
+        {"intent": "recommend_product"},
+        {
+            "intent": "product_followup",
+            "target": {"reference": "focus_product", "selection_strategy": "primary"},
+            "constraint_edits": {"add": {"soft_preferences": {"price_preference": "更便宜"}}},
+            "response_goal": "recommend_cheaper_alternative",
+        },
+        {
+            "intent": "product_followup",
+            "target": {"reference": "focus_product", "selection_strategy": "primary"},
+            "response_goal": "explain_focus_product",
+        },
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_preserve_focus_after_no_match",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event["type"] == "product_item")
+
+    no_match_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_preserve_focus_after_no_match",
+                message="换个更便宜的",
+            )
+        )
+    )
+    assert "filter_recovery_options" in [event["type"] for event in no_match_events]
+    context_after_no_match = agent.sessions.get("demo_preserve_focus_after_no_match")
+    assert context_after_no_match.focus_product_id == primary["product"]["product_id"]
+    assert context_after_no_match.last_recommendations
+    assert context_after_no_match.last_recommendations[0]["product_id"] == primary["product"]["product_id"]
+
+    explain_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_preserve_focus_after_no_match",
+                message="刚刚那个是什么？",
+            )
+        )
+    )
+
+    state = next(event for event in explain_events if event["type"] == "assistant_state")
+    event_types = [event["type"] for event in explain_events]
+    merged_text = "".join(event["text"] for event in explain_events if event["type"] == "text_delta")
+    assert state["intent"] == "product_followup"
+    assert "replacement_product" not in event_types
+    assert "product_item" not in event_types
+    assert primary["product"]["name"] in merged_text
+
+
+def test_llm_product_followup_can_exclude_current_brand_from_user_message():
+    products = load_products("ecommerce_agent_dataset")
+    llm = SemanticFrameLLM(
+        {"intent": "recommend_product"},
+        {
+            "intent": "product_followup",
+            "target": {"reference": "focus_product", "selection_strategy": "primary"},
+            "response_goal": "exclude_current_brand",
+        },
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_followup_brand",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event["type"] == "product_item")
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_followup_brand",
+                message="不要这个品牌",
+            )
+        )
+    )
+
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    assert states[0]["intent"] == "product_followup"
+    replacement_events = [event for event in second_events if event["type"] == "replacement_product"]
+    if replacement_events:
+        assert replacement_events[0]["product"]["brand"] != primary["product"]["brand"]
+    else:
+        assert "filter_recovery_options" in [event["type"] for event in second_events]
+
+
+def test_semantic_llm_receives_focus_product_and_recommendation_summaries():
+    products = load_products("ecommerce_agent_dataset")
+    llm = ContextRecordingSemanticLLM(
+        {"intent": "recommend_product"},
+        {
+            "intent": "product_followup",
+            "target": {"reference": "focus_product", "selection_strategy": "primary"},
+            "response_goal": "explain_focus_product",
+        },
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_context_payload",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_llm_context_payload",
+                message="刚刚那个是什么？",
+            )
+        )
+    )
+
+    context_payload = llm.contexts[-1]
+    assert context_payload["focus_product"]["product_id"]
+    assert context_payload["focus_product"]["title"]
+    assert context_payload["focus_product"]["sub_category"] == "智能手机"
+    assert context_payload["last_recommendations"][0]["title"]
+    assert context_payload["last_intent"] == "recommend_product"
+
+
+def test_contextual_llm_judge_recovers_followup_when_primary_semantic_parse_is_unclear():
+    products = load_products("ecommerce_agent_dataset")
+    llm = ContextualFallbackLLM(
+        primary_frames=[{"intent": "recommend_product"}],
+        contextual_frames=[
+            {
+                "intent": "product_followup",
+                "target": {"reference": "focus_product", "selection_strategy": "primary"},
+                "constraint_edits": {"add": {"soft_preferences": {"price_preference": "更便宜"}}},
+                "response_goal": "recommend_cheaper_alternative",
+            }
+        ],
+    )
+    agent = ShopGuideAgent(products, llm, FakeRetriever())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_contextual_judge",
+                message="推荐一款手机，预算4000，拍照优先",
+            )
+        )
+    )
+    assert any(event["type"] == "product_item" for event in first_events)
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_contextual_judge",
+                message="换个更便宜的",
+            )
+        )
+    )
+
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    assert llm.contextual_calls
+    assert states[0]["intent"] == "product_followup"
+    assert states[0]["retrieval_mode"] == "product_focus_retrieval"
 
 
 def test_recommendation_uses_single_intent_compiler_without_llm_plan():

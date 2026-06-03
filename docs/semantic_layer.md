@@ -6,6 +6,16 @@ ShopGuide now separates natural-language understanding from deterministic execut
 
 The LLM semantic layer parses user language into a structured `SemanticFrame`. It may identify intent, cart operations, product references, and constraint edits. It does not choose final products, mutate carts directly, or bypass hard filters.
 
+The primary path is LLM semantic parsing with session context. Rule logic is reserved for fallback and safety guardrails, not for advertising the main intent capability.
+
+For short contextual messages, the LLM receives the current focus product, recent recommendation summaries, last intent, current task, and pending clarification state. For example, after a phone recommendation:
+
+- `换个更便宜的` should parse as `product_followup` with `response_goal=recommend_cheaper_alternative`.
+- `刚刚那个是什么？` should parse as `product_followup` with `response_goal=explain_focus_product`.
+- `不要这个品牌` should parse as `product_followup` with `response_goal=exclude_current_brand`.
+
+If no session focus exists, these short messages are not allowed to trigger random retrieval.
+
 The backend executor validates the frame and applies it deterministically:
 
 - `apply_constraint_edits()` turns followup diffs into a new `RetrievalPlan`.
@@ -48,4 +58,6 @@ Followup constraint edit:
 
 Rule guards still run after LLM parsing. Explicit hard constraints such as "不要酒精", "不要日系", and "100以内" are preserved even if the LLM omits them.
 
-If the LLM output is invalid or missing, the parser falls back to rule-derived semantic frames. This keeps the demo stable while allowing more natural multi-turn language to move out of scattered keyword handlers.
+If the configured model rejects OpenAI-style JSON mode, the client retries the same prompt without `response_format` and still parses the LLM's JSON text. Minor no-op shape issues such as `constraint_edits.remove: []` are normalized before validation.
+
+If the LLM output is still invalid or missing, the parser falls back to rule-derived semantic frames. This keeps the demo stable while allowing more natural multi-turn language to move out of scattered keyword handlers.

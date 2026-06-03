@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .models import ChatRequest, SessionContext, ShoppingIntentIR
-from .planner_agent import _detect_intent
+from .planner_agent import _detect_category, _detect_intent
 from .semantic_layer import SemanticParser, rule_semantic_frame
 
 
@@ -25,7 +25,7 @@ def _normalize_intent(frame: ShoppingIntentIR, request: ChatRequest) -> Shopping
     rule_intent = _canonical_intent(_detect_intent(request.message or "", request))
     if request.type == "product_followup":
         intent = "product_followup"
-    elif intent == "product_followup" and rule_intent == "recommend_product":
+    elif intent == "product_followup" and rule_intent == "recommend_product" and _detect_category(request.message or ""):
         intent = "recommend_product"
     elif intent == "compare_products" and rule_intent == "recommend_product":
         intent = "recommend_product"

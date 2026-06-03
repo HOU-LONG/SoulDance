@@ -103,7 +103,7 @@ class ShopGuideAgent:
         context = self.sessions.get(request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
         ir = compiled_ir or await self.intent_compiler.compile(request, context)
-        if request.type == "product_followup":
+        if request.type == "product_followup" or (request.type == "user_message" and ir.intent == "product_followup"):
             async for event in self._stream_followup(request, ir):
                 yield event
             return
@@ -159,6 +159,20 @@ class ShopGuideAgent:
             context.state.active_focus.product_id = request.focus_product_id
             context.state.active_focus.source = "product_card"
         context.focus_history.append(request.message)
+        if request.type == "user_message" and not (context.focus_product_id or context.last_product_ids):
+            message_id = _message_id()
+            text = "我还没有可以替换或解释的上一款商品。你可以先告诉我想买什么，或者让我先推荐一款。"
+            yield self._assistant_state(
+                message_id,
+                "chatting",
+                "缺少可追问商品",
+                intent="unclear_input",
+                retrieval_mode="no_retrieval",
+            )
+            for event in _text_delta_events(message_id, text):
+                yield event
+            yield {"type": "done", "message_id": message_id}
+            return
         if ir is None:
             seed_constraint_state_from_plan(context, context.last_plan)
             ir = await self.intent_compiler.compile(request, context)
@@ -170,20 +184,39 @@ class ShopGuideAgent:
         plan.intent = "product_followup"
         plan.retrieval_mode = "product_focus_retrieval"
         focus_product = self.product_map.get(request.focus_product_id or context.focus_product_id or "")
-        if focus_product and _wants_different_brand(request.message):
+        if focus_product and _wants_cheaper_alternative(request.message, ir):
+            new_max = max(focus_product.price - 0.01, 0)
+            current_max = plan.hard_constraints.price_max
+            plan.hard_constraints.price_max = min(current_max, new_max) if current_max is not None else new_max
+            context.state.constraint_state.hard.price_max = plan.hard_constraints.price_max
+            plan.soft_preferences["price_preference"] = "更便宜"
+            context.state.constraint_state.soft["price_preference"] = "更便宜"
+        if focus_product and _wants_different_brand(request.message, ir):
             plan.hard_constraints.exclude_brands = _dedupe(plan.hard_constraints.exclude_brands + [focus_product.brand])
             context.state.constraint_state.hard.exclude_brands = list(plan.hard_constraints.exclude_brands)
             context.negative_feedback.append(f"不要品牌:{focus_product.brand}")
             context.state.user_profile.negative_preferences.append(f"不要品牌:{focus_product.brand}")
-        ranked = self.retrieve_and_rank(plan)
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
-        self._remember_recommendations(context, plan, ranked)
         message_id = _message_id()
-        intro = _followup_intro(plan)
-        yield self._assistant_state(message_id, "retrieving", "正在按当前商品上下文重新筛选", plan)
+        is_explain_request = bool(focus_product and _is_explain_focus_request(request.message, ir))
+        intro = "我来说明刚刚那款商品。" if is_explain_request else _followup_intro(plan)
+        label = "正在解释当前商品" if is_explain_request else "正在按当前商品上下文重新筛选"
+        phase = "explaining" if is_explain_request else "retrieving"
+        yield self._assistant_state(message_id, phase, label, plan)
         for event in _text_delta_events(message_id, intro):
             yield event
+        if is_explain_request:
+            text = _focus_product_explanation(focus_product, context)
+            for event in _text_delta_events(message_id, text):
+                yield event
+            yield {"type": "focus_done", "message_id": message_id}
+            for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+                yield event
+            return
+        ranked = self.retrieve_and_rank(plan)
+        if ranked:
+            self._remember_recommendations(context, plan, ranked)
         if ranked:
             replacement = _product_card(ranked[0])
             yield {
@@ -628,7 +661,17 @@ class ShopGuideAgent:
         context.last_plan = plan
         context.last_product_ids = [item.product.product_id for item in ranked]
         context.last_recommendations = [
-            {"product_id": item.product.product_id, "role": "primary" if index == 0 else "alternative", "index": index}
+            {
+                "product_id": item.product.product_id,
+                "title": item.product.title,
+                "brand": item.product.brand,
+                "category": item.product.category,
+                "sub_category": item.product.sub_category,
+                "price": item.product.price,
+                "reason": item.reason,
+                "role": "primary" if index == 0 else "alternative",
+                "index": index,
+            }
             for index, item in enumerate(ranked)
         ]
         context.state.recommendation_memory.last_set_id = "recset_" + uuid.uuid4().hex[:8]
@@ -663,7 +706,7 @@ class ShopGuideAgent:
     async def try_handle_cart_message(self, request: ChatRequest, cart: CartService, compiled_ir=None) -> dict | None:
         context = self.sessions.get(request.session_id)
         frame = compiled_ir or await self.intent_compiler.compile(request, context)
-        if frame.intent != "cart_operation" or frame.cart_operation is None:
+        if compiled_ir is None and (frame.intent != "cart_operation" or frame.cart_operation is None):
             frame = rule_semantic_frame(request)
         if frame.intent != "cart_operation" or frame.cart_operation is None:
             return None
@@ -1061,11 +1104,43 @@ def _unknown_category_text(text: str) -> str:
     return "当前商品库里还没有能稳定匹配这个需求的类目。为了不跨类目乱推荐，我先不返回商品卡。你可以换成现有商品类目再试。"
 
 
-def _wants_different_brand(text: str) -> bool:
+def _is_explain_focus_request(text: str, ir) -> bool:
+    return ir.response_goal == "explain_focus_product" or any(
+        word in text for word in ["刚刚那个是什么", "刚才那个是什么", "为什么推荐", "介绍一下", "这个是什么"]
+    )
+
+
+def _wants_cheaper_alternative(text: str, ir) -> bool:
+    if ir.response_goal == "recommend_cheaper_alternative":
+        return True
+    if ir.constraint_edits.add.soft_preferences.get("price_preference") == "更便宜":
+        return True
+    return any(word in text for word in ["更便宜", "便宜点", "便宜的", "价格低"])
+
+
+def _wants_different_brand(text: str, ir=None) -> bool:
+    if ir is not None and ir.response_goal == "exclude_current_brand":
+        return True
     return any(word in text for word in ["不要这个品牌", "换个品牌", "别的品牌", "不要这个牌子"])
 
 
+def _focus_product_explanation(product: Product, context: SessionContext) -> str:
+    reason = ""
+    for item in context.last_recommendations:
+        if item.get("product_id") == product.product_id:
+            reason = str(item.get("reason") or "")
+            break
+    reason_text = f"推荐理由是：{reason}。" if reason else ""
+    return (
+        f"刚刚那款是「{product.title}」，品牌是 {product.brand}，属于{product.sub_category}，"
+        f"价格 {product.price:.0f} 元。{reason_text}"
+        "如果你想换更便宜的、避开这个品牌，或者看同类备选，我可以继续筛。"
+    )
+
+
 def _detect_cart_action(text: str) -> str:
+    if any(word in text for word in ["不要这个品牌", "不要这个牌子"]):
+        return "get_cart"
     if any(word in text for word in ["下单", "结算"]):
         return "checkout"
     if any(word in text for word in ["删掉", "删除", "移除"]):

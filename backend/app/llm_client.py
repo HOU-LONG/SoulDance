@@ -19,6 +19,7 @@ hard_constraints 可包含 category, sub_category, price_max, exclude_terms, exc
 SEMANTIC_SYSTEM_PROMPT = """你是电商导购后端的 IntentCompiler。只输出 JSON，不要 Markdown。
 你的任务是把用户自然语言解析成 ShoppingIntentIR，不直接执行商品选择、检索排序或购物车操作。
 intent 只能是 recommend_product, product_followup, compare_products, cart_operation, scenario_bundle, clarification, small_talk, unclear_input。
+最高优先级：如果 session_context.has_focus_product=true，且用户消息是在追问、替换、解释、排除或调整上一轮商品，即使句子很短、没有品类词，也必须输出 product_followup，不能输出 unclear_input。
 纯寒暄、感谢、询问助手身份等非购物消息输出 small_talk；如果同一句里包含明确购物需求，购物意图优先。
 乱码、自我陈述、情绪表达、没有购物动作也没有明确商品类目的输入输出 unclear_input，不要联想商品。
 示例：`halo`、`hallo`、`hello`、`hi`、`你好`、`在吗`、`谢谢` -> small_talk。
@@ -27,6 +28,10 @@ intent 只能是 recommend_product, product_followup, compare_products, cart_ope
 示例：`halo，推荐防晒霜`、`你好，预算100以内推荐精华` -> recommend_product。
 示例：`我想买猪肉松`、`推荐毛巾` -> recommend_product。
 如果用户在已有推荐后说 `就这个来两件`、`要这个`、`这个要两件`、`来一个`、`买两件`、`就它了`，输出 cart_operation/add_to_cart，target.reference 用 last_recommendations 或 focus_product。
+如果 session_context.focus_product 或 last_recommendations 存在，用户说 `换个更便宜的`、`还有别的吗`、`刚刚那个是什么`、`为什么推荐它`、`不要这个品牌` 属于 product_followup，不要输出 unclear_input。
+`换个更便宜的` 输出 intent=product_followup，target.reference=focus_product，constraint_edits.add.soft_preferences.price_preference=更便宜，response_goal=recommend_cheaper_alternative。
+`刚刚那个是什么` 或 `为什么推荐它` 输出 intent=product_followup，target.reference=focus_product，response_goal=explain_focus_product。
+`不要这个品牌` 输出 intent=product_followup，target.reference=focus_product，response_goal=exclude_current_brand。
 followup 偏好变化放在 constraint_edits：add 表示新增或覆盖约束，remove 表示用户明确取消旧约束，relax 表示放宽某类约束。
 自然语言购物车放在 cart_operation，target.reference 可用 focus_product, last_recommendation, last_recommendations, recent_cart_item。
 target.selection_strategy 可用 primary, cheapest, most_expensive, index。
@@ -49,6 +54,15 @@ CHITCHAT_SYSTEM_PROMPT = """你是一个温和、自然的电商导购助手。
 回复要有人味，最多两句话，引导用户可以补充想买什么、预算、偏好或排除条件。
 不要评价用户，不要调侃用户，不要使用“别闹”这类可能冒犯的表达。"""
 
+CONTEXTUAL_FOLLOWUP_SYSTEM_PROMPT = """你是电商导购后端的上下文意图复核器。只输出 JSON，不要 Markdown。
+session_context 中已经存在 focus_product，用户当前消息可能是在追问上一轮推荐商品。
+如果用户是在要求换更便宜、换一个、解释刚刚那款、为什么推荐、不要这个品牌、还有别的吗，输出 product_followup。
+如果只是寒暄、乱码、自我陈述，输出 unclear_input。
+输出字段仍使用 ShoppingIntentIR。
+`换个更便宜的` -> intent=product_followup, target.reference=focus_product, constraint_edits.add.soft_preferences.price_preference=更便宜, response_goal=recommend_cheaper_alternative。
+`刚刚那个是什么` / `为什么推荐它` -> intent=product_followup, target.reference=focus_product, response_goal=explain_focus_product。
+`不要这个品牌` -> intent=product_followup, target.reference=focus_product, response_goal=exclude_current_brand。"""
+
 
 class DoubaoLLMClient:
     def __init__(self, settings: Settings):
@@ -61,6 +75,22 @@ class DoubaoLLMClient:
             timeout=settings.request_timeout_seconds,
         )
 
+    async def _json_completion(self, messages: list[dict[str, str]], temperature: float = 0) -> str:
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "response_format": {"type": "json_object"},
+        }
+        try:
+            response = await self.client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            if not _is_unsupported_json_mode_error(exc):
+                raise
+            kwargs.pop("response_format", None)
+            response = await self.client.chat.completions.create(**kwargs)
+        return response.choices[0].message.content or "{}"
+
     async def plan(self, message: str, context: SessionContext | None = None) -> str:
         context_payload: dict[str, Any] = {}
         if context and context.last_plan:
@@ -68,9 +98,8 @@ class DoubaoLLMClient:
                 "last_plan": context.last_plan.model_dump(mode="json"),
                 "focus_product_id": context.focus_product_id,
             }
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        return await self._json_completion(
+            [
                 {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
                 {
                     "role": "user",
@@ -81,18 +110,18 @@ class DoubaoLLMClient:
                 },
             ],
             temperature=0,
-            response_format={"type": "json_object"},
         )
-        return response.choices[0].message.content or "{}"
 
     async def parse_semantic_frame(
         self,
         message: str,
-        context: SessionContext | None = None,
+        context: SessionContext | dict[str, Any] | None = None,
         request_type: str = "user_message",
     ) -> str:
         context_payload: dict[str, Any] = {}
-        if context:
+        if isinstance(context, dict):
+            context_payload = context
+        elif context:
             context_payload = {
                 "last_plan": context.last_plan.model_dump(mode="json") if context.last_plan else None,
                 "focus_product_id": context.focus_product_id,
@@ -101,9 +130,8 @@ class DoubaoLLMClient:
                 "recent_cart_product_id": context.recent_cart_product_id,
                 "global_profile": context.global_profile,
             }
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        return await self._json_completion(
+            [
                 {"role": "system", "content": SEMANTIC_SYSTEM_PROMPT},
                 {
                     "role": "user",
@@ -112,15 +140,33 @@ class DoubaoLLMClient:
                             "message": message,
                             "request_type": request_type,
                             "session_context": context_payload,
+                            "contextual_intent_task": _contextual_intent_task(message, context_payload),
                         },
                         ensure_ascii=False,
                     ),
                 },
             ],
             temperature=0,
-            response_format={"type": "json_object"},
         )
-        return response.choices[0].message.content or "{}"
+
+    async def classify_contextual_followup(self, message: str, context: dict[str, Any]) -> str:
+        return await self._json_completion(
+            [
+                {"role": "system", "content": CONTEXTUAL_FOLLOWUP_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "message": message,
+                            "session_context": context,
+                            "contextual_intent_task": _contextual_intent_task(message, context),
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0,
+        )
 
     async def generate_response(
         self,
@@ -154,9 +200,8 @@ class DoubaoLLMClient:
         plan: RetrievalPlan,
         candidates: list[RankedProduct],
     ) -> str:
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        return await self._json_completion(
+            [
                 {"role": "system", "content": SELECTION_SYSTEM_PROMPT},
                 {
                     "role": "user",
@@ -171,9 +216,7 @@ class DoubaoLLMClient:
                 },
             ],
             temperature=0,
-            response_format={"type": "json_object"},
         )
-        return response.choices[0].message.content or "{}"
 
     async def stream_response(
         self,
@@ -286,6 +329,9 @@ class FakeLLMClient:
             ensure_ascii=False,
         )
 
+    async def classify_contextual_followup(self, message: str, context: dict[str, Any]) -> str:
+        return json.dumps({"intent": "unclear_input"}, ensure_ascii=False)
+
     async def stream_response(
         self,
         user_message: str,
@@ -309,6 +355,25 @@ class FakeLLMClient:
             text = "我在，可以陪你慢慢挑。你告诉我购物需求、预算多少，或者有什么偏好就行。"
         for index in range(0, len(text), 12):
             yield text[index : index + 12]
+
+
+def _contextual_intent_task(message: str, context_payload: dict[str, Any]) -> dict[str, Any]:
+    focus = context_payload.get("focus_product")
+    return {
+        "has_focus_product": bool(focus),
+        "focus_product": focus,
+        "instruction": (
+            "If the user message is a contextual request about the focus product or last recommendations, "
+            "classify it as product_followup and set target.reference to focus_product. "
+            "Examples include cheaper alternative, another option, explain the previous item, and exclude this brand."
+        ),
+        "user_message": message,
+    }
+
+
+def _is_unsupported_json_mode_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "response_format" in text and "json_object" in text and "not supported" in text
 
 
 def _response_evidence_payload(

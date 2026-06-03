@@ -18,14 +18,35 @@ class SemanticParser:
             try:
                 raw = await self.llm_client.parse_semantic_frame(
                     request.message,
-                    context,
+                    semantic_context_payload(context),
                     request_type=request.type,
                 )
                 frame = _parse_frame(raw)
-                return _merge_rule_guards(frame, request)
+                guarded = _merge_rule_guards(frame, request)
+                if guarded.intent == "unclear_input":
+                    recovered = await self._try_contextual_followup_judge(request, semantic_context_payload(context))
+                    if recovered is not None:
+                        return recovered
+                return guarded
             except Exception:
                 pass
         return rule_semantic_frame(request)
+
+    async def _try_contextual_followup_judge(
+        self, request: ChatRequest, context_payload: dict[str, Any]
+    ) -> SemanticFrame | None:
+        if request.type != "user_message" or not context_payload.get("has_focus_product"):
+            return None
+        if not self.llm_client or not hasattr(self.llm_client, "classify_contextual_followup"):
+            return None
+        try:
+            raw = await self.llm_client.classify_contextual_followup(request.message, context_payload)
+            frame = _parse_frame(raw)
+            if frame.intent != "product_followup":
+                return None
+            return _merge_rule_guards(frame, request)
+        except Exception:
+            return None
 
 
 def apply_constraint_edits(base_plan: RetrievalPlan, edits: ConstraintEdits, message: str = "") -> RetrievalPlan:
@@ -117,6 +138,7 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
 
 def _parse_frame(raw: str) -> SemanticFrame:
     data = _extract_json(raw)
+    _normalize_semantic_frame_data(data)
     return SemanticFrame.model_validate(data)
 
 
@@ -134,6 +156,17 @@ def _extract_json(raw: str) -> dict[str, Any]:
         return json.loads(match.group(0))
 
 
+def _normalize_semantic_frame_data(data: dict[str, Any]) -> None:
+    edits = data.get("constraint_edits")
+    if not isinstance(edits, dict):
+        return
+    for key in ("add", "remove"):
+        if edits.get(key) == []:
+            edits[key] = {}
+    if edits.get("relax") in ({}, None):
+        edits["relax"] = []
+
+
 def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFrame:
     guarded = rule_semantic_frame(request)
     if guarded.intent == "small_talk":
@@ -142,7 +175,7 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     if guarded.intent == "unclear_input" and frame.intent == "recommend_product":
         frame.intent = "unclear_input"
         return frame
-    if guarded.intent == "cart_operation" and frame.cart_operation is None:
+    if guarded.intent == "cart_operation" and frame.intent not in {"product_followup", "compare_products"} and frame.cart_operation is None:
         frame.intent = guarded.intent
         frame.cart_operation = guarded.cart_operation
     frame.constraint_edits.add.exclude_terms = _dedupe(
@@ -196,6 +229,39 @@ def _has_shopping_signal(text: str) -> bool:
             flags=re.I,
         )
     )
+
+
+def semantic_context_payload(context: SessionContext | None) -> dict[str, Any]:
+    if context is None:
+        return {}
+    focus_product = _focus_product_summary(context)
+    return {
+        "last_plan": context.last_plan.model_dump(mode="json") if context.last_plan else None,
+        "last_intent": context.state.dialog_state.last_intent,
+        "focus_product_id": context.focus_product_id,
+        "has_focus_product": focus_product is not None,
+        "focus_product": focus_product,
+        "last_product_ids": list(context.last_product_ids),
+        "last_recommendations": list(context.last_recommendations),
+        "recent_cart_product_id": context.recent_cart_product_id,
+        "global_profile": dict(context.global_profile),
+        "current_task": context.state.current_task.model_dump(mode="json"),
+        "pending_clarification": (
+            context.state.pending_clarification.model_dump(mode="json")
+            if context.state.pending_clarification
+            else None
+        ),
+    }
+
+
+def _focus_product_summary(context: SessionContext) -> dict[str, Any] | None:
+    focus_id = context.focus_product_id
+    if not focus_id:
+        return None
+    for item in context.last_recommendations:
+        if item.get("product_id") == focus_id:
+            return dict(item)
+    return {"product_id": focus_id}
 
 
 def _remove_constraints(constraints: HardConstraints, patch) -> None:
@@ -301,6 +367,8 @@ def _detect_index(text: str) -> int | None:
 
 
 def _detect_cart_action(text: str) -> str:
+    if any(word in text for word in ["不要这个品牌", "不要这个牌子"]):
+        return "get_cart"
     if any(word in text for word in ["下单", "结算"]):
         return "checkout"
     if any(word in text for word in ["删掉", "删除", "移除"]):

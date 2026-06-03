@@ -18,14 +18,15 @@ Expected branch:
 codex/rag-memory-reranker
 ```
 
-Expected latest commits:
+Expected recent commit topics:
 
 ```text
-fd064b7 fix: tighten intent routing and recovery actions
-d65c7db feat: select product cards with llm decision
-c75cb96 fix: keep streamed events on their assistant message
-c3a1d0d fix: gate product cards for unclear input
-1149c0d docs: record streaming intent verification
+fix: recover contextual followups with llm intent
+fix: isolate shopping task state and delay product cards
+docs: update backend verification for llm selection
+fix: tighten intent routing and recovery actions
+feat: select product cards with llm decision
+fix: keep streamed events on their assistant message
 ```
 
 Backend environment:
@@ -90,7 +91,7 @@ env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/t
 Expected result:
 
 ```text
-59 passed, 1 warning
+67 passed, 1 warning
 ```
 
 The warning is currently from `jieba` / `pkg_resources` and is not expected to block the demo.
@@ -98,7 +99,7 @@ The warning is currently from `jieba` / `pkg_resources` and is not expected to b
 Acceptance:
 
 - [ ] Test command exits with code 0.
-- [ ] All 59 tests pass.
+- [ ] All 67 tests pass.
 - [ ] No API key appears in test output.
 
 ## 4. Service Startup Verification
@@ -455,6 +456,55 @@ Acceptance:
 - [ ] If no product matches 100以内 + original exclusions, response includes `filter_recovery_options`.
 - [ ] Backend must not emit an out-of-budget `replacement_product`.
 
+### 10.1 Contextual LLM Follow-up From Plain `user_message`
+
+Use the same `session_id` after a successful phone recommendation:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_context_followup_001",
+  "message": "换个更便宜的"
+}
+```
+
+Expected:
+
+- `assistant_state.intent` is `product_followup`.
+- `retrieval_mode` is `product_focus_retrieval`.
+- If no cheaper product satisfies constraints, return `filter_recovery_options` and keep the previous focus product in session memory.
+
+Then send:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_context_followup_001",
+  "message": "刚刚那个是什么？"
+}
+```
+
+Expected:
+
+- `assistant_state.intent` is `product_followup`.
+- `assistant_state.phase` may be `explaining`.
+- Response explains the current focus product and does not emit a new `product_item`.
+
+No-context guard:
+
+```json
+{
+  "type": "user_message",
+  "session_id": "verify_context_followup_empty",
+  "message": "换个更便宜的"
+}
+```
+
+Expected:
+
+- `assistant_state.intent` is `unclear_input`.
+- No retrieval and no product cards.
+
 ## 11. Comparison Verification
 
 Step 1:
@@ -740,7 +790,7 @@ Suggested severity:
 
 - [ ] Backend starts successfully.
 - [ ] `/health` returns healthy status and product count 100.
-- [ ] Full test suite returns `59 passed`.
+- [ ] Full test suite returns `67 passed`.
 - [ ] Normal recommendation streams text and product cards.
 - [ ] Hard constraints are enforced by product cards, not only by text.
 - [ ] Dataset taxonomy constraints are enforced for explicit sub-category requests and unknown product requests.

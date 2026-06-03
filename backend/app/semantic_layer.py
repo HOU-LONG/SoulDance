@@ -28,6 +28,12 @@ class SemanticParser:
                     recovered = await self._try_contextual_followup_judge(request, semantic_context_payload(context))
                     if recovered is not None:
                         return recovered
+                    recovered_by_rule = _contextual_rule_followup(request, semantic_context_payload(context))
+                    if recovered_by_rule is not None:
+                        return recovered_by_rule
+                recovered_by_rule = _contextual_rule_followup(request, semantic_context_payload(context))
+                if recovered_by_rule is not None and guarded.intent == "recommend_product":
+                    return recovered_by_rule
                 return guarded
             except Exception:
                 pass
@@ -134,6 +140,35 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
     if request.type == "product_followup":
         intent = "product_followup"
     return SemanticFrame(intent=intent, constraint_edits=edits)
+
+
+def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, Any]) -> SemanticFrame | None:
+    if request.type != "user_message" or not context_payload.get("has_focus_product"):
+        return None
+    text = request.message or ""
+    edits = ConstraintEdits()
+    response_goal = None
+    if any(word in text for word in ["再便宜", "便宜点", "更便宜", "价格低", "低价"]):
+        edits.add.soft_preferences["price_preference"] = "更便宜"
+        response_goal = "recommend_cheaper_alternative"
+    excluded = extract_excluded_brands(text)
+    if excluded:
+        edits.add.exclude_brands.extend(excluded)
+        response_goal = "exclude_current_brand"
+    if any(word in text for word in ["不要这个品牌", "不要这个牌子", "换个品牌", "别的品牌"]):
+        response_goal = "exclude_current_brand"
+    if any(word in text for word in ["刚刚那个", "为什么推荐", "是什么", "介绍一下"]):
+        response_goal = "explain_focus_product"
+    if not response_goal and any(word in text for word in ["还有别的", "还有别", "换一个", "换一款", "这个不适合", "不适合"]):
+        response_goal = "recommend_alternative"
+    if response_goal is None:
+        return None
+    return SemanticFrame(
+        intent="product_followup",
+        constraint_edits=edits,
+        target=ProductReference(reference="focus_product", selection_strategy="primary"),
+        response_goal=response_goal,
+    )
 
 
 def _parse_frame(raw: str) -> SemanticFrame:

@@ -16,6 +16,8 @@ BRAND_ALIASES = {
     "苹果": ["苹果", "apple"],
     "小米": ["小米", "xiaomi"],
     "荣耀": ["荣耀", "honor"],
+    "耐克": ["耐克", "nike"],
+    "阿迪达斯": ["阿迪达斯", "adidas"],
     "oppo": ["oppo"],
     "vivo": ["vivo"],
 }
@@ -80,7 +82,7 @@ def canonical_brand(value: str) -> str:
 
 
 def extract_excluded_brands(text: str) -> list[str]:
-    if not any(marker in text for marker in ["不要", "不考虑", "排除", "避开", "别", "非"]):
+    if not any(marker in text for marker in ["不要", "不考虑", "排除", "避开", "除了", "别", "非"]):
         return []
     brands: list[str] = []
     lowered = text.lower()

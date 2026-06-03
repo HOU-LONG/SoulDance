@@ -6,7 +6,7 @@ import re
 import uuid
 
 from .cart import CartService
-from .constraint_filter import canonical_brand, extract_excluded_brands, hard_filter
+from .constraint_filter import canonical_brand, explain_filter, extract_excluded_brands, hard_filter
 from .embedding_retriever import BM25OnlyRetriever
 from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
@@ -586,6 +586,8 @@ class ShopGuideAgent:
         context = self.sessions.get(request.session_id)
         product_ids = _resolve_mentioned_product_ids(request.message, context.last_product_ids)
         products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
+        if context.last_plan:
+            products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
         message_id = _message_id()
         if len(products) < 2:
             text = "我还没有足够的最近推荐商品可以对比。你可以先让我推荐几款，再说第一款和第二款怎么选。"
@@ -595,10 +597,12 @@ class ShopGuideAgent:
                 {"type": "done", "message_id": message_id},
             ]
         recommendation = _pick_comparison_winner(products, request.message)
+        dimensions = _comparison_dimensions(products, request.message)
         comparison = {
             "type": "comparison_result",
             "message_id": message_id,
-            "items": [_comparison_item(product, request.message) for product in products],
+            "dimensions": dimensions,
+            "items": [_comparison_item(product, request.message, dimensions, context.last_plan) for product in products],
             "recommendation": {
                 "product_id": recommendation.product_id,
                 "reason": _comparison_reason(recommendation, request.message),
@@ -1130,6 +1134,10 @@ def _filter_recovery_event(message_id: str, plan: RetrievalPlan) -> dict:
 
 
 def _resolve_mentioned_product_ids(text: str, last_product_ids: list[str]) -> list[str]:
+    if any(marker in text for marker in ["这三款", "三款", "前三款", "前3款"]):
+        return last_product_ids[:3]
+    if any(marker in text for marker in ["这两款", "两款", "前两款", "前2款"]):
+        return last_product_ids[:2]
     index_map = {
         "第一": 0,
         "第1": 0,
@@ -1150,7 +1158,18 @@ def _resolve_mentioned_product_ids(text: str, last_product_ids: list[str]) -> li
     return [last_product_ids[index] for index in indexes if index < len(last_product_ids)]
 
 
-def _comparison_item(product: Product, text: str) -> dict:
+def _comparison_dimensions(products: list[Product], text: str) -> list[str]:
+    dimensions = ["价格", "品牌", "类目", "用户关心点"]
+    if "油皮" in text:
+        dimensions.append("适合油皮")
+    if "清爽" in text or any("清爽" in product.search_text for product in products):
+        dimensions.append("清爽度")
+    if any(product.review_rating for product in products):
+        dimensions.append("口碑")
+    return _dedupe(dimensions)
+
+
+def _comparison_item(product: Product, text: str, dimensions: list[str], plan: RetrievalPlan | None = None) -> dict:
     points = []
     if "油皮" in text and "油皮" in product.search_text:
         points.append("明确提到适合油皮")
@@ -1166,7 +1185,48 @@ def _comparison_item(product: Product, text: str) -> dict:
         "brand": product.brand,
         "price": product.price,
         "key_points": points[:3],
+        "dimension_values": _comparison_dimension_values(product, text, dimensions),
+        "risk_flags": _comparison_risk_flags(product, plan),
     }
+
+
+def _comparison_dimension_values(product: Product, text: str, dimensions: list[str]) -> dict[str, str]:
+    values: dict[str, str] = {}
+    for dimension in dimensions:
+        if dimension == "价格":
+            values[dimension] = f"{product.price:.0f} 元"
+        elif dimension == "品牌":
+            values[dimension] = product.brand
+        elif dimension == "类目":
+            values[dimension] = product.sub_category or product.category
+        elif dimension == "用户关心点":
+            values[dimension] = _comparison_need_value(product, text)
+        elif dimension == "适合油皮":
+            values[dimension] = "明确覆盖" if "油皮" in product.search_text else "未明确提及"
+        elif dimension == "清爽度":
+            values[dimension] = "偏清爽" if "清爽" in product.search_text else "未明确提及"
+        elif dimension == "口碑":
+            values[dimension] = f"{product.review_rating:.1f}" if product.review_rating else "暂无评分"
+        else:
+            values[dimension] = "可参考商品详情"
+    return values
+
+
+def _comparison_need_value(product: Product, text: str) -> str:
+    if "油皮" in text:
+        return "匹配油皮需求" if "油皮" in product.search_text else "油皮信息不足"
+    if "便宜" in text or "价格" in text:
+        return "价格更低优先"
+    if "清爽" in text:
+        return "清爽相关" if "清爽" in product.search_text else "清爽信息不足"
+    return "与当前对比需求相关"
+
+
+def _comparison_risk_flags(product: Product, plan: RetrievalPlan | None) -> list[str]:
+    if not plan:
+        return []
+    reason = explain_filter(product, plan.hard_constraints)
+    return [reason] if reason else []
 
 
 def _pick_comparison_winner(products: list[Product], text: str) -> Product:

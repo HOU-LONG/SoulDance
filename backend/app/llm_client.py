@@ -21,10 +21,10 @@ intent 只能是 recommend_product, product_followup, compare_products, cart_ope
 示例：`halo，推荐防晒霜`、`你好，预算100以内推荐精华` -> recommend_product。
 示例：`我想买猪肉松`、`推荐毛巾` -> recommend_product。
 如果用户在已有推荐后说 `就这个来两件`、`要这个`、`这个要两件`、`来一个`、`买两件`、`就它了`，输出 cart_operation/add_to_cart，target.reference 用 last_recommendations 或 focus_product。
-如果 session_context.focus_product 或 last_recommendations 存在，用户说 `换个更便宜的`、`还有别的吗`、`刚刚那个是什么`、`为什么推荐它`、`不要这个品牌` 属于 product_followup，不要输出 unclear_input。
+如果 session_context.focus_product 或 last_recommendations 存在，用户说 `换个更便宜的`、`再便宜点的呢`、`还有别的吗`、`这个不适合`、`刚刚那个是什么`、`刚刚那个为什么推荐`、`为什么推荐它`、`不要这个品牌`、`除了耐克还有什么` 属于 product_followup，不要输出 unclear_input。
 `换个更便宜的` 输出 intent=product_followup，target.reference=focus_product，constraint_edits.add.soft_preferences.price_preference=更便宜，response_goal=recommend_cheaper_alternative。
 `刚刚那个是什么` 或 `为什么推荐它` 输出 intent=product_followup，target.reference=focus_product，response_goal=explain_focus_product。
-`不要这个品牌` 输出 intent=product_followup，target.reference=focus_product，response_goal=exclude_current_brand。
+`不要这个品牌` 或 `除了某品牌还有什么` 输出 intent=product_followup，target.reference=focus_product，response_goal=exclude_current_brand，并把明确品牌放入 constraint_edits.add.exclude_brands。
 followup 偏好变化放在 constraint_edits：add 表示新增或覆盖约束，remove 表示用户明确取消旧约束，relax 表示放宽某类约束。
 自然语言购物车放在 cart_operation，target.reference 可用 focus_product, last_recommendation, last_recommendations, recent_cart_item。
 target.selection_strategy 可用 primary, cheapest, most_expensive, index。
@@ -49,12 +49,12 @@ CHITCHAT_SYSTEM_PROMPT = """你是一个温和、自然的电商导购助手。
 
 CONTEXTUAL_FOLLOWUP_SYSTEM_PROMPT = """你是电商导购后端的上下文意图复核器。只输出 JSON，不要 Markdown。
 session_context 中已经存在 focus_product，用户当前消息可能是在追问上一轮推荐商品。
-如果用户是在要求换更便宜、换一个、解释刚刚那款、为什么推荐、不要这个品牌、还有别的吗，输出 product_followup。
+如果用户是在要求换更便宜、再便宜点、换一个、这个不适合、解释刚刚那款、为什么推荐、不要这个品牌、除了某品牌、还有别的吗，输出 product_followup。
 如果只是寒暄、乱码、自我陈述，输出 unclear_input。
 输出字段仍使用 ShoppingIntentIR。
 `换个更便宜的` -> intent=product_followup, target.reference=focus_product, constraint_edits.add.soft_preferences.price_preference=更便宜, response_goal=recommend_cheaper_alternative。
 `刚刚那个是什么` / `为什么推荐它` -> intent=product_followup, target.reference=focus_product, response_goal=explain_focus_product。
-`不要这个品牌` -> intent=product_followup, target.reference=focus_product, response_goal=exclude_current_brand。"""
+`不要这个品牌` / `除了耐克还有什么` -> intent=product_followup, target.reference=focus_product, response_goal=exclude_current_brand。"""
 
 
 class DoubaoLLMClient:

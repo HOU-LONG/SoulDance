@@ -1063,6 +1063,99 @@ def test_llm_product_followup_can_exclude_current_brand_from_user_message():
         assert "filter_recovery_options" in [event["type"] for event in second_events]
 
 
+def test_contextual_short_cheaper_followup_keeps_product_context():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_short_cheaper_followup",
+                message="我想要华为手机，预算8000，拍照优先",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event["type"] == "product_item")
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_short_cheaper_followup",
+                message="再便宜点的呢？",
+            )
+        )
+    )
+
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    product_events = [event for event in second_events if event["type"] == "product_item"]
+    assert states[0]["intent"] == "product_followup"
+    assert product_events
+    assert all(event["product"]["sub_category"] == primary["product"]["sub_category"] for event in product_events)
+    assert all(event["product"]["price"] < primary["product"]["price"] for event in product_events)
+
+
+def test_short_cheaper_followup_without_context_does_not_recommend_random_products():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_short_cheaper_no_context",
+                message="再便宜点的呢？",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    states = [event for event in events if event["type"] == "assistant_state"]
+    assert states[0]["intent"] == "unclear_input"
+    assert "product_item" not in event_types
+    assert "replacement_product" not in event_types
+
+
+def test_contextual_followup_except_nike_excludes_nike_aliases():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_except_nike_followup",
+                message="我要跑鞋，预算1500",
+            )
+        )
+    )
+    assert any(event["type"] == "product_item" for event in first_events)
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_except_nike_followup",
+                message="除了耐克还有什么？",
+            )
+        )
+    )
+
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    cards = [
+        event["product"]
+        for event in second_events
+        if event["type"] in {"replacement_product", "product_item"}
+    ]
+    assert states[0]["intent"] == "product_followup"
+    assert cards
+    for product in cards:
+        text = f"{product['brand']} {product['name']}".lower()
+        assert "耐克" not in text
+        assert "nike" not in text
+
+
 def test_chat_followup_recommendation_emits_standard_product_item_card():
     products = load_products("ecommerce_agent_dataset")
     llm = SemanticSelectionLLM(
@@ -2018,6 +2111,36 @@ def test_compare_products_uses_last_recommendations_without_hallucinating():
     compared_ids = {item["product_id"] for item in comparison["items"]}
     assert compared_ids == set(product_ids[:2])
     assert comparison["recommendation"]["product_id"] in compared_ids
+
+
+def test_compare_three_products_returns_structured_dimensions():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    initial_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_compare_three", message="推荐防晒霜")
+        )
+    )
+    product_ids = [
+        event["product"]["product_id"] for event in initial_events if event["type"] == "product_item"
+    ]
+    assert len(product_ids) >= 3
+
+    compare_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_compare_three", message="这三款对比一下")
+        )
+    )
+
+    comparison = next(event for event in compare_events if event["type"] == "comparison_result")
+    compared_ids = [item["product_id"] for item in comparison["items"]]
+    assert compared_ids == product_ids[:3]
+    assert {"价格", "品牌", "类目", "用户关心点"}.issubset(set(comparison["dimensions"]))
+    assert comparison["recommendation"]["product_id"] in compared_ids
+    for item in comparison["items"]:
+        assert set(comparison["dimensions"]).issubset(set(item["dimension_values"]))
+        assert isinstance(item["risk_flags"], list)
 
 
 def test_scenario_bundle_streams_grouped_items():

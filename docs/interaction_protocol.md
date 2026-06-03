@@ -30,7 +30,7 @@ This puts useful text on screen before cards arrive, runs LLM product selection 
 - `small_talk` responses do not use a dedicated event; clients receive `assistant_state`, `text_delta`, and `done`.
 - `quick_actions`: low-cost refinement actions such as `更便宜`, `不要 Apple`, `更适合户外`. Brand actions name the current primary product brand instead of using the ambiguous `这个品牌`.
 - `clarification_request`: used only when recommending immediately would be unreliable.
-- `comparison_result`: compares products from `SessionContext.last_product_ids`.
+- `comparison_result`: compares products from `SessionContext.last_product_ids`. It keeps legacy `items/key_points/recommendation` fields and may also include `dimensions`, `items[].dimension_values`, and `items[].risk_flags` for structured comparison UIs.
 - `filter_recovery_options`: gives safe relaxation choices when no product satisfies hard constraints.
 - `bundle_start`, `bundle_item`, `bundle_done`: streams scenario bundle recommendations by group.
 

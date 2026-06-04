@@ -319,6 +319,8 @@ def _token_similarity(left: set[str], right: set[str]) -> float:
 def _short_response_summary(plan: RetrievalPlan, selected: list[RankedProduct]) -> str:
     primary = selected[0]
     constraints: list[str] = []
+    if plan.hard_constraints.price_min is not None:
+        constraints.append(f"预算 {plan.hard_constraints.price_min:.0f} 元以上")
     if plan.hard_constraints.price_max is not None:
         constraints.append(f"预算 {plan.hard_constraints.price_max:.0f} 元以内")
     if plan.hard_constraints.exclude_terms:

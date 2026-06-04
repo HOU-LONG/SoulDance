@@ -28,6 +28,8 @@ def hard_filter(product: Product, constraints: HardConstraints) -> bool:
         return False
     if constraints.sub_category and constraints.sub_category != product.sub_category:
         return False
+    if constraints.price_min is not None and product.price < constraints.price_min:
+        return False
     if constraints.price_max is not None and product.price > constraints.price_max:
         return False
     if constraints.exclude_brand_regions and product.brand_region in constraints.exclude_brand_regions:
@@ -44,6 +46,8 @@ def hard_filter(product: Product, constraints: HardConstraints) -> bool:
 
 
 def explain_filter(product: Product, constraints: HardConstraints) -> str | None:
+    if constraints.price_min is not None and product.price < constraints.price_min:
+        return f"价格 {product.price:.0f} 元低于最低预算 {constraints.price_min:.0f} 元"
     if constraints.price_max is not None and product.price > constraints.price_max:
         return f"价格 {product.price:.0f} 元超过预算 {constraints.price_max:.0f} 元"
     if constraints.exclude_brand_regions and product.brand_region in constraints.exclude_brand_regions:

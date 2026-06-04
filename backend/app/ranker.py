@@ -52,6 +52,9 @@ def _score_product(product: Product, plan: RetrievalPlan, retrieval_score: float
         if pref and pref in product.search_text:
             score += 2
             hits.append(f"匹配{pref}")
+    if constraints.price_min is not None:
+        score += min(product.price / max(constraints.price_min, 1), 1.5)
+        hits.append(f"价格满足下限")
     if constraints.price_max is not None:
         score += max(0, (constraints.price_max - product.price) / max(constraints.price_max, 1))
         hits.append(f"价格在预算内")

@@ -66,6 +66,8 @@ def _sync_legacy_context(context: SessionContext) -> None:
         context.last_plan.soft_preferences = dict(soft)
         context.last_plan.category = hard.sub_category or hard.category or context.last_plan.category
     context.global_profile.update({key: value for key, value in soft.items() if value})
+    if hard.price_min is not None:
+        context.global_profile["budget_min"] = hard.price_min
     if hard.price_max is not None:
         context.global_profile["budget_max"] = hard.price_max
     if hard.exclude_terms:

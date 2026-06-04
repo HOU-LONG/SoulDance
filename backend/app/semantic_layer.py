@@ -93,11 +93,16 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
                 target=_rule_product_reference(text),
             ),
         )
+    if request.type == "user_message" and _is_compare_request(text):
+        return SemanticFrame(intent="compare_products")
     if request.type == "user_message" and _is_small_talk(text):
         return SemanticFrame(intent="small_talk")
     if request.type == "user_message" and not _has_shopping_signal(text):
         return SemanticFrame(intent="unclear_input")
     edits = ConstraintEdits()
+    price_min = _detect_price_min(text)
+    if price_min is not None:
+        edits.add.price_min = price_min
     price_max = _detect_price_max(text)
     if price_max is not None:
         edits.add.price_max = price_max
@@ -222,6 +227,8 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     frame.constraint_edits.add.exclude_brands = _dedupe(
         frame.constraint_edits.add.exclude_brands + guarded.constraint_edits.add.exclude_brands
     )
+    if guarded.constraint_edits.add.price_min is not None:
+        frame.constraint_edits.add.price_min = guarded.constraint_edits.add.price_min
     if guarded.constraint_edits.add.price_max is not None:
         frame.constraint_edits.add.price_max = guarded.constraint_edits.add.price_max
     frame.constraint_edits.add.soft_preferences.update(guarded.constraint_edits.add.soft_preferences)
@@ -235,6 +242,10 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
         frame.constraint_edits.remove.exclude_brands + guarded.constraint_edits.remove.exclude_brands
     )
     return frame
+
+
+def _is_compare_request(text: str) -> bool:
+    return bool(re.search(r"对比|比较一下|比较下|哪个更|哪款更|怎么选|第一款|第二款|第三款", text or ""))
 
 
 def _is_small_talk(text: str) -> bool:
@@ -258,7 +269,7 @@ def _is_small_talk(text: str) -> bool:
 def _has_shopping_signal(text: str) -> bool:
     return bool(
         re.search(
-            r"推荐|找|买|想要|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+            r"推荐|找|买|想要|有没有|预算|以内|以下|以上|不低于|不要|不含|排除|对比|比较|哪个更|怎么选|购物车|加购|加入|下单|结算|"
             r"防晒|精华|护肤|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
             text or "",
             flags=re.I,
@@ -332,6 +343,8 @@ def _remove_constraints(constraints: HardConstraints, patch) -> None:
         constraints.category = None
     if patch.sub_category and constraints.sub_category == patch.sub_category:
         constraints.sub_category = None
+    if patch.price_min is not None and constraints.price_min == patch.price_min:
+        constraints.price_min = None
     if patch.price_max is not None and constraints.price_max == patch.price_max:
         constraints.price_max = None
     for term in patch.exclude_terms:
@@ -344,6 +357,8 @@ def _remove_constraints(constraints: HardConstraints, patch) -> None:
 
 def _relax_constraints(constraints: HardConstraints, fields: list[str]) -> None:
     for field in fields:
+        if field == "price_min":
+            constraints.price_min = None
         if field == "price_max":
             constraints.price_max = None
         if field == "category":
@@ -363,6 +378,8 @@ def _add_constraints(constraints: HardConstraints, patch) -> None:
         constraints.category = patch.category
     if patch.sub_category:
         constraints.sub_category = patch.sub_category
+    if patch.price_min is not None:
+        constraints.price_min = patch.price_min
     if patch.price_max is not None:
         constraints.price_max = patch.price_max
     constraints.exclude_terms = _dedupe(constraints.exclude_terms + patch.exclude_terms)
@@ -471,7 +488,22 @@ def _detect_quantity(text: str) -> int | None:
     return None
 
 
+def _detect_price_min(text: str) -> float | None:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:以上|起|往上)", text)
+    if match:
+        return float(match.group(1))
+    match = re.search(r"(?:不低于|至少|高于)\s*(\d+(?:\.\d+)?)\s*(?:元|块)?", text)
+    if match:
+        return float(match.group(1))
+    match = re.search(r"预算\s*(\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:以上|起|往上)", text)
+    if match:
+        return float(match.group(1))
+    return None
+
+
 def _detect_price_max(text: str) -> float | None:
+    if _detect_price_min(text) is not None:
+        return None
     match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:以内|以下|内)", text)
     if match:
         return float(match.group(1))

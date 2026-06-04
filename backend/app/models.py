@@ -33,6 +33,7 @@ class Product(BaseModel):
 class HardConstraints(BaseModel):
     category: str | None = None
     sub_category: str | None = None
+    price_min: float | None = None
     price_max: float | None = None
     exclude_terms: list[str] = Field(default_factory=list)
     exclude_brands: list[str] = Field(default_factory=list)
@@ -54,6 +55,7 @@ class RetrievalPlan(BaseModel):
 class ConstraintPatch(BaseModel):
     category: str | None = None
     sub_category: str | None = None
+    price_min: float | None = None
     price_max: float | None = None
     exclude_terms: list[str] = Field(default_factory=list)
     exclude_brands: list[str] = Field(default_factory=list)

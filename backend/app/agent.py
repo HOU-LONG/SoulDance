@@ -279,11 +279,9 @@ class ShopGuideAgent:
             context.state.active_focus.product_id = resolved_product_id
             context.state.active_focus.source = "context_event"
         focus_product = self.product_map.get(resolved_product_id or request.focus_product_id or context.focus_product_id or "")
+        cheaper_than_price = None
         if focus_product and _wants_cheaper_alternative(request.message, ir):
-            new_max = max(focus_product.price - 0.01, 0)
-            current_max = plan.hard_constraints.price_max
-            plan.hard_constraints.price_max = min(current_max, new_max) if current_max is not None else new_max
-            context.state.constraint_state.hard.price_max = plan.hard_constraints.price_max
+            cheaper_than_price = focus_product.price
             plan.soft_preferences["price_preference"] = "更便宜"
             context.state.constraint_state.soft["price_preference"] = "更便宜"
         explicit_excluded_brands = extract_excluded_brands(request.message)
@@ -314,6 +312,8 @@ class ShopGuideAgent:
                 yield event
             return
         ranked = [item for item in self.retrieve_and_rank(plan) if hard_filter(item.product, plan.hard_constraints)]
+        if cheaper_than_price is not None:
+            ranked = [item for item in ranked if item.product.price < cheaper_than_price]
         if ranked:
             self._remember_recommendations(context, plan, ranked)
         if ranked:
@@ -660,7 +660,7 @@ class ShopGuideAgent:
 
     def _build_comparison_events(self, request: ChatRequest) -> list[dict]:
         context = self.sessions.get(request.session_id)
-        product_ids = _resolve_mentioned_product_ids(request.message, context.last_product_ids)
+        product_ids = _resolve_comparison_product_ids(request.message, context)
         products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
         if context.last_plan:
             products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
@@ -1205,6 +1205,7 @@ def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: T
     if plan.intent in {"product_followup", "clarification"} and (
         constraints.category
         or constraints.sub_category
+        or constraints.price_min is not None
         or constraints.price_max is not None
         or constraints.exclude_terms
         or constraints.exclude_brands
@@ -1216,7 +1217,7 @@ def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: T
         return True
     if constraints.category or constraints.sub_category:
         return True
-    if constraints.price_max is not None or constraints.exclude_terms or constraints.exclude_brands or constraints.exclude_brand_regions:
+    if constraints.price_min is not None or constraints.price_max is not None or constraints.exclude_terms or constraints.exclude_brands or constraints.exclude_brand_regions:
         return True
     if plan.soft_preferences:
         return True
@@ -1235,6 +1236,8 @@ def _understanding_text(plan: RetrievalPlan) -> str:
     handled: list[str] = []
     if constraints.sub_category or constraints.category:
         handled.append(constraints.sub_category or constraints.category or "")
+    if constraints.price_min is not None:
+        handled.append(f"{constraints.price_min:.0f} 元以上")
     if constraints.price_max is not None:
         handled.append(f"{constraints.price_max:.0f} 元以内")
     if constraints.exclude_terms:
@@ -1251,8 +1254,12 @@ def _understanding_text(plan: RetrievalPlan) -> str:
 def _followup_intro(plan: RetrievalPlan) -> str:
     constraints = plan.hard_constraints
     parts: list[str] = []
+    if plan.soft_preferences.get("price_preference") == "更便宜":
+        parts.append("找比当前主推更便宜的")
+    if constraints.price_min is not None:
+        parts.append(f"保留 {constraints.price_min:.0f} 元以上")
     if constraints.price_max is not None:
-        parts.append(f"预算压到 {constraints.price_max:.0f} 元以内")
+        parts.append(f"保留预算 {constraints.price_max:.0f} 元以内")
     if constraints.exclude_brands:
         parts.append("避开" + "、".join(constraints.exclude_brands))
     if constraints.exclude_terms:
@@ -1383,6 +1390,65 @@ def _filter_recovery_event(message_id: str, plan: RetrievalPlan) -> dict:
             ]
         )
     return {"type": "filter_recovery_options", "message_id": message_id, "recovery_id": recovery_id, "options": options}
+
+
+
+def _resolve_comparison_product_ids(text: str, context: SessionContext) -> list[str]:
+    source_ids = _comparison_source_product_ids(text, context)
+    if not source_ids:
+        source_ids = list(context.last_product_ids)
+    indexes = _comparison_reference_indexes(text)
+    if indexes:
+        return [source_ids[index] for index in indexes if index < len(source_ids)]
+    if any(marker in text for marker in ["这两款", "两款", "前两款", "前2款"]):
+        return source_ids[:2]
+    return source_ids[: min(3, len(source_ids))]
+
+
+def _comparison_reference_indexes(text: str) -> list[int]:
+    marker_groups = [
+        (("第一", "第1"), 0),
+        (("第二", "第2"), 1),
+        (("第三", "第3"), 2),
+        (("第四", "第4"), 3),
+    ]
+    indexes: list[int] = []
+    for markers, index in marker_groups:
+        if any(marker in text for marker in markers) and index not in indexes:
+            indexes.append(index)
+    return indexes
+
+
+def _comparison_source_product_ids(text: str, context: SessionContext) -> list[str]:
+    recommendation_events = [
+        event for event in context.state.context_events if event.result_type == "recommendation_set"
+    ]
+    if not recommendation_events:
+        return list(context.last_product_ids)
+    wanted_sub_category = _comparison_requested_sub_category(text)
+    for event in reversed(recommendation_events):
+        product_ids = [str(product_id) for product_id in event.payload.get("product_ids", [])]
+        if len(product_ids) < 2:
+            continue
+        if wanted_sub_category:
+            plan = event.payload.get("plan", {}) if isinstance(event.payload.get("plan"), dict) else {}
+            hard = plan.get("hard_constraints", {}) if isinstance(plan.get("hard_constraints"), dict) else {}
+            if hard.get("sub_category") != wanted_sub_category:
+                continue
+        return product_ids
+    return list(context.last_product_ids)
+
+
+def _comparison_requested_sub_category(text: str) -> str | None:
+    if "手机" in text:
+        return "智能手机"
+    if "笔记本" in text or "电脑" in text:
+        return "笔记本电脑"
+    if "防晒" in text:
+        return "防晒"
+    if "精华" in text:
+        return "精华"
+    return None
 
 
 def _resolve_mentioned_product_ids(text: str, last_product_ids: list[str]) -> list[str]:
@@ -1621,6 +1687,8 @@ def _update_profile(context: SessionContext, plan: RetrievalPlan) -> None:
         if value:
             context.global_profile[key] = value
     constraints = plan.hard_constraints
+    if constraints.price_min is not None:
+        context.global_profile["budget_min"] = constraints.price_min
     if constraints.price_max is not None:
         context.global_profile["budget_max"] = constraints.price_max
     if constraints.exclude_terms:
@@ -1653,6 +1721,8 @@ def _no_match_text(plan: RetrievalPlan) -> str:
     parts: list[str] = []
     if constraints.sub_category or constraints.category:
         parts.append(constraints.sub_category or constraints.category or "")
+    if constraints.price_min is not None:
+        parts.append(f"{constraints.price_min:.0f} 元以上")
     if constraints.price_max is not None:
         parts.append(f"{constraints.price_max:.0f} 元以内")
     if constraints.exclude_terms:

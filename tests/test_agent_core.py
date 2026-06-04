@@ -2219,6 +2219,136 @@ def test_unknown_taxonomy_recovery_click_uses_pending_recovery_context():
     ]
 
 
+
+
+def test_price_min_request_uses_recovery_instead_of_generic_phone_clarification():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_price_min_phone",
+                message="我想要华为手机，10000元以上的",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    context = agent.sessions.get("demo_price_min_phone")
+    assert context.last_plan.hard_constraints.price_min == 10000
+    assert context.last_plan.hard_constraints.price_max is None
+    assert "product_item" not in event_types
+    assert "clarification_request" not in event_types
+    assert "filter_recovery_options" in event_types
+    text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
+    assert "10000" in text or "1万" in text
+
+
+def test_price_min_and_price_max_parse_separately():
+    products = load_products("ecommerce_agent_dataset")
+    high_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    low_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    asyncio.run(
+        high_agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_price_min_parse", message="推荐手机，预算10000以上")
+        )
+    )
+    high_plan = high_agent.sessions.get("demo_price_min_parse").last_plan
+    assert high_plan.hard_constraints.price_min == 10000
+    assert high_plan.hard_constraints.price_max is None
+
+    asyncio.run(
+        low_agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_price_max_parse", message="推荐手机，预算4000以内")
+        )
+    )
+    low_plan = low_agent.sessions.get("demo_price_max_parse").last_plan
+    assert low_plan.hard_constraints.price_min is None
+    assert low_plan.hard_constraints.price_max == 4000
+
+
+def test_cheaper_followup_does_not_persist_focus_price_as_budget_cap():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_cheaper_not_budget"
+
+    initial_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
+        )
+    )
+    visible_products = [event["product"] for event in initial_events if event["type"] == "product_item"]
+    assert visible_products
+    focus_product = max(visible_products, key=lambda product: product["price"])
+    focus_price = focus_product["price"]
+    context = agent.sessions.get(session_id)
+    context.focus_product_id = focus_product["product_id"]
+    context.state.active_focus.product_id = focus_product["product_id"]
+
+    followup_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="换个更便宜的"))
+    )
+
+    context = agent.sessions.get(session_id)
+    assert context.last_plan.hard_constraints.price_max == 8000
+    assert context.state.constraint_state.hard.price_max == 8000
+    product_prices = [event["product"]["price"] for event in followup_events if event["type"] == "product_item"]
+    assert product_prices
+    assert all(price < focus_price for price in product_prices)
+    text = "".join(event.get("text", "") for event in followup_events if event["type"] == "text_delta")
+    assert "6999" not in text
+
+def test_compare_index_question_uses_recommendation_event_memory():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_compare_index_question"
+
+    initial_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
+        )
+    )
+    product_ids = [event["product"]["product_id"] for event in initial_events if event["type"] == "product_item"]
+    assert len(product_ids) >= 3
+
+    compare_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="第一款和第三款怎么选？"))
+    )
+
+    comparison = next(event for event in compare_events if event["type"] == "comparison_result")
+    compared_ids = [item["product_id"] for item in comparison["items"]]
+    assert compared_ids == [product_ids[0], product_ids[2]]
+    assert comparison["dimensions"]
+    assert all(item.get("dimension_values") for item in comparison["items"])
+
+
+def test_compare_previous_products_survives_last_product_ids_single_focus_override():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_compare_previous_visible_set"
+
+    initial_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
+        )
+    )
+    product_ids = [event["product"]["product_id"] for event in initial_events if event["type"] == "product_item"]
+    assert len(product_ids) >= 3
+    context = agent.sessions.get(session_id)
+    context.last_product_ids = product_ids[:1]
+
+    compare_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="对比一下之前的手机"))
+    )
+
+    comparison = next(event for event in compare_events if event["type"] == "comparison_result")
+    compared_ids = [item["product_id"] for item in comparison["items"]]
+    assert compared_ids == product_ids[:3]
+
+
 def test_compare_above_products_uses_recent_recommendation_set_and_structured_fields():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())

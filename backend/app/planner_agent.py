@@ -51,6 +51,9 @@ class PlannerAgent:
                 constraints.sub_category = category
                 constraints.category = _parent_category(category)
 
+        price_min = _detect_price_min(text)
+        if price_min is not None:
+            constraints.price_min = price_min
         price_max = _detect_price_max(text)
         if price_max is not None:
             constraints.price_max = price_max
@@ -71,6 +74,8 @@ class PlannerAgent:
             constraints.exclude_brand_regions = _dedupe(
                 inherited.exclude_brand_regions + constraints.exclude_brand_regions
             )
+            if constraints.price_min is None:
+                constraints.price_min = inherited.price_min
             if constraints.price_max is None:
                 constraints.price_max = inherited.price_max
 
@@ -144,6 +149,8 @@ class PlannerAgent:
         guarded = self.rule_plan(request, context)
         constraints = plan.hard_constraints
         rule_constraints = guarded.hard_constraints
+        if rule_constraints.price_min is not None:
+            constraints.price_min = rule_constraints.price_min
         if rule_constraints.price_max is not None:
             constraints.price_max = rule_constraints.price_max
         constraints.exclude_terms = _dedupe(constraints.exclude_terms + rule_constraints.exclude_terms)
@@ -258,17 +265,17 @@ def _clarification_policy(
 ) -> tuple[bool, str | None]:
     if intent != "recommend_product":
         return False, None
-    if category == "智能手机" and constraints.price_max is None and "priority" not in soft:
+    if category == "智能手机" and constraints.price_max is None and constraints.price_min is None and "priority" not in soft:
         return True, "选手机我需要先知道你更看重拍照、续航还是性价比？也可以直接告诉我预算。"
-    if category == "笔记本电脑" and constraints.price_max is None and "priority" not in soft:
+    if category == "笔记本电脑" and constraints.price_max is None and constraints.price_min is None and "priority" not in soft:
         return True, "选笔记本我需要先知道你更看重轻薄便携、性能，还是性价比？也可以直接告诉我预算。"
-    if category == "平板电脑" and constraints.price_max is None and "priority" not in soft:
+    if category == "平板电脑" and constraints.price_max is None and constraints.price_min is None and "priority" not in soft:
         return True, "选平板我需要先知道你更看重便携、性能，还是性价比？也可以直接告诉我预算。"
     if category == "服饰运动" and constraints.sub_category is None and _is_generic_shoe_request(text):
         return True, "选鞋我需要先知道你主要用于跑步、篮球，还是户外/通勤？也可以直接告诉我预算。"
-    if _is_generic_gift_request(text) and (constraints.price_max is None or "recipient" not in soft):
+    if _is_generic_gift_request(text) and ((constraints.price_max is None and constraints.price_min is None) or "recipient" not in soft):
         return True, "送礼我需要先确认预算和对象：更偏实用、惊喜感，还是稳妥不踩雷？"
-    if category == "美妆护肤" and constraints.sub_category is None and constraints.price_max is None:
+    if category == "美妆护肤" and constraints.sub_category is None and constraints.price_max is None and constraints.price_min is None:
         if "skin_type" not in soft and "effect" not in soft:
             return True, "护肤品我需要先确认肤质或功效：油皮清爽、敏感肌温和，还是保湿修护？"
     return False, None
@@ -294,7 +301,19 @@ def _parent_category(sub_category: str | None) -> str | None:
     return None
 
 
+def _detect_price_min(text: str) -> float | None:
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:以上|起|往上)", text)
+    if match:
+        return float(match.group(1))
+    match = re.search(r"(?:不低于|至少|高于)\s*(\d+(?:\.\d+)?)\s*(?:元|块)?", text)
+    if match:
+        return float(match.group(1))
+    return None
+
+
 def _detect_price_max(text: str) -> float | None:
+    if _detect_price_min(text) is not None:
+        return None
     match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:以内|以下|内)", text)
     if match:
         return float(match.group(1))

@@ -268,6 +268,8 @@ class FakeLLMClient:
         primary = ranked_products[0]
         constraints = plan.hard_constraints
         handled: list[str] = []
+        if constraints.price_min is not None:
+            handled.append(f"预算 {constraints.price_min:.0f} 元以上")
         if constraints.price_max is not None:
             handled.append(f"预算 {constraints.price_max:.0f} 元以内")
         if constraints.exclude_terms:
@@ -377,6 +379,7 @@ def _response_evidence_payload(
         "hard_constraints_applied": {
             "category": constraints.category,
             "sub_category": constraints.sub_category,
+            "price_min": constraints.price_min,
             "price_max": constraints.price_max,
             "exclude_terms": constraints.exclude_terms,
             "exclude_brands": constraints.exclude_brands,

@@ -2248,12 +2248,27 @@ def test_compare_above_products_uses_recent_recommendation_set_and_structured_fi
 
 def test_test_client_renders_structured_comparison_result_fields():
     html = Path("test_client/index.html").read_text(encoding="utf-8")
+    package_json = Path("test_client/package.json").read_text(encoding="utf-8")
 
     assert 'event.type === "comparison_result"' in html
     assert "renderComparison" in html
     assert "dimension_values" in html
-    assert "risk_flags" in html or "dimensions" in html
-
+    assert "risk_flags" in html
+    assert "statComparison" in html
+    assert "assertComparison" in html
+    assert "收到对比结果" in html
+    assert "风险提示" in html
+    assert "resolveComparisonWinnerName" in html
+    assert "log-comparison" in html
+    for required in [
+        "comparison_result",
+        "renderComparison",
+        "dimension_values",
+        "risk_flags",
+        "statComparison",
+        "assertComparison",
+    ]:
+        assert required in package_json
 
 def test_scenario_bundle_streams_grouped_items():
     products = load_products("ecommerce_agent_dataset")

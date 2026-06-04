@@ -13,8 +13,10 @@ from .llm_client import FakeLLMClient
 from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, StructuredMemoryCache
 from .models import (
     ChatRequest,
+    ContextEvent,
     HardConstraints,
     PendingClarification,
+    PendingRecovery,
     Product,
     ProductCard,
     RankedProduct,
@@ -106,6 +108,11 @@ class ShopGuideAgent:
 
     async def stream_message(self, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
         context = self.sessions.get(request.session_id)
+        recovery_events = self._build_pending_recovery_events(context, request)
+        if recovery_events is not None:
+            for event in recovery_events:
+                yield event
+            return
         seed_constraint_state_from_plan(context, context.last_plan)
         ir = compiled_ir or await self.intent_compiler.compile(request, context)
         if _is_pending_clarification_answer(context, request, ir):
@@ -149,7 +156,9 @@ class ShopGuideAgent:
             yield self._assistant_state(message_id, "clarifying", "当前商品库没有匹配类目", plan)
             for event in _text_delta_events(message_id, text):
                 yield event
-            yield _filter_recovery_event(message_id, plan)
+            recovery = _filter_recovery_event(message_id, plan)
+            _remember_pending_recovery(context, request.message, plan, recovery, "unknown_taxonomy")
+            yield recovery
             yield {"type": "done", "message_id": message_id}
             return
         memory_hit = self._get_recommendation_memory_hit(plan, request.message)
@@ -168,6 +177,65 @@ class ShopGuideAgent:
         ranked = self.retrieve_and_rank(plan)
         async for event in self._stream_recommendation_events(request, plan, ranked, context_action):
             yield event
+
+    def _build_pending_recovery_events(self, context: SessionContext, request: ChatRequest) -> list[dict] | None:
+        pending = context.state.pending_recovery
+        if request.type != "user_message" or pending is None:
+            return None
+        option = _match_pending_recovery_option(pending, request.message)
+        if option is None:
+            return None
+        message_id = _message_id()
+        payload = option.get("payload", {}) if isinstance(option.get("payload"), dict) else {}
+        action = payload.get("action")
+        category = payload.get("category")
+        if action == "recover_to_category" and category:
+            text = f"可以，我们先不再围绕「{pending.failed_object or pending.failed_query}」硬猜，改看现有的「{category}」方向。"
+            plan = RetrievalPlan(
+                intent="recommend_product",
+                retrieval_mode="single",
+                category=str(category),
+                hard_constraints=HardConstraints(category=str(category)),
+                soft_preferences={},
+                retrieval_query=f"{category} 相近商品",
+                need_clarification=True,
+                clarification_question=f"你想看「{category}」里的哪个具体方向？",
+            )
+            context.state.pending_recovery = None
+            return [
+                self._assistant_state(
+                    message_id,
+                    "clarifying",
+                    "根据上次无匹配需求恢复",
+                    plan,
+                    context_action="recovery",
+                ),
+                *_text_delta_events(message_id, text + plan.clarification_question),
+                {
+                    "type": "clarification_request",
+                    "message_id": message_id,
+                    "question": plan.clarification_question,
+                    "options": _clarification_options(plan.clarification_question or ""),
+                },
+                {"type": "done", "message_id": message_id},
+            ]
+        text = (
+            f"上次「{pending.failed_query}」没有匹配到商品库里的真实类目。"
+            "你可以从现有类目里选一个方向，我再继续筛。"
+        )
+        return [
+            self._assistant_state(
+                message_id,
+                "clarifying",
+                "根据上次无匹配需求恢复",
+                intent="clarification",
+                retrieval_mode="no_retrieval",
+                context_action="recovery",
+            ),
+            *_text_delta_events(message_id, text),
+            {"type": "filter_recovery_options", "message_id": message_id, "recovery_id": pending.recovery_id, "options": pending.options},
+            {"type": "done", "message_id": message_id},
+        ]
 
     async def _handle_followup(self, request: ChatRequest) -> list[dict]:
         return [event async for event in self._stream_followup(request)]
@@ -204,7 +272,13 @@ class ShopGuideAgent:
         plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
         plan.intent = "product_followup"
         plan.retrieval_mode = "product_focus_retrieval"
-        focus_product = self.product_map.get(request.focus_product_id or context.focus_product_id or "")
+        resolved_product_id = _resolve_context_product_id(context, request.message)
+        if resolved_product_id:
+            context.focus_product_id = resolved_product_id
+            context.state.active_focus.type = "product"
+            context.state.active_focus.product_id = resolved_product_id
+            context.state.active_focus.source = "context_event"
+        focus_product = self.product_map.get(resolved_product_id or request.focus_product_id or context.focus_product_id or "")
         if focus_product and _wants_cheaper_alternative(request.message, ir):
             new_max = max(focus_product.price - 0.01, 0)
             current_max = plan.hard_constraints.price_max
@@ -330,7 +404,9 @@ class ShopGuideAgent:
             text = _no_match_text(plan)
             for event in _text_delta_events(message_id, text):
                 yield event
-            yield _filter_recovery_event(message_id, plan)
+            recovery = _filter_recovery_event(message_id, plan)
+            _remember_pending_recovery(context, request.message, plan, recovery, "no_match")
+            yield recovery
             yield {"type": "done", "message_id": message_id}
             for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
                 yield event
@@ -612,6 +688,13 @@ class ShopGuideAgent:
             f"我把你刚才看的 {len(products)} 款放在一起比。"
             f"如果只选一款，我更建议「{recommendation.title}」，因为{comparison['recommendation']['reason']}。"
         )
+        _append_context_event(
+            context,
+            request.message,
+            "compare_products",
+            "comparison_result",
+            {"product_ids": [product.product_id for product in products], "comparison": comparison},
+        )
         return [
             _assistant_state(message_id, "comparing", "正在对比最近推荐商品"),
             *_text_delta_events(message_id, text),
@@ -747,6 +830,7 @@ class ShopGuideAgent:
         context.state.constraint_state.hard = plan.hard_constraints.model_copy(deep=True)
         context.state.constraint_state.soft = dict(plan.soft_preferences)
         context.state.pending_clarification = None
+        context.state.pending_recovery = None
         context.state.current_task.category = plan.hard_constraints.category
         context.state.current_task.sub_category = plan.hard_constraints.sub_category
         if not context.state.current_task.task_id:
@@ -761,6 +845,18 @@ class ShopGuideAgent:
             context.state.active_focus.type = "product"
             context.state.active_focus.product_id = ranked[0].product.product_id
             context.state.active_focus.source = "recommendation"
+        _append_context_event(
+            context,
+            plan.retrieval_query,
+            plan.intent,
+            "recommendation_set",
+            {
+                "set_id": context.state.recommendation_memory.last_set_id,
+                "plan": plan.model_dump(mode="json"),
+                "product_ids": [item.product.product_id for item in ranked],
+                "products": list(context.last_recommendations),
+            },
+        )
         _update_profile(context, plan)
 
     async def try_handle_cart_message(self, request: ChatRequest, cart: CartService, compiled_ir=None) -> dict | None:
@@ -868,10 +964,134 @@ def _assistant_state(
     return event
 
 
+def _append_context_event(
+    context: SessionContext,
+    user_message: str,
+    assistant_intent: str,
+    result_type: str,
+    payload: dict,
+) -> None:
+    event = ContextEvent(
+        event_id="ctx_" + uuid.uuid4().hex[:8],
+        turn_index=context.state.dialog_state.turn_index,
+        user_message=user_message,
+        assistant_intent=assistant_intent,
+        result_type=result_type,
+        payload=payload,
+    )
+    context.state.context_events.append(event)
+    context.state.context_events = context.state.context_events[-12:]
+
+
+def _remember_pending_recovery(
+    context: SessionContext,
+    failed_query: str,
+    plan: RetrievalPlan,
+    recovery_event: dict,
+    reason: str,
+) -> None:
+    options = list(recovery_event.get("options", []))
+    recovery_id = str(recovery_event.get("recovery_id") or ("recovery_" + uuid.uuid4().hex[:8]))
+    failed_object = _guess_failed_object(failed_query)
+    context.state.pending_recovery = PendingRecovery(
+        recovery_id=recovery_id,
+        failed_query=failed_query,
+        failed_object=failed_object,
+        reason=reason,
+        options=options,
+    )
+    _append_context_event(
+        context,
+        failed_query,
+        plan.intent,
+        "pending_recovery",
+        {
+            "recovery_id": recovery_id,
+            "failed_query": failed_query,
+            "failed_object": failed_object,
+            "reason": reason,
+            "options": options,
+            "plan": plan.model_dump(mode="json"),
+        },
+    )
+
+
+def _match_pending_recovery_option(pending: PendingRecovery, message: str) -> dict | None:
+    normalized = _normalize_message(message)
+    for option in pending.options:
+        if normalized in {_normalize_message(str(option.get("message", ""))), _normalize_message(str(option.get("label", "")))}:
+            return option
+        payload = option.get("payload", {}) if isinstance(option.get("payload"), dict) else {}
+        category = str(payload.get("category", ""))
+        if category and category in message:
+            return option
+    if any(token in message for token in ["相近需求", "重新筛", "换一个相近", "换个相近"]):
+        for option in pending.options:
+            payload = option.get("payload", {}) if isinstance(option.get("payload"), dict) else {}
+            if payload.get("action") == "choose_existing_category":
+                return option
+        return pending.options[0] if pending.options else {}
+    return None
+
+
+def _resolve_context_product_id(context: SessionContext, message: str) -> str | None:
+    recommendation_events = [
+        event for event in context.state.context_events if event.result_type == "recommendation_set"
+    ]
+    if not recommendation_events:
+        return None
+    if any(marker in message for marker in ["上上轮", "上上个", "倒数第二"]):
+        target = recommendation_events[-2] if len(recommendation_events) >= 2 else None
+    elif any(marker in message for marker in ["上一轮", "上一个", "上一组"]):
+        target = recommendation_events[-1]
+    elif any(marker in message for marker in ["刚刚", "刚才", "这个", "那款"]):
+        target = recommendation_events[-1]
+    else:
+        return None
+    if target is None:
+        return None
+    product_ids = list(target.payload.get("product_ids", []))
+    if not product_ids:
+        return None
+    index = _reference_index_from_text(message)
+    if index is not None and 0 <= index < len(product_ids):
+        return str(product_ids[index])
+    return str(product_ids[0])
+
+
+def _reference_index_from_text(text: str) -> int | None:
+    markers = {
+        "第一": 0,
+        "第1": 0,
+        "1": 0,
+        "第二": 1,
+        "第2": 1,
+        "2": 1,
+        "第三": 2,
+        "第3": 2,
+        "3": 2,
+    }
+    for marker, index in markers.items():
+        if marker in text:
+            return index
+    return None
+
+
+def _guess_failed_object(text: str) -> str | None:
+    cleaned = re.sub(r"^(我想要|我想买|想要|想买|推荐|找|买|有没有|给我)", "", text or "").strip()
+    cleaned = re.sub(r"[，。！？、,.!?].*$", "", cleaned).strip()
+    return cleaned or None
+
+
+def _normalize_message(text: str) -> str:
+    return re.sub(r"\s+", "", (text or "").strip().lower())
+
+
 def _reset_shopping_task(context: SessionContext) -> None:
     context.state.constraint_state.hard = HardConstraints()
     context.state.constraint_state.soft = {}
     context.state.pending_clarification = None
+    context.state.pending_recovery = None
     context.state.current_task.task_id = "task_" + uuid.uuid4().hex[:8]
     context.state.current_task.category = None
     context.state.current_task.sub_category = None
@@ -1111,14 +1331,22 @@ def _clarification_options(question: str) -> list[dict[str, str]]:
 def _filter_recovery_event(message_id: str, plan: RetrievalPlan) -> dict:
     constraints = plan.hard_constraints
     options: list[dict] = []
+    recovery_id = "recovery_" + uuid.uuid4().hex[:8]
     if constraints.price_max is not None:
         relaxed = max(constraints.price_max * 2, 100)
-        options.append({"label": f"放宽预算到 {relaxed:.0f} 元", "message": f"预算放宽到{relaxed:.0f}元以内"})
+        options.append(
+            {
+                "label": f"放宽预算到 {relaxed:.0f} 元",
+                "message": f"预算放宽到{relaxed:.0f}元以内",
+                "payload": {"recovery_id": recovery_id, "action": "relax_budget", "price_max": relaxed},
+            }
+        )
     if constraints.exclude_terms:
         options.append(
             {
                 "label": "保留排除项，换相近类目",
                 "message": "保留这些排除要求，换一个相近类目看看",
+                "payload": {"recovery_id": recovery_id, "action": "choose_existing_category"},
             }
         )
     if constraints.exclude_brand_regions:
@@ -1126,16 +1354,42 @@ def _filter_recovery_event(message_id: str, plan: RetrievalPlan) -> dict:
             {
                 "label": "只保留非日系要求",
                 "message": "先保留非日系要求，其他条件可以放宽",
+                "payload": {"recovery_id": recovery_id, "action": "relax_to_region_only"},
             }
         )
     if not options:
-        options.append({"label": "换个相近需求", "message": "换一个相近需求重新筛"})
-    return {"type": "filter_recovery_options", "message_id": message_id, "options": options}
+        options.extend(
+            [
+                {
+                    "label": "换个相近需求",
+                    "message": "换个相近需求重新筛",
+                    "payload": {"recovery_id": recovery_id, "action": "choose_existing_category"},
+                },
+                {
+                    "label": "看看数码电子",
+                    "message": "看看数码电子里的相近商品",
+                    "payload": {"recovery_id": recovery_id, "action": "recover_to_category", "category": "数码电子"},
+                },
+                {
+                    "label": "看看服饰运动",
+                    "message": "看看服饰运动里的相近商品",
+                    "payload": {"recovery_id": recovery_id, "action": "recover_to_category", "category": "服饰运动"},
+                },
+                {
+                    "label": "看看美妆护肤",
+                    "message": "看看美妆护肤里的相近商品",
+                    "payload": {"recovery_id": recovery_id, "action": "recover_to_category", "category": "美妆护肤"},
+                },
+            ]
+        )
+    return {"type": "filter_recovery_options", "message_id": message_id, "recovery_id": recovery_id, "options": options}
 
 
 def _resolve_mentioned_product_ids(text: str, last_product_ids: list[str]) -> list[str]:
     if any(marker in text for marker in ["这三款", "三款", "前三款", "前3款"]):
         return last_product_ids[:3]
+    if any(marker in text for marker in ["以上几款", "上面几款", "这几款", "刚才几款", "最近几款"]):
+        return last_product_ids[: min(3, len(last_product_ids))]
     if any(marker in text for marker in ["这两款", "两款", "前两款", "前2款"]):
         return last_product_ids[:2]
     index_map = {

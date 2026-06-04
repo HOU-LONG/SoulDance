@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 from backend.app.agent import ShopGuideAgent
 from backend.app.cart import CartService
@@ -2141,6 +2142,117 @@ def test_compare_three_products_returns_structured_dimensions():
     for item in comparison["items"]:
         assert set(comparison["dimensions"]).issubset(set(item["dimension_values"]))
         assert isinstance(item["risk_flags"], list)
+
+
+def test_reference_can_resolve_first_product_from_previous_previous_recommendation_set():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    laptop_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_reference_history",
+                message="推荐笔记本电脑，预算15000，轻薄便携",
+            )
+        )
+    )
+    laptop_primary = next(event for event in laptop_events if event["type"] == "product_item")["product"]
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_reference_history",
+                message="推荐一款手机，预算8000，拍照优先",
+            )
+        )
+    )
+
+    explain_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_reference_history",
+                message="上上轮第一款是什么？",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in explain_events]
+    text = "".join(event.get("text", "") for event in explain_events if event["type"] == "text_delta")
+    states = [event for event in explain_events if event["type"] == "assistant_state"]
+    assert states[0]["intent"] == "product_followup"
+    assert "product_item" not in event_types
+    assert laptop_primary["name"] in text
+
+
+def test_unknown_taxonomy_recovery_click_uses_pending_recovery_context():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_pending_recovery", message="我想要飞机")
+        )
+    )
+
+    assert "filter_recovery_options" in [event["type"] for event in events]
+    recovery = next(event for event in events if event["type"] == "filter_recovery_options")
+    assert any(option.get("payload", {}).get("recovery_id") for option in recovery["options"])
+
+    recovered = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_pending_recovery",
+                message="换个相近需求重新筛",
+            )
+        )
+    )
+
+    states = [event for event in recovered if event["type"] == "assistant_state"]
+    assert states[0]["intent"] != "unclear_input"
+    assert "product_item" not in [event["type"] for event in recovered]
+    assert "filter_recovery_options" in [event["type"] for event in recovered] or "clarification_request" in [
+        event["type"] for event in recovered
+    ]
+
+
+def test_compare_above_products_uses_recent_recommendation_set_and_structured_fields():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    initial_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_compare_above", message="推荐防晒霜")
+        )
+    )
+    product_ids = [
+        event["product"]["product_id"] for event in initial_events if event["type"] == "product_item"
+    ]
+    assert len(product_ids) >= 2
+
+    compare_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_compare_above", message="对比以上几款我看看呢？")
+        )
+    )
+
+    comparison = next(event for event in compare_events if event["type"] == "comparison_result")
+    compared_ids = [item["product_id"] for item in comparison["items"]]
+    assert compared_ids == product_ids[: min(3, len(product_ids))]
+    assert comparison["dimensions"]
+    assert all(item.get("dimension_values") for item in comparison["items"])
+
+
+def test_test_client_renders_structured_comparison_result_fields():
+    html = Path("test_client/index.html").read_text(encoding="utf-8")
+
+    assert 'event.type === "comparison_result"' in html
+    assert "renderComparison" in html
+    assert "dimension_values" in html
+    assert "risk_flags" in html or "dimensions" in html
 
 
 def test_scenario_bundle_streams_grouped_items():

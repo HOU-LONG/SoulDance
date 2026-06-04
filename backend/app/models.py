@@ -162,6 +162,23 @@ class CartMemory(BaseModel):
     recent_product_id: str | None = None
 
 
+class PendingRecovery(BaseModel):
+    recovery_id: str
+    failed_query: str
+    failed_object: str | None = None
+    reason: str
+    options: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ContextEvent(BaseModel):
+    event_id: str
+    turn_index: int
+    user_message: str
+    assistant_intent: str
+    result_type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class TraceState(BaseModel):
     last_ir: dict[str, Any] | None = None
     last_execution_plan: dict[str, Any] | None = None
@@ -178,6 +195,8 @@ class SessionState(BaseModel):
     current_task: CurrentTaskState = Field(default_factory=CurrentTaskState)
     constraint_state: ConstraintState = Field(default_factory=ConstraintState)
     cart_memory: CartMemory = Field(default_factory=CartMemory)
+    pending_recovery: PendingRecovery | None = None
+    context_events: list[ContextEvent] = Field(default_factory=list)
     trace: TraceState = Field(default_factory=TraceState)
 
 

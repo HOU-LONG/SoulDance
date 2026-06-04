@@ -286,6 +286,12 @@ def semantic_context_payload(context: SessionContext | None) -> dict[str, Any]:
             if context.state.pending_clarification
             else None
         ),
+        "pending_recovery": (
+            context.state.pending_recovery.model_dump(mode="json")
+            if context.state.pending_recovery
+            else None
+        ),
+        "recent_context": _recent_context_summary(context),
     }
 
 
@@ -297,6 +303,28 @@ def _focus_product_summary(context: SessionContext) -> dict[str, Any] | None:
         if item.get("product_id") == focus_id:
             return dict(item)
     return {"product_id": focus_id}
+
+
+def _recent_context_summary(context: SessionContext) -> dict[str, Any]:
+    recommendation_sets = [
+        event.model_dump(mode="json")
+        for event in context.state.context_events
+        if event.result_type == "recommendation_set"
+    ][-3:]
+    user_turns = [
+        {
+            "turn_index": event.turn_index,
+            "user_message": event.user_message,
+            "assistant_intent": event.assistant_intent,
+            "result_type": event.result_type,
+        }
+        for event in context.state.context_events[-6:]
+    ][-3:]
+    return {
+        "recent_user_turns": user_turns,
+        "recent_recommendation_sets": recommendation_sets,
+        "last_events": [event.model_dump(mode="json") for event in context.state.context_events[-3:]],
+    }
 
 
 def _remove_constraints(constraints: HardConstraints, patch) -> None:

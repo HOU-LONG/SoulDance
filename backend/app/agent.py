@@ -8,6 +8,7 @@ import uuid
 from .cart import CartService
 from .constraint_filter import canonical_brand, explain_filter, extract_excluded_brands, hard_filter
 from .embedding_retriever import BM25OnlyRetriever
+from .image_assets import product_image_url
 from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
 from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, StructuredMemoryCache
@@ -924,7 +925,7 @@ def _product_card(item: RankedProduct) -> ProductCard:
         category=product.category,
         sub_category=product.sub_category,
         price=product.price,
-        main_image_url=product.image_path,
+        main_image_url=product_image_url(product.image_path),
         tags=[tag for tag in tags if tag],
         reason=item.reason,
         evidence=item.evidence,

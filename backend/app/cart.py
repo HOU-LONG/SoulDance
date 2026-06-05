@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .image_assets import product_image_url
 from .models import Product
 
 
@@ -49,7 +50,7 @@ class CartService:
                     "price": product.price,
                     "quantity": quantity,
                     "amount": amount,
-                    "main_image_url": product.image_path,
+                    "main_image_url": product_image_url(product.image_path),
                 }
             )
         return {"session_id": session_id, "items": items, "total_amount": total}

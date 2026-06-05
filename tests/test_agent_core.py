@@ -2546,3 +2546,24 @@ def test_sensitive_skin_conflict_review_is_kept_as_risk_evidence():
     evidence = product_evidence(product, ["敏感肌"])
 
     assert any("泛红" in item or "刺痛" in item or "不适" in item for item in evidence)
+
+
+def test_recommendation_product_card_uses_browser_accessible_image_url():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_product_image_url",
+                message="推荐一款手机，预算8000，拍照优先",
+            )
+        )
+    )
+
+    product_event = next(event for event in events if event["type"] == "product_item")
+    image_url = product_event["product"]["main_image_url"]
+    assert image_url.startswith("/assets/products/")
+    assert image_url.endswith(".jpg")
+    assert "ecommerce_agent_dataset" not in image_url

@@ -329,3 +329,17 @@ def test_websocket_oral_cart_followup_without_recommendation_does_not_add_random
     assert cart_event["product_id"] is None
     assert cart_event["cart"]["items"] == []
     assert done_event["type"] == "done"
+
+
+def test_product_image_asset_url_is_served_by_backend():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+
+    product = client.get("/api/products?limit=1").json()["products"][0]
+    image_url = product["main_image_url"]
+    response = client.get(image_url)
+
+    assert image_url.startswith("/assets/products/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
+    assert response.content

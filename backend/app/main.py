@@ -3,12 +3,14 @@ from __future__ import annotations
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 
 from .agent import ShopGuideAgent
 from .cart import CartService
 from .config import Settings, get_settings
 from .data_loader import load_products
 from .embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
+from .image_assets import product_image_url
 from .llm_client import DoubaoLLMClient, FakeLLMClient
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest
@@ -41,6 +43,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
     product_map = {product.product_id: product for product in products}
 
     app = FastAPI(title="SoulDance ShopGuide Agent Backend", version="0.1.0")
+    app.mount("/assets/products", StaticFiles(directory=str(settings.dataset_path)), name="product_assets")
     app.state.products = products
     app.state.agent = agent
     app.state.cart = cart
@@ -157,6 +160,7 @@ def _product_summary(product):
         "sub_category": product.sub_category,
         "price": product.price,
         "image_path": product.image_path,
+        "main_image_url": product_image_url(product.image_path),
     }
 
 

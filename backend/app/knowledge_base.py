@@ -36,7 +36,7 @@ def evidence_chunks(product: Product, query_terms: list[str] | None = None) -> l
             continue
         rating = int(review.get("rating", 0) or 0)
         chunk = _chunk(product, text, "review", query_terms, rating)
-        if chunk.noise_score >= 0.6 and chunk.query_overlap < 0.5:
+        if not _is_relevant_review_chunk(chunk):
             continue
         review_chunks.append(chunk)
     chunks.extend(_select_review_chunks(review_chunks, query_terms))
@@ -109,6 +109,8 @@ def _field_consistency(product: Product, text: str) -> float:
         return 0.8
     if _has_wear_terms(text) and product.category == "服饰运动":
         return 0.8
+    if _has_digital_terms(text) and product.category == "数码电子":
+        return 0.8
     return 0.3
 
 
@@ -152,6 +154,31 @@ def _has_wear_terms(text: str) -> bool:
     return any(term in text for term in ["穿", "尺码", "脚感", "鞋底", "透气"])
 
 
+def _has_digital_terms(text: str) -> bool:
+    return any(
+        term in text
+        for term in [
+            "拍",
+            "夜景",
+            "夜拍",
+            "抓拍",
+            "成片",
+            "影像",
+            "镜头",
+            "续航",
+            "充电",
+            "屏幕",
+            "刷新率",
+            "内存",
+            "后台",
+            "手游",
+            "高刷",
+            "发热",
+            "信号",
+        ]
+    )
+
+
 def _mentions_sensitive_risk(text: str) -> bool:
     return any(term in text for term in ["敏感肌", "泛红", "刺痛", "过敏", "不适", "起疹"])
 
@@ -168,3 +195,49 @@ def _trim(text: str, query_terms: list[str], size: int = 120) -> str:
             start = max(pos - 40, 0)
             return text[start : start + size]
     return text[:size]
+
+
+
+def evidence_review_summary(product: Product, query_terms: list[str] | None = None) -> dict[str, str]:
+    query_terms = query_terms or []
+    review_chunks = [
+        chunk
+        for chunk in evidence_chunks(product, query_terms)
+        if chunk.source_type == "review" and _is_relevant_review_chunk(chunk)
+    ]
+    positive = [chunk for chunk in review_chunks if chunk.rating is None or chunk.rating >= 4]
+    negative = [chunk for chunk in review_chunks if chunk.rating is not None and chunk.rating <= 3]
+    return {
+        "positive_summary": _summarize_review_chunks(positive, "相关评论提到"),
+        "negative_summary": _summarize_review_chunks(negative, "需要注意"),
+        "review_relevance": "high" if review_chunks else "none",
+    }
+
+
+def _is_relevant_review_chunk(chunk: EvidenceChunk) -> bool:
+    if chunk.noise_score >= 0.6:
+        return False
+    if chunk.query_overlap > 0:
+        return True
+    if chunk.field_consistency >= 0.8:
+        return True
+    return chunk.rating is not None and chunk.rating <= 2 and _mentions_sensitive_risk(chunk.text)
+
+
+def _summarize_review_chunks(chunks: list[EvidenceChunk], prefix: str) -> str:
+    if not chunks:
+        return "暂无足够相关评论"
+    snippets = [_short_review_phrase(chunk.text) for chunk in chunks[:2] if chunk.text]
+    snippets = [snippet for snippet in snippets if snippet]
+    if not snippets:
+        return "暂无足够相关评论"
+    return prefix + "：" + "；".join(snippets)
+
+
+def _short_review_phrase(text: str) -> str:
+    text = " ".join(str(text).split())
+    for separator in ["。", "；", ";", "，", ","]:
+        if separator in text:
+            text = text.split(separator)[0]
+            break
+    return _trim(text, [])[:48]

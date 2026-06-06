@@ -163,19 +163,28 @@ Bundle still decomposes the scenario into deterministic slots, retrieves each sl
 
 ## Response Writer Boundary
 
-LLM response writing receives an evidence payload shaped like:
+LLM response writing receives a constrained payload shaped like:
 
 ```json
 {
-  "allowed_products": [],
+  "allowed_products": [
+    {
+      "product_id": "p_beauty_001",
+      "reason": "short backend reason",
+      "review_summary": {
+        "positive_summary": "相关评论摘要",
+        "negative_summary": "风险摘要",
+        "review_relevance": "high"
+      }
+    }
+  ],
   "selected_primary": "p_beauty_001",
   "hard_constraints_applied": {},
-  "evidence": [],
   "forbidden_claims": ["疗效承诺", "未给出的商品属性"]
 }
 ```
 
-Its output only becomes `text_delta`. It should explain one primary recommendation and briefly distinguish alternatives when multiple `allowed_products` are present. It cannot modify:
+Its output only becomes `text_delta`. It should lead with the conclusion, summarize relevant reviews, and briefly distinguish alternatives when multiple `allowed_products` are present. Raw evidence remains internal and is not returned in `product_item`; `review_summary` is produced from the filtered evidence/ranker layer, not by an extra planner or product-card LLM call. It cannot modify:
 
 - `product_item`
 - prices

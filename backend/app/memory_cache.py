@@ -333,4 +333,4 @@ def _short_response_summary(plan: RetrievalPlan, selected: list[RankedProduct]) 
         alt_text = "；备选差异：" + "、".join(f"{item.product.title}：{item.reason}" for item in alternatives)
     else:
         alt_text = ""
-    return f"我按「{handled}」复用了已验证的推荐结果。主推「{primary.product.title}」，{primary.reason}{alt_text}。"
+    return f"结论：优先看「{primary.product.title}」。我按「{handled}」复用了已验证的推荐结果，{primary.reason}{alt_text}。"

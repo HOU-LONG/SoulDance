@@ -1707,7 +1707,7 @@ def test_recommendation_stream_waits_for_llm_explanation_before_product_cards():
         pending_event = asyncio.create_task(anext(stream))
         await asyncio.wait_for(llm.generate_started.wait(), timeout=0.2)
 
-        assert [event["type"] for event in events][:2] == ["assistant_state", "text_delta"]
+        assert [event["type"] for event in events][:2] == ["assistant_state", "assistant_state"]
         assert not any(event["type"] == "product_item" for event in events)
         assert not pending_event.done()
 
@@ -2612,3 +2612,141 @@ def test_brand_preference_survives_clarification_answer():
         name = product["name"]
         text = f"{brand} {name}".lower()
         assert "华为" in text or "huawei" in text
+
+
+def test_product_item_does_not_expose_raw_evidence_by_default():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_no_card_evidence",
+                message="推荐一款手机，预算8000，拍照优先",
+            )
+        )
+    )
+
+    product = next(event["product"] for event in events if event["type"] == "product_item")
+    assert "evidence" not in product
+    assert product["reason"]
+
+
+def test_response_payload_uses_review_summary_not_raw_evidence():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    plan = asyncio.run(
+        agent.plan(ChatRequest(type="user_message", session_id="demo_review_summary_payload", message="推荐手机，拍照优先"))
+    )
+    ranked = agent.retrieve_and_rank(plan)[:2]
+
+    payload = _response_evidence_payload(plan, ranked)
+
+    first = payload["allowed_products"][0]
+    assert "evidence" not in first
+    assert "review_summary" in first
+    assert set(first["review_summary"]).issuperset({"positive_summary", "negative_summary", "review_relevance"})
+
+
+def test_irrelevant_review_is_not_used_in_review_summary():
+    from backend.app.knowledge_base import evidence_review_summary
+
+    product = Product(
+        product_id="p_phone_noise_review",
+        title="影像旗舰测试手机",
+        brand="测试手机",
+        category="数码电子",
+        sub_category="智能手机",
+        price=4999.0,
+        image_path="",
+        marketing_description="影像旗舰，适合夜景拍摄。",
+        reviews=[
+            {"rating": 5, "content": "夜拍清晰，抓拍速度快，成片很稳。"},
+            {"rating": 5, "content": "老公和女儿吃了都觉得很好吃，入口香甜。"},
+        ],
+        search_text="影像旗舰测试手机 夜拍清晰 抓拍速度快 成片很稳",
+    )
+
+    summary = evidence_review_summary(product, ["手机", "拍照"])
+
+    combined = " ".join(str(value) for value in summary.values())
+    assert "夜拍" in combined or "抓拍" in combined
+    assert "好吃" not in combined
+    assert "入口香甜" not in combined
+
+
+def test_generic_low_relevance_review_is_not_used_in_review_summary():
+    from backend.app.knowledge_base import evidence_review_summary, product_evidence
+
+    product = Product(
+        product_id="p_phone_generic_review",
+        title="影像旗舰测试手机",
+        brand="测试手机",
+        category="数码电子",
+        sub_category="智能手机",
+        price=4999.0,
+        image_path="",
+        marketing_description="影像旗舰，适合夜景拍摄。",
+        reviews=[
+            {"rating": 5, "content": "物流很快，包装严实，客服回复及时。"},
+            {"rating": 5, "content": "夜拍清晰，抓拍速度快，成片很稳。"},
+        ],
+        search_text="影像旗舰测试手机 夜拍清晰 抓拍速度快 成片很稳",
+    )
+
+    evidence = product_evidence(product, ["手机", "拍照"])
+    summary = evidence_review_summary(product, ["手机", "拍照"])
+    combined = " ".join([*evidence, *[str(value) for value in summary.values()]])
+
+    assert "夜拍" in combined or "抓拍" in combined
+    assert "物流" not in combined
+    assert "包装严实" not in combined
+
+
+def test_explain_followup_can_still_use_internal_evidence_text():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_explain_internal_evidence"
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id=session_id,
+                message="推荐一款手机，预算8000，拍照优先",
+            )
+        )
+    )
+    assert any(event["type"] == "product_item" and "evidence" not in event["product"] for event in first_events)
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="为什么推荐刚刚那个？")
+        )
+    )
+
+    assert "product_item" not in [event["type"] for event in second_events]
+    text = "".join(event.get("text", "") for event in second_events if event["type"] == "text_delta")
+    assert "推荐" in text
+    assert "评论" in text or "证据" in text or "匹配" in text
+
+
+def test_default_recommendation_text_starts_with_conclusion():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_conclusion_first_text",
+                message="推荐一款手机，预算8000，拍照优先",
+            )
+        )
+    )
+
+    text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
+    assert text.startswith("结论：")
+    assert "先给你一个明确主推" not in text
+    assert "评论摘要" in text

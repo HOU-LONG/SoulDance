@@ -9,6 +9,7 @@ from .cart import CartService
 from .constraint_filter import canonical_brand, explain_filter, extract_excluded_brands, hard_filter
 from .embedding_retriever import BM25OnlyRetriever
 from .image_assets import product_image_url
+from .knowledge_base import evidence_review_summary, product_evidence
 from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
 from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, StructuredMemoryCache
@@ -928,7 +929,6 @@ def _product_card(item: RankedProduct) -> ProductCard:
         main_image_url=product_image_url(product.image_path),
         tags=[tag for tag in tags if tag],
         reason=item.reason,
-        evidence=item.evidence,
     )
 
 
@@ -1234,25 +1234,7 @@ def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: T
 
 
 def _understanding_text(plan: RetrievalPlan) -> str:
-    constraints = plan.hard_constraints
-    handled: list[str] = []
-    if constraints.sub_category or constraints.category:
-        handled.append(constraints.sub_category or constraints.category or "")
-    if constraints.price_min is not None:
-        handled.append(f"{constraints.price_min:.0f} 元以上")
-    if constraints.price_max is not None:
-        handled.append(f"{constraints.price_max:.0f} 元以内")
-    if constraints.include_brands:
-        handled.append("指定品牌" + "、".join(constraints.include_brands))
-    if constraints.exclude_terms:
-        handled.append("排除" + "、".join(constraints.exclude_terms))
-    if constraints.exclude_brand_regions:
-        handled.append("排除" + "、".join(constraints.exclude_brand_regions) + "品牌")
-    if plan.soft_preferences:
-        handled.extend(str(value) for value in plan.soft_preferences.values() if value)
-    if handled:
-        return "我先按「" + "、".join(_dedupe(handled)) + "」来筛，先给你一个明确主推。"
-    return "我先按你的描述筛一轮，优先给你一个省心的主推选择。"
+    return ""
 
 
 def _followup_intro(plan: RetrievalPlan) -> str:
@@ -1622,9 +1604,16 @@ def _focus_product_explanation(product: Product, context: SessionContext) -> str
             reason = str(item.get("reason") or "")
             break
     reason_text = f"推荐理由是：{reason}。" if reason else ""
+    query_terms = [product.sub_category, product.brand, reason]
+    evidence = product_evidence(product, query_terms, limit=2)
+    summary = evidence_review_summary(product, query_terms)
+    evidence_text = ""
+    if evidence:
+        evidence_text = "可参考的证据包括：" + "；".join(evidence[:2]) + "。"
+    review_text = "评论摘要：" + summary.get("positive_summary", "暂无足够相关评论") + "。"
     return (
         f"刚刚那款是「{product.title}」，品牌是 {product.brand}，属于{product.sub_category}，"
-        f"价格 {product.price:.0f} 元。{reason_text}"
+        f"价格 {product.price:.0f} 元。{reason_text}{review_text}{evidence_text}"
         "如果你想换更便宜的、避开这个品牌，或者看同类备选，我可以继续筛。"
     )
 

@@ -241,7 +241,6 @@ class ProductCard(BaseModel):
     main_image_url: str
     tags: list[str]
     reason: str
-    evidence: list[str] = Field(default_factory=list)
 
 
 class SessionContext(BaseModel):

@@ -323,6 +323,8 @@ def _short_response_summary(plan: RetrievalPlan, selected: list[RankedProduct]) 
         constraints.append(f"预算 {plan.hard_constraints.price_min:.0f} 元以上")
     if plan.hard_constraints.price_max is not None:
         constraints.append(f"预算 {plan.hard_constraints.price_max:.0f} 元以内")
+    if plan.hard_constraints.include_brands:
+        constraints.append("指定品牌" + "、".join(plan.hard_constraints.include_brands))
     if plan.hard_constraints.exclude_terms:
         constraints.append("排除" + "、".join(plan.hard_constraints.exclude_terms))
     handled = "，".join(constraints) if constraints else "你的核心需求"

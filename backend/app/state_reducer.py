@@ -70,6 +70,8 @@ def _sync_legacy_context(context: SessionContext) -> None:
         context.global_profile["budget_min"] = hard.price_min
     if hard.price_max is not None:
         context.global_profile["budget_max"] = hard.price_max
+    if hard.include_brands:
+        context.global_profile["include_brands"] = _dedupe(hard.include_brands)
     if hard.exclude_terms:
         context.global_profile["exclude_terms"] = _dedupe(hard.exclude_terms)
     if hard.exclude_brand_regions:

@@ -32,6 +32,8 @@ def hard_filter(product: Product, constraints: HardConstraints) -> bool:
         return False
     if constraints.price_max is not None and product.price > constraints.price_max:
         return False
+    if constraints.include_brands and not any(_brand_matches(product, brand) for brand in constraints.include_brands):
+        return False
     if constraints.exclude_brand_regions and product.brand_region in constraints.exclude_brand_regions:
         return False
     for brand in constraints.exclude_brands:
@@ -50,6 +52,8 @@ def explain_filter(product: Product, constraints: HardConstraints) -> str | None
         return f"价格 {product.price:.0f} 元低于最低预算 {constraints.price_min:.0f} 元"
     if constraints.price_max is not None and product.price > constraints.price_max:
         return f"价格 {product.price:.0f} 元超过预算 {constraints.price_max:.0f} 元"
+    if constraints.include_brands and not any(_brand_matches(product, brand) for brand in constraints.include_brands):
+        return "品牌不在指定品牌「" + "、".join(constraints.include_brands) + "」中"
     if constraints.exclude_brand_regions and product.brand_region in constraints.exclude_brand_regions:
         return f"品牌地区为{product.brand_region}，不符合排除条件"
     for brand in constraints.exclude_brands:
@@ -83,6 +87,17 @@ def canonical_brand(value: str) -> str:
         if lowered == canonical.lower() or lowered in aliases:
             return canonical
     return value.strip()
+
+
+def extract_included_brands(text: str) -> list[str]:
+    if any(marker in text for marker in ["不要", "不考虑", "排除", "避开", "除了", "别", "非"]):
+        return []
+    lowered = (text or "").lower()
+    brands: list[str] = []
+    for canonical, aliases in BRAND_ALIASES.items():
+        if any(alias.lower() in lowered for alias in aliases):
+            brands.append(canonical)
+    return _dedupe(brands)
 
 
 def extract_excluded_brands(text: str) -> list[str]:

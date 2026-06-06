@@ -19,6 +19,7 @@ def rank_products(
         for value in [
             plan.hard_constraints.category,
             plan.hard_constraints.sub_category,
+            *plan.hard_constraints.include_brands,
             *plan.hard_constraints.exclude_terms,
         ]
         if value
@@ -48,6 +49,9 @@ def _score_product(product: Product, plan: RetrievalPlan, retrieval_score: float
     elif constraints.category and product.category == constraints.category:
         score += 3
         hits.append(f"大类匹配{product.category}")
+    if constraints.include_brands:
+        score += 4
+        hits.append("品牌匹配" + "、".join(constraints.include_brands))
     for pref in plan.soft_preferences.values():
         if pref and pref in product.search_text:
             score += 2

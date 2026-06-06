@@ -1092,9 +1092,18 @@ def test_contextual_short_cheaper_followup_keeps_product_context():
     states = [event for event in second_events if event["type"] == "assistant_state"]
     product_events = [event for event in second_events if event["type"] == "product_item"]
     assert states[0]["intent"] == "product_followup"
-    assert product_events
-    assert all(event["product"]["sub_category"] == primary["product"]["sub_category"] for event in product_events)
-    assert all(event["product"]["price"] < primary["product"]["price"] for event in product_events)
+    assert agent.sessions.get("demo_short_cheaper_followup").last_plan.hard_constraints.include_brands == ["华为"]
+    if product_events:
+        assert all(event["product"]["sub_category"] == primary["product"]["sub_category"] for event in product_events)
+        assert all(event["product"]["price"] < primary["product"]["price"] for event in product_events)
+        for event in product_events:
+            product = event["product"]
+            brand = product["brand"]
+            name = product["name"]
+            text = f"{brand} {name}".lower()
+            assert "华为" in text or "huawei" in text
+    else:
+        assert "filter_recovery_options" in [event["type"] for event in second_events]
 
 
 def test_short_cheaper_followup_without_context_does_not_recommend_random_products():
@@ -2567,3 +2576,39 @@ def test_recommendation_product_card_uses_browser_accessible_image_url():
     assert image_url.startswith("/assets/products/")
     assert image_url.endswith(".jpg")
     assert "ecommerce_agent_dataset" not in image_url
+
+
+def test_brand_preference_survives_clarification_answer():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_huawei_clarification_brand"
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id=session_id,
+                message="我要一款华为手机",
+            )
+        )
+    )
+    first_types = [event["type"] for event in first_events]
+    assert "clarification_request" in first_types
+    context = agent.sessions.get(session_id)
+    assert context.last_plan.hard_constraints.include_brands == ["华为"]
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="拍照优先")
+        )
+    )
+
+    product_events = [event for event in second_events if event["type"] == "product_item"]
+    assert product_events
+    assert agent.sessions.get(session_id).last_plan.hard_constraints.include_brands == ["华为"]
+    for event in product_events:
+        product = event["product"]
+        brand = product["brand"]
+        name = product["name"]
+        text = f"{brand} {name}".lower()
+        assert "华为" in text or "huawei" in text

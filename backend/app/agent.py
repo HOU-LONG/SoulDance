@@ -1209,6 +1209,7 @@ def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: T
         or constraints.price_min is not None
         or constraints.price_max is not None
         or constraints.exclude_terms
+        or constraints.include_brands
         or constraints.exclude_brands
         or constraints.exclude_brand_regions
         or plan.soft_preferences
@@ -1218,7 +1219,7 @@ def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: T
         return True
     if constraints.category or constraints.sub_category:
         return True
-    if constraints.price_min is not None or constraints.price_max is not None or constraints.exclude_terms or constraints.exclude_brands or constraints.exclude_brand_regions:
+    if constraints.price_min is not None or constraints.price_max is not None or constraints.exclude_terms or constraints.include_brands or constraints.exclude_brands or constraints.exclude_brand_regions:
         return True
     if plan.soft_preferences:
         return True
@@ -1241,6 +1242,8 @@ def _understanding_text(plan: RetrievalPlan) -> str:
         handled.append(f"{constraints.price_min:.0f} 元以上")
     if constraints.price_max is not None:
         handled.append(f"{constraints.price_max:.0f} 元以内")
+    if constraints.include_brands:
+        handled.append("指定品牌" + "、".join(constraints.include_brands))
     if constraints.exclude_terms:
         handled.append("排除" + "、".join(constraints.exclude_terms))
     if constraints.exclude_brand_regions:
@@ -1261,6 +1264,8 @@ def _followup_intro(plan: RetrievalPlan) -> str:
         parts.append(f"保留 {constraints.price_min:.0f} 元以上")
     if constraints.price_max is not None:
         parts.append(f"保留预算 {constraints.price_max:.0f} 元以内")
+    if constraints.include_brands:
+        parts.append("保留品牌" + "、".join(constraints.include_brands))
     if constraints.exclude_brands:
         parts.append("避开" + "、".join(constraints.exclude_brands))
     if constraints.exclude_terms:
@@ -1692,6 +1697,8 @@ def _update_profile(context: SessionContext, plan: RetrievalPlan) -> None:
         context.global_profile["budget_min"] = constraints.price_min
     if constraints.price_max is not None:
         context.global_profile["budget_max"] = constraints.price_max
+    if constraints.include_brands:
+        context.global_profile["include_brands"] = constraints.include_brands
     if constraints.exclude_terms:
         context.global_profile["exclude_terms"] = constraints.exclude_terms
     if constraints.exclude_brand_regions:
@@ -1726,6 +1733,8 @@ def _no_match_text(plan: RetrievalPlan) -> str:
         parts.append(f"{constraints.price_min:.0f} 元以上")
     if constraints.price_max is not None:
         parts.append(f"{constraints.price_max:.0f} 元以内")
+    if constraints.include_brands:
+        parts.append("指定品牌" + "、".join(constraints.include_brands))
     if constraints.exclude_terms:
         parts.append("不含" + "、".join(constraints.exclude_terms))
     if constraints.exclude_brand_regions:

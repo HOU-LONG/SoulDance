@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .constraint_filter import extract_excluded_brands
+from .constraint_filter import extract_excluded_brands, extract_included_brands
 from .models import CartOperation, ChatRequest, ConstraintEdits, HardConstraints, ProductReference, RetrievalPlan, SemanticFrame, SessionContext
 
 
@@ -111,6 +111,9 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
             edits.remove.exclude_terms.append("酒精")
         if "日系" in text or "日本" in text:
             edits.remove.exclude_brand_regions.append("日本")
+    included_brands = extract_included_brands(text)
+    if included_brands:
+        edits.add.include_brands.extend(included_brands)
     if re.search(r"不要|不含|排除|除了", text):
         if "酒精" in text or "乙醇" in text:
             edits.add.exclude_terms.append("酒精")
@@ -223,6 +226,9 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     )
     frame.constraint_edits.add.exclude_brand_regions = _dedupe(
         frame.constraint_edits.add.exclude_brand_regions + guarded.constraint_edits.add.exclude_brand_regions
+    )
+    frame.constraint_edits.add.include_brands = _dedupe(
+        frame.constraint_edits.add.include_brands + guarded.constraint_edits.add.include_brands
     )
     frame.constraint_edits.add.exclude_brands = _dedupe(
         frame.constraint_edits.add.exclude_brands + guarded.constraint_edits.add.exclude_brands
@@ -349,6 +355,8 @@ def _remove_constraints(constraints: HardConstraints, patch) -> None:
         constraints.price_max = None
     for term in patch.exclude_terms:
         constraints.exclude_terms = [value for value in constraints.exclude_terms if value != term]
+    for brand in patch.include_brands:
+        constraints.include_brands = [value for value in constraints.include_brands if value != brand]
     for brand in patch.exclude_brands:
         constraints.exclude_brands = [value for value in constraints.exclude_brands if value != brand]
     for region in patch.exclude_brand_regions:
@@ -367,6 +375,8 @@ def _relax_constraints(constraints: HardConstraints, fields: list[str]) -> None:
             constraints.sub_category = None
         if field == "exclude_terms":
             constraints.exclude_terms = []
+        if field == "include_brands":
+            constraints.include_brands = []
         if field == "exclude_brands":
             constraints.exclude_brands = []
         if field == "exclude_brand_regions":
@@ -383,6 +393,7 @@ def _add_constraints(constraints: HardConstraints, patch) -> None:
     if patch.price_max is not None:
         constraints.price_max = patch.price_max
     constraints.exclude_terms = _dedupe(constraints.exclude_terms + patch.exclude_terms)
+    constraints.include_brands = _dedupe(constraints.include_brands + patch.include_brands)
     constraints.exclude_brands = _dedupe(constraints.exclude_brands + patch.exclude_brands)
     constraints.exclude_brand_regions = _dedupe(constraints.exclude_brand_regions + patch.exclude_brand_regions)
 
@@ -394,6 +405,7 @@ def _build_retrieval_query(message: str, constraints: HardConstraints, soft_pref
             message,
             constraints.category or "",
             constraints.sub_category or "",
+            *constraints.include_brands,
             *soft_preferences.values(),
         ]
         if part

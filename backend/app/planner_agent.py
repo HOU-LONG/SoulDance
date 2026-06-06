@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .constraint_filter import extract_included_brands
 from .models import ChatRequest, HardConstraints, RetrievalPlan, SessionContext
 
 
@@ -51,6 +52,10 @@ class PlannerAgent:
                 constraints.sub_category = category
                 constraints.category = _parent_category(category)
 
+        included_brands = extract_included_brands(text)
+        if included_brands:
+            constraints.include_brands = _dedupe(constraints.include_brands + included_brands)
+
         price_min = _detect_price_min(text)
         if price_min is not None:
             constraints.price_min = price_min
@@ -70,6 +75,7 @@ class PlannerAgent:
             if constraints.sub_category is None:
                 constraints.sub_category = inherited.sub_category
             constraints.exclude_terms = _dedupe(inherited.exclude_terms + constraints.exclude_terms)
+            constraints.include_brands = _dedupe(inherited.include_brands + constraints.include_brands)
             constraints.exclude_brands = _dedupe(inherited.exclude_brands + constraints.exclude_brands)
             constraints.exclude_brand_regions = _dedupe(
                 inherited.exclude_brand_regions + constraints.exclude_brand_regions
@@ -115,6 +121,7 @@ class PlannerAgent:
                 text,
                 constraints.category or "",
                 constraints.sub_category or "",
+                *constraints.include_brands,
                 *soft.values(),
             ]
             if part
@@ -154,6 +161,7 @@ class PlannerAgent:
         if rule_constraints.price_max is not None:
             constraints.price_max = rule_constraints.price_max
         constraints.exclude_terms = _dedupe(constraints.exclude_terms + rule_constraints.exclude_terms)
+        constraints.include_brands = _dedupe(constraints.include_brands + rule_constraints.include_brands)
         constraints.exclude_brands = _dedupe(constraints.exclude_brands + rule_constraints.exclude_brands)
         constraints.exclude_brand_regions = _dedupe(
             constraints.exclude_brand_regions + rule_constraints.exclude_brand_regions

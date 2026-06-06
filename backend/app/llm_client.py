@@ -272,6 +272,8 @@ class FakeLLMClient:
             handled.append(f"预算 {constraints.price_min:.0f} 元以上")
         if constraints.price_max is not None:
             handled.append(f"预算 {constraints.price_max:.0f} 元以内")
+        if constraints.include_brands:
+            handled.append("指定品牌" + "、".join(constraints.include_brands))
         if constraints.exclude_terms:
             handled.append("排除" + "、".join(constraints.exclude_terms))
         if constraints.exclude_brand_regions:
@@ -382,6 +384,7 @@ def _response_evidence_payload(
             "price_min": constraints.price_min,
             "price_max": constraints.price_max,
             "exclude_terms": constraints.exclude_terms,
+            "include_brands": constraints.include_brands,
             "exclude_brands": constraints.exclude_brands,
             "exclude_brand_regions": constraints.exclude_brand_regions,
         },

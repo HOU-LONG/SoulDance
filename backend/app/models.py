@@ -36,6 +36,7 @@ class HardConstraints(BaseModel):
     price_min: float | None = None
     price_max: float | None = None
     exclude_terms: list[str] = Field(default_factory=list)
+    include_brands: list[str] = Field(default_factory=list)
     exclude_brands: list[str] = Field(default_factory=list)
     exclude_brand_regions: list[str] = Field(default_factory=list)
     in_stock_only: bool = True
@@ -58,6 +59,7 @@ class ConstraintPatch(BaseModel):
     price_min: float | None = None
     price_max: float | None = None
     exclude_terms: list[str] = Field(default_factory=list)
+    include_brands: list[str] = Field(default_factory=list)
     exclude_brands: list[str] = Field(default_factory=list)
     exclude_brand_regions: list[str] = Field(default_factory=list)
     soft_preferences: dict[str, str] = Field(default_factory=dict)

@@ -15,13 +15,60 @@ class EvidenceChunk:
     noise_score: float = 0.0
 
 
+@dataclass(frozen=True)
+class EvidenceBundle:
+    support_chunks: list[EvidenceChunk]
+    risk_chunks: list[EvidenceChunk]
+    ignored_chunks: list[EvidenceChunk]
+    positive_summary: str
+    negative_summary: str
+    evidence_score: float
+
+
 def product_evidence(product: Product, query_terms: list[str] | None = None, limit: int = 3) -> list[str]:
-    chunks = evidence_chunks(product, query_terms)
+    bundle = build_evidence_bundle(product, query_terms)
+    chunks = [*bundle.support_chunks, *bundle.risk_chunks]
+    chunks = sorted(chunks, key=_chunk_sort_key, reverse=True)
     return [_trim(chunk.text, query_terms or []) for chunk in chunks[:limit] if chunk.text]
 
 
 def evidence_chunks(product: Product, query_terms: list[str] | None = None) -> list[EvidenceChunk]:
+    bundle = build_evidence_bundle(product, query_terms)
+    return sorted([*bundle.support_chunks, *bundle.risk_chunks], key=_chunk_sort_key, reverse=True)
+
+
+def build_evidence_bundle(product: Product, query_terms: list[str] | None = None) -> EvidenceBundle:
     query_terms = query_terms or []
+    support_chunks: list[EvidenceChunk] = []
+    risk_chunks: list[EvidenceChunk] = []
+    ignored_chunks: list[EvidenceChunk] = []
+    for chunk in _raw_evidence_chunks(product, query_terms):
+        if _is_risk_chunk(chunk, query_terms):
+            risk_chunks.append(chunk)
+        elif _is_support_chunk(chunk):
+            support_chunks.append(chunk)
+        else:
+            ignored_chunks.append(chunk)
+    support_chunks = sorted(support_chunks, key=_chunk_sort_key, reverse=True)
+    risk_chunks = sorted(risk_chunks, key=_chunk_sort_key, reverse=True)
+    ignored_chunks = sorted(ignored_chunks, key=_chunk_sort_key, reverse=True)
+    positive_reviews = [
+        chunk
+        for chunk in support_chunks
+        if chunk.source_type == "review" and (chunk.rating is None or chunk.rating >= 4)
+    ]
+    negative_reviews = [chunk for chunk in risk_chunks if chunk.source_type == "review"]
+    return EvidenceBundle(
+        support_chunks=support_chunks,
+        risk_chunks=risk_chunks,
+        ignored_chunks=ignored_chunks,
+        positive_summary=_summarize_review_chunks(positive_reviews, "相关评论提到"),
+        negative_summary=_summarize_review_chunks(negative_reviews, "需要注意"),
+        evidence_score=_evidence_score(support_chunks, risk_chunks),
+    )
+
+
+def _raw_evidence_chunks(product: Product, query_terms: list[str]) -> list[EvidenceChunk]:
     chunks: list[EvidenceChunk] = []
     if product.marketing_description:
         chunks.append(_chunk(product, product.marketing_description, "marketing", query_terms))
@@ -29,35 +76,13 @@ def evidence_chunks(product: Product, query_terms: list[str] | None = None) -> l
         answer = faq.get("answer", "")
         if answer:
             chunks.append(_chunk(product, answer, "faq", query_terms))
-    review_chunks = []
     for review in product.reviews:
         text = str(review.get("content", ""))
         if not text:
             continue
         rating = int(review.get("rating", 0) or 0)
-        chunk = _chunk(product, text, "review", query_terms, rating)
-        if not _is_relevant_review_chunk(chunk):
-            continue
-        review_chunks.append(chunk)
-    chunks.extend(_select_review_chunks(review_chunks, query_terms))
-    return sorted(chunks, key=_chunk_sort_key, reverse=True)
-
-
-def _select_review_chunks(chunks: list[EvidenceChunk], query_terms: list[str]) -> list[EvidenceChunk]:
-    query_text = " ".join(query_terms)
-    risk_reviews = [
-        chunk
-        for chunk in chunks
-        if chunk.rating is not None
-        and chunk.rating <= 2
-        and _mentions_sensitive_risk(chunk.text)
-        and any(term in query_text for term in ["敏感肌", "敏感", "屏障"])
-    ]
-    positive_reviews = [chunk for chunk in chunks if chunk.rating is not None and chunk.rating >= 4 and chunk.noise_score < 0.6]
-    selected = risk_reviews[:1]
-    if positive_reviews:
-        selected.append(max(positive_reviews, key=lambda chunk: (chunk.query_overlap, chunk.field_consistency, chunk.rating or 0)))
-    return selected
+        chunks.append(_chunk(product, text, "review", query_terms, rating))
+    return chunks
 
 
 def _chunk(
@@ -199,29 +224,51 @@ def _trim(text: str, query_terms: list[str], size: int = 120) -> str:
 
 
 def evidence_review_summary(product: Product, query_terms: list[str] | None = None) -> dict[str, str]:
-    query_terms = query_terms or []
-    review_chunks = [
-        chunk
-        for chunk in evidence_chunks(product, query_terms)
-        if chunk.source_type == "review" and _is_relevant_review_chunk(chunk)
-    ]
-    positive = [chunk for chunk in review_chunks if chunk.rating is None or chunk.rating >= 4]
-    negative = [chunk for chunk in review_chunks if chunk.rating is not None and chunk.rating <= 3]
+    bundle = build_evidence_bundle(product, query_terms)
+    has_reviews = any(chunk.source_type == "review" for chunk in [*bundle.support_chunks, *bundle.risk_chunks])
     return {
-        "positive_summary": _summarize_review_chunks(positive, "相关评论提到"),
-        "negative_summary": _summarize_review_chunks(negative, "需要注意"),
-        "review_relevance": "high" if review_chunks else "none",
+        "positive_summary": bundle.positive_summary,
+        "negative_summary": bundle.negative_summary,
+        "review_relevance": "high" if has_reviews else "none",
     }
 
 
-def _is_relevant_review_chunk(chunk: EvidenceChunk) -> bool:
+def _is_support_chunk(chunk: EvidenceChunk) -> bool:
     if chunk.noise_score >= 0.6:
         return False
     if chunk.query_overlap > 0:
         return True
-    if chunk.field_consistency >= 0.8:
+    if chunk.field_consistency >= 0.8 and not _is_generic_service_review(chunk):
         return True
-    return chunk.rating is not None and chunk.rating <= 2 and _mentions_sensitive_risk(chunk.text)
+    return False
+
+
+def _is_risk_chunk(chunk: EvidenceChunk, query_terms: list[str]) -> bool:
+    query_text = " ".join(query_terms)
+    return (
+        chunk.source_type == "review"
+        and chunk.rating is not None
+        and chunk.rating <= 2
+        and _mentions_sensitive_risk(chunk.text)
+        and any(term in query_text for term in ["敏感肌", "敏感", "屏障"])
+        and chunk.noise_score < 0.6
+    )
+
+
+def _is_generic_service_review(chunk: EvidenceChunk) -> bool:
+    if chunk.source_type != "review":
+        return False
+    return any(term in chunk.text for term in ["物流", "快递", "包装", "客服", "发货"]) and chunk.query_overlap == 0
+
+
+def _evidence_score(support_chunks: list[EvidenceChunk], risk_chunks: list[EvidenceChunk]) -> float:
+    score = 0.0
+    for chunk in support_chunks[:3]:
+        source_weight = {"marketing": 0.35, "faq": 0.45, "review": 0.75}.get(chunk.source_type, 0.3)
+        score += source_weight + chunk.query_overlap + max(chunk.field_consistency - 0.5, 0) - chunk.noise_score
+    for chunk in risk_chunks[:1]:
+        score += 0.15 + chunk.query_overlap
+    return max(score, 0.0)
 
 
 def _summarize_review_chunks(chunks: list[EvidenceChunk], prefix: str) -> str:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .constraint_filter import hard_filter
-from .knowledge_base import product_evidence
+from .knowledge_base import build_evidence_bundle
 from .models import Product, RankedProduct, RetrievalPlan
 
 
@@ -25,14 +25,17 @@ def rank_products(
         if value
     ]
     for product in filtered:
+        bundle = build_evidence_bundle(product, query_terms)
         tier, score, reason = _score_product(product, plan, retrieval_scores.get(product.product_id, 0.0))
+        score += min(bundle.evidence_score, 2.0)
+        evidence_chunks = sorted([*bundle.support_chunks, *bundle.risk_chunks], key=lambda chunk: chunk.query_overlap + chunk.field_consistency - chunk.noise_score, reverse=True)
         ranked.append(
             RankedProduct(
                 product=product,
                 score=score,
                 tier=tier,
                 reason=reason,
-                evidence=product_evidence(product, query_terms),
+                evidence=[chunk.text[:120] for chunk in evidence_chunks[:3] if chunk.text],
             )
         )
     ranked.sort(key=lambda item: (item.tier == 1, item.tier == 2, item.score), reverse=True)

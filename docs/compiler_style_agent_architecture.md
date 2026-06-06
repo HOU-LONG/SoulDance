@@ -161,6 +161,10 @@ Compare still uses deterministic product IDs from recent recommendation memory. 
 
 Bundle still decomposes the scenario into deterministic slots, retrieves each slot independently, and streams `bundle_*` events.
 
+## Evidence Rerank Boundary
+
+Evidence rerank is an internal backend step, not a client event and not an extra LLM JSON call. Product descriptions, FAQs, and reviews are first scored into an `EvidenceBundle` with support, risk, ignored chunks, summaries, and an evidence score. Product rerank then uses that evidence score together with taxonomy, price, brand, and retrieval signals. Raw reviews remain in the product data; unrelated chunks are ignored at runtime because relevance depends on the current user need.
+
 ## Response Writer Boundary
 
 LLM response writing receives a constrained payload shaped like:

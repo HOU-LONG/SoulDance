@@ -13,7 +13,7 @@ from backend.app.llm_client import (
     _response_evidence_payload,
 )
 from backend.app.memory_cache import RecommendationMemoryCache, StructuredMemoryCache
-from backend.app.models import ChatRequest, HardConstraints, Product, RankedProduct
+from backend.app.models import ChatRequest, HardConstraints, Product, RankedProduct, RetrievalPlan
 from backend.app.taxonomy import TaxonomyResolver
 
 
@@ -2519,6 +2519,92 @@ def test_cart_service_add_update_checkout():
     checkout = cart.checkout("demo")
     assert checkout["status"] == "ok"
     assert cart.get("demo")["items"] == []
+
+
+def test_evidence_bundle_classifies_support_risk_and_ignored_chunks():
+    from backend.app.knowledge_base import build_evidence_bundle
+
+    phone = Product(
+        product_id="p_bundle_phone",
+        title="影像旗舰测试手机",
+        brand="测试手机",
+        category="数码电子",
+        sub_category="智能手机",
+        price=4999.0,
+        image_path="",
+        marketing_description="影像旗舰，适合夜景拍摄。",
+        reviews=[
+            {"rating": 5, "content": "夜拍清晰，抓拍速度快，成片很稳。"},
+            {"rating": 5, "content": "老公和女儿吃了都觉得很好吃，入口香甜。"},
+            {"rating": 5, "content": "物流很快，包装严实，客服回复及时。"},
+        ],
+        search_text="影像旗舰测试手机 夜拍清晰 抓拍速度快 成片很稳",
+    )
+
+    bundle = build_evidence_bundle(phone, ["手机", "拍照"])
+
+    support_text = " ".join(chunk.text for chunk in bundle.support_chunks)
+    ignored_text = " ".join(chunk.text for chunk in bundle.ignored_chunks)
+    assert "夜拍" in support_text or "抓拍" in support_text
+    assert "好吃" in ignored_text
+    assert "物流" in ignored_text
+    assert bundle.positive_summary != "暂无足够相关评论"
+    assert bundle.evidence_score > 0
+
+
+def test_evidence_bundle_keeps_relevant_risk_chunks():
+    from backend.app.knowledge_base import build_evidence_bundle
+
+    products = load_products("ecommerce_agent_dataset")
+    product = next(product for product in products if product.product_id == "p_beauty_001")
+
+    bundle = build_evidence_bundle(product, ["敏感肌"])
+
+    risk_text = " ".join(chunk.text for chunk in bundle.risk_chunks)
+    assert "泛红" in risk_text or "刺痛" in risk_text or "不适" in risk_text
+    assert bundle.negative_summary != "暂无足够相关评论"
+
+
+def test_ranker_uses_evidence_score_to_prefer_better_supported_product():
+    from backend.app.ranker import rank_products
+
+    noisy = Product(
+        product_id="p_phone_noisy_support",
+        title="A 测试拍照手机",
+        brand="测试",
+        category="数码电子",
+        sub_category="智能手机",
+        price=3999.0,
+        image_path="",
+        marketing_description="拍照手机。",
+        reviews=[{"rating": 5, "content": "物流很快，包装严实，客服回复及时。"}],
+        search_text="测试拍照手机 智能手机 拍照",
+        review_rating=5.0,
+    )
+    supported = Product(
+        product_id="p_phone_relevant_support",
+        title="B 测试拍照手机",
+        brand="测试",
+        category="数码电子",
+        sub_category="智能手机",
+        price=3999.0,
+        image_path="",
+        marketing_description="拍照手机。",
+        reviews=[{"rating": 5, "content": "夜拍清晰，抓拍速度快，成片很稳。"}],
+        search_text="测试拍照手机 智能手机 拍照",
+        review_rating=5.0,
+    )
+    plan = RetrievalPlan(
+        retrieval_query="推荐拍照手机",
+        hard_constraints=HardConstraints(category="数码电子", sub_category="智能手机"),
+        soft_preferences={"priority": "拍照"},
+    )
+
+    ranked = rank_products([noisy, supported], plan, retrieval_scores={}, limit=2)
+
+    assert ranked[0].product.product_id == "p_phone_relevant_support"
+    assert any("夜拍" in item or "抓拍" in item for item in ranked[0].evidence)
+    assert all("物流" not in item for item in ranked[0].evidence)
 
 
 def test_noise_review_is_filtered_from_product_evidence():

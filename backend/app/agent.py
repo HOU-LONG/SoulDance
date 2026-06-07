@@ -286,10 +286,15 @@ class ShopGuideAgent:
             context.state.active_focus.source = "context_event"
         focus_product = self.product_map.get(resolved_product_id or request.focus_product_id or context.focus_product_id or "")
         cheaper_than_price = None
+        more_expensive_than_price = None
         if focus_product and _wants_cheaper_alternative(request.message, ir):
             cheaper_than_price = focus_product.price
             plan.soft_preferences["price_preference"] = "更便宜"
             context.state.constraint_state.soft["price_preference"] = "更便宜"
+        if focus_product and _wants_more_expensive_alternative(request.message, ir):
+            more_expensive_than_price = focus_product.price
+            plan.soft_preferences["price_preference"] = "更贵"
+            context.state.constraint_state.soft["price_preference"] = "更贵"
         explicit_excluded_brands = extract_excluded_brands(request.message)
         if focus_product and _wants_different_brand(request.message, ir):
             explicit_excluded_brands.append(canonical_brand(focus_product.brand))
@@ -320,26 +325,33 @@ class ShopGuideAgent:
         ranked = [item for item in self.retrieve_and_rank(plan) if hard_filter(item.product, plan.hard_constraints)]
         if cheaper_than_price is not None:
             ranked = [item for item in ranked if item.product.price < cheaper_than_price]
-        if ranked:
-            self._remember_recommendations(context, plan, ranked)
-        if ranked:
-            replacement = _product_card(ranked[0])
+        if more_expensive_than_price is not None:
+            ranked = [item for item in ranked if item.product.price > more_expensive_than_price]
+        final_selected = ranked[:4]
+        if final_selected:
+            self._remember_recommendations(context, plan, final_selected)
+            context.focus_product_id = final_selected[0].product.product_id
+            context.state.active_focus.type = "product"
+            context.state.active_focus.product_id = final_selected[0].product.product_id
+            context.state.active_focus.source = "followup_primary"
+        if final_selected:
+            replacement = _product_card(final_selected[0])
             replacement_event = {
                 "type": "replacement_product",
                 "message_id": message_id,
                 "focus_product_id": request.focus_product_id,
-                "reason": ranked[0].reason,
+                "reason": final_selected[0].reason,
                 "product": replacement.model_dump(mode="json"),
             }
             yield replacement_event
             text_parts: list[str] = []
-            async for event in self._stream_generate_text_events(message_id, request, plan, ranked, focus_product):
+            async for event in self._stream_generate_text_events(message_id, request, plan, final_selected, focus_product):
                 text_parts.append(event["text"])
                 yield event
             text = "".join(text_parts)
             if request.type == "user_message":
                 yield {"type": "products_start", "message_id": message_id}
-                for index, item in enumerate(ranked):
+                for index, item in enumerate(final_selected):
                     yield {
                         "type": "product_item",
                         "message_id": message_id,
@@ -348,7 +360,7 @@ class ShopGuideAgent:
                         "product": _product_card(item).model_dump(mode="json"),
                     }
                 yield {"type": "products_done", "message_id": message_id}
-            yield _quick_actions_event(message_id, plan, ranked)
+            yield _quick_actions_event(message_id, plan, final_selected)
         else:
             text = _no_match_text(plan)
             for event in _text_delta_events(message_id, text):
@@ -519,16 +531,20 @@ class ShopGuideAgent:
                 yield event
             return
         try:
-            got_chunk = False
+            chunks: list[str] = []
             async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product):
                 if chunk:
-                    got_chunk = True
+                    chunks.append(chunk)
+            streamed_text = "".join(chunks)
+            if streamed_text and _primary_text_matches_selected(streamed_text, ranked):
+                for chunk in chunks:
                     yield {"type": "text_delta", "message_id": message_id, "text": chunk}
-            if got_chunk:
                 return
         except Exception:
             pass
         text = await self._safe_generate_text(request, plan, ranked, focus_product)
+        if not _primary_text_matches_selected(text, ranked):
+            text = await FakeLLMClient().generate_response(request.message, plan, ranked, focus_product)
         for event in _text_delta_events(message_id, text):
             yield event
 
@@ -919,6 +935,24 @@ class ShopGuideAgent:
         return {"action": action, "product_id": product_id, "cart": snapshot, "message": _cart_message(action, product_id)}
 
 
+def _primary_text_matches_selected(text: str, ranked: list[RankedProduct]) -> bool:
+    if not text or not ranked:
+        return True
+    primary_title = ranked[0].product.title
+    alternative_titles = [item.product.title for item in ranked[1:4]]
+    primary_markers = ["主推", "优先推荐", "优先看"]
+    for title in alternative_titles:
+        for marker in primary_markers:
+            if f"{marker}{title}" in text or f"{marker}「{title}」" in text or f"{marker}商品为{title}" in text:
+                return False
+    if any(marker in text for marker in primary_markers) and not any(
+        f"{marker}{primary_title}" in text or f"{marker}「{primary_title}」" in text or f"{marker}商品为{primary_title}" in text
+        for marker in primary_markers
+    ):
+        return not any(title in text for title in alternative_titles)
+    return True
+
+
 def _product_card(item: RankedProduct) -> ProductCard:
     product = item.product
     tags = [product.category, product.sub_category, product.brand_region]
@@ -1245,6 +1279,8 @@ def _followup_intro(plan: RetrievalPlan) -> str:
     parts: list[str] = []
     if plan.soft_preferences.get("price_preference") == "更便宜":
         parts.append("找比当前主推更便宜的")
+    if plan.soft_preferences.get("price_preference") == "更贵":
+        parts.append("找比当前主推更贵一点的")
     if constraints.price_min is not None:
         parts.append(f"保留 {constraints.price_min:.0f} 元以上")
     if constraints.price_max is not None:
@@ -1590,6 +1626,14 @@ def _wants_cheaper_alternative(text: str, ir) -> bool:
     if ir.constraint_edits.add.soft_preferences.get("price_preference") == "更便宜":
         return True
     return any(word in text for word in ["更便宜", "便宜点", "便宜的", "价格低"])
+
+
+def _wants_more_expensive_alternative(text: str, ir) -> bool:
+    if ir.response_goal == "recommend_more_expensive_alternative":
+        return True
+    if ir.constraint_edits.add.soft_preferences.get("price_preference") == "更贵":
+        return True
+    return any(word in text for word in ["更贵", "贵一点", "高端", "高价位", "价位高"])
 
 
 def _wants_different_brand(text: str, ir=None) -> bool:

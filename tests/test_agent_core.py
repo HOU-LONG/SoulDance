@@ -1166,6 +1166,83 @@ def test_contextual_followup_except_nike_excludes_nike_aliases():
         assert "nike" not in text
 
 
+def _primary_product_event(events):
+    return next(event for event in events if event["type"] == "product_item" and event.get("role") == "primary")
+
+
+def test_followup_more_expensive_filters_primary_above_focus_price():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_followup_more_expensive"
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
+        )
+    )
+    first_primary = _primary_product_event(first_events)["product"]
+
+    second_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+    )
+
+    second_primary = _primary_product_event(second_events)["product"]
+    assert second_primary["price"] > first_primary["price"]
+    assert agent.sessions.get(session_id).focus_product_id == second_primary["product_id"]
+
+
+def test_followup_text_primary_matches_product_card_when_llm_drifts_to_alternative():
+    class DriftResponseLLM(FakeLLMClient):
+        async def stream_response(self, user_message, plan, ranked_products, focus_product=None):
+            if len(ranked_products) > 1:
+                yield f"主推{ranked_products[1].product.title}，它看起来更符合。"
+            else:
+                yield f"主推{ranked_products[0].product.title}。"
+
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, DriftResponseLLM())
+    session_id = "demo_followup_primary_drift_guard"
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
+        )
+    )
+    followup_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+    )
+
+    primary = _primary_product_event(followup_events)["product"]
+    text = "".join(event.get("text", "") for event in followup_events if event["type"] == "text_delta")
+    assert primary["name"] in text
+    for event in followup_events:
+        if event["type"] == "product_item" and event.get("role") != "primary":
+            assert f"主推{event['product']['name']}" not in text
+            assert f"优先看「{event['product']['name']}」" not in text
+
+
+def test_followup_primary_role_focus_and_recommendation_memory_are_same_product():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_followup_primary_state_consistency"
+
+    asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
+        )
+    )
+    followup_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+    )
+
+    primary = _primary_product_event(followup_events)["product"]
+    context = agent.sessions.get(session_id)
+    assert context.focus_product_id == primary["product_id"]
+    assert context.last_product_ids[0] == primary["product_id"]
+    assert context.last_recommendations[0]["product_id"] == primary["product_id"]
+    assert context.last_recommendations[0]["role"] == "primary"
+
+
 def test_chat_followup_recommendation_emits_standard_product_item_card():
     products = load_products("ecommerce_agent_dataset")
     llm = SemanticSelectionLLM(

@@ -159,6 +159,9 @@ def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, A
     if any(word in text for word in ["再便宜", "便宜点", "更便宜", "价格低", "低价"]):
         edits.add.soft_preferences["price_preference"] = "更便宜"
         response_goal = "recommend_cheaper_alternative"
+    if any(word in text for word in ["更贵", "贵一点", "高端", "高价位", "价位高"]):
+        edits.add.soft_preferences["price_preference"] = "更贵"
+        response_goal = "recommend_more_expensive_alternative"
     excluded = extract_excluded_brands(text)
     if excluded:
         edits.add.exclude_brands.extend(excluded)

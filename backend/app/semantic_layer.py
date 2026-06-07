@@ -143,7 +143,7 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
         soft["recipient"] = "男朋友"
     if "爸" in text or "妈" in text or "父母" in text or "长辈" in text:
         soft["recipient"] = "长辈"
-    if "礼物" in text or "送人" in text or "送给" in text:
+    if "礼物" in text or "送人" in text or "送给" in text or "送" in text:
         soft["occasion"] = "送礼"
     if request.type == "product_followup":
         intent = "product_followup"

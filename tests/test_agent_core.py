@@ -2664,12 +2664,100 @@ def test_recommendation_product_card_uses_browser_accessible_image_url():
     assert "ecommerce_agent_dataset" not in image_url
 
 
-def test_brand_preference_survives_clarification_answer():
+def test_brand_phone_request_recommends_without_clarification():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
-    session_id = "demo_huawei_clarification_brand"
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_huawei_direct_recommend",
+                message="我要华为手机",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    for event in product_events:
+        product = event["product"]
+        assert product["sub_category"] == "智能手机"
+        text = f"{product['brand']} {product['name']}".lower()
+        assert "华为" in text or "huawei" in text
+
+
+def test_pending_clarification_answer_wins_over_llm_followup_misroute():
+    class MisrouteClarificationLLM(FakeLLMClient):
+        async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+            if message == "拍照优先":
+                return json.dumps({"intent": "product_followup", "response_goal": "recommend_alternative"}, ensure_ascii=False)
+            return "{}"
+
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, MisrouteClarificationLLM())
+    session_id = "demo_pending_answer_priority"
 
     first_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机"))
+    )
+    assert "clarification_request" in [event["type"] for event in first_events]
+
+    second_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="拍照优先"))
+    )
+
+    text = "".join(event.get("text", "") for event in second_events if event["type"] == "text_delta")
+    assert "缺少可追问商品" not in text
+    assert any(event["type"] == "product_item" for event in second_events)
+    assert agent.sessions.get(session_id).last_plan.soft_preferences.get("priority") == "拍照"
+
+
+def test_specific_category_gift_recommends_without_generic_gift_clarification():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_cream_for_mom",
+                message="想要一个面霜，送给妈妈",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["sub_category"] == "面霜" for event in product_events)
+    plan = agent.sessions.get("demo_cream_for_mom").last_plan
+    assert plan.soft_preferences.get("recipient") == "长辈"
+    assert plan.soft_preferences.get("occasion") == "送礼"
+
+
+def test_generic_gift_without_category_still_clarifies():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_generic_gift", message="送妈妈礼物")
+        )
+    )
+
+    assert "clarification_request" in [event["type"] for event in events]
+
+
+def test_brand_preference_survives_direct_recommendation():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_huawei_direct_brand"
+
+    events = asyncio.run(
         agent.handle_message(
             ChatRequest(
                 type="user_message",
@@ -2678,18 +2766,9 @@ def test_brand_preference_survives_clarification_answer():
             )
         )
     )
-    first_types = [event["type"] for event in first_events]
-    assert "clarification_request" in first_types
-    context = agent.sessions.get(session_id)
-    assert context.last_plan.hard_constraints.include_brands == ["华为"]
 
-    second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="拍照优先")
-        )
-    )
-
-    product_events = [event for event in second_events if event["type"] == "product_item"]
+    assert "clarification_request" not in [event["type"] for event in events]
+    product_events = [event for event in events if event["type"] == "product_item"]
     assert product_events
     assert agent.sessions.get(session_id).last_plan.hard_constraints.include_brands == ["华为"]
     for event in product_events:

@@ -120,7 +120,11 @@ class ShopGuideAgent:
         if _is_pending_clarification_answer(context, request, ir):
             ir.intent = "recommend_product"
             _apply_pending_answer_preferences(ir, request.message)
-        if request.type == "product_followup" or (request.type == "user_message" and ir.intent == "product_followup"):
+        if request.type == "product_followup" or (
+            request.type == "user_message"
+            and ir.intent == "product_followup"
+            and not _is_pending_clarification_answer(context, request, ir)
+        ):
             async for event in self._stream_followup(request, ir):
                 yield event
             return
@@ -1138,12 +1142,11 @@ def _looks_like_clarification_answer(message: str, ir) -> bool:
 
 
 def _is_pending_clarification_answer(context: SessionContext, request: ChatRequest, ir) -> bool:
-    return (
-        request.type == "user_message"
-        and ir.intent == "unclear_input"
-        and context.state.pending_clarification is not None
-        and _looks_like_clarification_answer(request.message, ir)
-    )
+    if request.type != "user_message" or context.state.pending_clarification is None:
+        return False
+    if ir.intent not in {"unclear_input", "recommend_product", "clarification", "product_followup"}:
+        return False
+    return _looks_like_clarification_answer(request.message, ir)
 
 
 def _apply_pending_answer_preferences(ir, message: str) -> None:

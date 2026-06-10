@@ -434,6 +434,38 @@ def test_small_talk_identity_combo_stays_small_talk():
     assert retriever.calls == 0
 
 
+def test_shopping_request_overrides_llm_small_talk_intent():
+    products = load_products("ecommerce_agent_dataset")
+    retriever = CountingRetriever(products)
+    llm = SemanticFrameLLM({"intent": "small_talk"}, {"intent": "small_talk"})
+    agent = ShopGuideAgent(products, llm, retriever)
+
+    plan = asyncio.run(
+        agent.plan(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_shopping_guard_plan",
+                message="\u63a8\u8350\u9632\u6652\u971c",
+            )
+        )
+    )
+    assert plan.intent == "recommend_product"
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_shopping_guard",
+                message="\u63a8\u8350\u9632\u6652\u971c",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "product_item" in event_types
+    assert retriever.calls > 0
+
+
 def test_llm_small_talk_intent_is_honored_for_unlisted_greeting():
     products = load_products("ecommerce_agent_dataset")
     retriever = CountingRetriever(products)

@@ -29,6 +29,17 @@ def _normalize_intent(frame: ShoppingIntentIR, request: ChatRequest) -> Shopping
         intent = "recommend_product"
     elif intent == "compare_products" and rule_intent == "recommend_product":
         intent = "recommend_product"
+    elif intent in {"small_talk", "unclear_input"} and rule_intent in {
+        "recommend_product",
+        "compare_products",
+        "scenario_bundle",
+        "cart_operation",
+        "clarification",
+    }:
+        intent = rule_intent
+        if intent == "cart_operation" and frame.cart_operation is None:
+            guarded = rule_semantic_frame(request)
+            frame.cart_operation = guarded.cart_operation
     elif intent == "recommend_product" and rule_intent in {
         "compare_products",
         "scenario_bundle",

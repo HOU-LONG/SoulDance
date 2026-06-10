@@ -26,6 +26,13 @@ logs/
 *.pid
 *.wav
 *.headers
+nohup.out
+
+# Archives and large bundles. Never commit packaged tarballs into history.
+*.tar
+*.tar.gz
+*.tgz
+*.zip
 
 # Secrets and local config
 .env
@@ -39,3 +46,9 @@ logs/
 
 # External source checkout. Manage separately or as a submodule if needed.
 vllm-omni-main/
+
+# Runtime data
+data/
+
+# Claude Code worktrees (temporary)
+.claude/worktrees/

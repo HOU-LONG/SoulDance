@@ -3,13 +3,10 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-# 自动加载项目根目录的 .env 文件。
-# 已存在的环境变量不会被覆盖（env vars > .env）。
 _env_path = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(_env_path)
 
@@ -18,43 +15,41 @@ class Settings(BaseModel):
     project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[2])
     dataset_dir: str = "ecommerce_agent_dataset"
 
-    # LLM provider: "doubao" (default) | "deepseek" | "custom"
+    # LLM provider: "doubao" | "deepseek" | "custom"
     llm_provider: str = "doubao"
     llm_api_key: str | None = None
     llm_base_url: str = ""
     llm_model: str = ""
-
-    # 可选：JSON 任务（意图解析、选品）专用快速模型，为空则共用 llm_model
     llm_fast_model: str = ""
+    llm_reasoning_effort: str = ""
 
-    # 反馈闭环
-    feedback_path: str = ""          # 反馈事件持久化文件路径
-    user_profile_dir: str = ""       # 用户偏好画像持久化目录
-
-    # DeepSeek reasoning 参数（仅文本生成/闲聊时传递）
-    llm_reasoning_effort: str = ""       # "high" | "medium" | "low"，为空时不传该参数
-
-    # 兼容旧配置（provider=doubao 时生效）
+    # Legacy Doubao-compatible settings.
     ark_api_key: str | None = None
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3/"
     ark_model: str = "ep-20260514111645-lmgt2"
+
     embedding_model_dir: str = "model/bge-small-zh-v1.5"
     embedding_model_id: str = "AI-ModelScope/bge-small-zh-v1.5"
     embedding_device: str = "cuda:0"
     use_embedding: bool = True
     request_timeout_seconds: float = 45.0
+
     memory_cache_path: str = ""
     session_dir: str = ""
     cart_path: str = ""
     session_ttl_days: int = 7
-    server_base_url: str = ""  # e.g. "http://192.168.1.100:8000" for Android LAN access
+    server_base_url: str = ""
+    feedback_path: str = ""
+    user_profile_dir: str = ""
 
-    # TTS
+    # TTS. openai_audio posts to /v1/audio/speech; mimo posts to /chat/completions.
+    # doubao_chunked_v3 posts to Volcengine HTTP Chunked V3.
     tts_enabled: bool = True
+    tts_provider: str = "openai_audio"
     tts_base_url: str = "http://127.0.0.1:18880"
     tts_api_key: str = "EMPTY"
     tts_model: str = "qwen3-tts"
-    tts_response_format: str = "wav"       # wav | pcm
+    tts_response_format: str = "wav"
     tts_task_type: str = "VoiceDesign"
     tts_default_voice: str = "calm_female"
     tts_default_instructions: str = "A calm, clear female narrator voice."
@@ -62,8 +57,18 @@ class Settings(BaseModel):
     tts_stream: bool = False
     tts_max_text_length: int = 500
     tts_chunk_duration_ms: int = 200
+    doubao_voice_api_key: str | None = None
+    doubao_tts_url: str = "https://openspeech.bytedance.com/api/v3/tts/unidirectional"
+    doubao_tts_api_key: str | None = None
+    doubao_tts_resource_id: str = "seed-tts-2.0"
+    doubao_tts_model: str = "seed-tts-2.0-standard"
+    doubao_tts_speaker: str = "zh_female_wenroushunv_uranus_bigtts"
+    doubao_tts_format: str = "pcm"
+    doubao_tts_sample_rate: int = 24000
+    doubao_tts_speech_rate: int = 0
+    doubao_tts_loudness_rate: int = 0
 
-    # STT
+    # STT.
     stt_enabled: bool = True
     stt_provider: str = "funasr"
     stt_base_url: str = "http://127.0.0.1:18090"
@@ -73,6 +78,19 @@ class Settings(BaseModel):
     stt_sample_rate: int = 16000
     stt_timeout_seconds: float = 30.0
     stt_max_audio_size_mb: int = 10
+    doubao_asr_ws_url: str = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
+    doubao_asr_api_key: str | None = None
+    doubao_asr_app_key: str = ""
+    doubao_asr_access_key: str = ""
+    doubao_asr_resource_id: str = "volc.seedasr.sauc.duration"
+    doubao_asr_uid: str = "souldance-android"
+    doubao_asr_audio_format: str = "pcm"
+    doubao_asr_language: str = "zh-CN"
+    doubao_asr_chunk_ms: int = 200
+    doubao_asr_inter_chunk_delay_ms: int = 0
+    doubao_asr_enable_itn: bool = True
+    doubao_asr_enable_punc: bool = True
+    doubao_asr_result_type: str = "full"
 
     @property
     def voice_preset(self) -> dict[str, str]:
@@ -84,26 +102,22 @@ class Settings(BaseModel):
 
     @property
     def effective_api_key(self) -> str | None:
-        """根据 provider 解析最终 API Key。"""
         if self.llm_api_key:
             return self.llm_api_key
         if self.llm_provider == "deepseek":
-            return self.ark_api_key  # 兼容：也可以复用 ARK_API_KEY
+            return self.ark_api_key
         return self.ark_api_key
 
     @property
     def effective_base_url(self) -> str:
-        """根据 provider 解析最终 base_url。"""
         if self.llm_base_url:
             return self.llm_base_url
         if self.llm_provider == "deepseek":
             return "https://api.deepseek.com"
-        # doubao (default)
         return self.ark_base_url
 
     @property
     def effective_model(self) -> str:
-        """主模型，用于文本生成/闲聊。"""
         if self.llm_model:
             return self.llm_model
         if self.llm_provider == "deepseek":
@@ -112,12 +126,10 @@ class Settings(BaseModel):
 
     @property
     def effective_fast_model(self) -> str:
-        """JSON 任务专用快速模型，为空时回退到 effective_model。"""
         return self.llm_fast_model or self.effective_model
 
     @property
     def reasoning_params(self) -> dict:
-        """构建 DeepSeek reasoning 参数。设 reasoning_effort 时自动启用 thinking。"""
         params: dict = {}
         if self.llm_reasoning_effort:
             params["reasoning_effort"] = self.llm_reasoning_effort
@@ -143,14 +155,12 @@ class Settings(BaseModel):
 def get_settings() -> Settings:
     return Settings(
         dataset_dir=os.getenv("DATASET_DIR", "ecommerce_agent_dataset"),
-        # 新配置（优先）
         llm_provider=os.getenv("LLM_PROVIDER", "doubao"),
         llm_api_key=os.getenv("LLM_API_KEY"),
         llm_base_url=os.getenv("LLM_BASE_URL", ""),
         llm_model=os.getenv("LLM_MODEL", ""),
         llm_fast_model=os.getenv("LLM_FAST_MODEL", ""),
         llm_reasoning_effort=os.getenv("LLM_REASONING_EFFORT", ""),
-        # 旧配置（兼容 doubao）
         ark_api_key=os.getenv("ARK_API_KEY"),
         ark_base_url=os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3/"),
         ark_model=os.getenv("ARK_MODEL", "ep-20260514111645-lmgt2"),
@@ -166,8 +176,8 @@ def get_settings() -> Settings:
         server_base_url=os.getenv("SERVER_BASE_URL", ""),
         feedback_path=os.getenv("SHOPGUIDE_FEEDBACK_PATH", ""),
         user_profile_dir=os.getenv("SHOPGUIDE_USER_PROFILE_DIR", ""),
-        # TTS
         tts_enabled=os.getenv("TTS_ENABLED", "true").lower() not in {"0", "false"},
+        tts_provider=os.getenv("TTS_PROVIDER", "openai_audio"),
         tts_base_url=os.getenv("TTS_BASE_URL", "http://127.0.0.1:18880"),
         tts_api_key=os.getenv("TTS_API_KEY", "EMPTY"),
         tts_model=os.getenv("TTS_MODEL", "qwen3-tts"),
@@ -179,7 +189,16 @@ def get_settings() -> Settings:
         tts_stream=os.getenv("TTS_STREAM", "false").lower() == "true",
         tts_max_text_length=int(os.getenv("TTS_MAX_TEXT_LENGTH", "500")),
         tts_chunk_duration_ms=int(os.getenv("TTS_CHUNK_DURATION_MS", "200")),
-        # STT
+        doubao_voice_api_key=os.getenv("DOUBAO_VOICE_API_KEY"),
+        doubao_tts_url=os.getenv("DOUBAO_TTS_URL", "https://openspeech.bytedance.com/api/v3/tts/unidirectional"),
+        doubao_tts_api_key=os.getenv("DOUBAO_TTS_API_KEY") or os.getenv("DOUBAO_VOICE_API_KEY"),
+        doubao_tts_resource_id=os.getenv("DOUBAO_TTS_RESOURCE_ID", "seed-tts-2.0"),
+        doubao_tts_model=os.getenv("DOUBAO_TTS_MODEL", "seed-tts-2.0-standard"),
+        doubao_tts_speaker=os.getenv("DOUBAO_TTS_SPEAKER", "zh_female_wenroushunv_uranus_bigtts"),
+        doubao_tts_format=os.getenv("DOUBAO_TTS_FORMAT", "pcm"),
+        doubao_tts_sample_rate=int(os.getenv("DOUBAO_TTS_SAMPLE_RATE", "24000")),
+        doubao_tts_speech_rate=int(os.getenv("DOUBAO_TTS_SPEECH_RATE", "0")),
+        doubao_tts_loudness_rate=int(os.getenv("DOUBAO_TTS_LOUDNESS_RATE", "0")),
         stt_enabled=os.getenv("STT_ENABLED", "true").lower() not in {"0", "false"},
         stt_provider=os.getenv("STT_PROVIDER", "funasr"),
         stt_base_url=os.getenv("STT_BASE_URL", "http://127.0.0.1:18090"),
@@ -189,4 +208,17 @@ def get_settings() -> Settings:
         stt_sample_rate=int(os.getenv("STT_SAMPLE_RATE", "16000")),
         stt_timeout_seconds=float(os.getenv("STT_TIMEOUT_SECONDS", "30")),
         stt_max_audio_size_mb=int(os.getenv("STT_MAX_AUDIO_SIZE_MB", "10")),
+        doubao_asr_ws_url=os.getenv("DOUBAO_ASR_WS_URL", "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"),
+        doubao_asr_api_key=os.getenv("DOUBAO_ASR_API_KEY") or os.getenv("DOUBAO_VOICE_API_KEY"),
+        doubao_asr_app_key=os.getenv("DOUBAO_ASR_APP_KEY", ""),
+        doubao_asr_access_key=os.getenv("DOUBAO_ASR_ACCESS_KEY", ""),
+        doubao_asr_resource_id=os.getenv("DOUBAO_ASR_RESOURCE_ID", "volc.seedasr.sauc.duration"),
+        doubao_asr_uid=os.getenv("DOUBAO_ASR_UID", "souldance-android"),
+        doubao_asr_audio_format=os.getenv("DOUBAO_ASR_AUDIO_FORMAT", "pcm"),
+        doubao_asr_language=os.getenv("DOUBAO_ASR_LANGUAGE", "zh-CN"),
+        doubao_asr_chunk_ms=int(os.getenv("DOUBAO_ASR_CHUNK_MS", "200")),
+        doubao_asr_inter_chunk_delay_ms=int(os.getenv("DOUBAO_ASR_INTER_CHUNK_DELAY_MS", "0")),
+        doubao_asr_enable_itn=os.getenv("DOUBAO_ASR_ENABLE_ITN", "true").lower() not in {"0", "false"},
+        doubao_asr_enable_punc=os.getenv("DOUBAO_ASR_ENABLE_PUNC", "true").lower() not in {"0", "false"},
+        doubao_asr_result_type=os.getenv("DOUBAO_ASR_RESULT_TYPE", "full"),
     )

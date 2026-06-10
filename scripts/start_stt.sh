@@ -1,19 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# FunASR STT 本地服务启动脚本
-# 用法：
+# FunASR STT local service launcher.
+# Usage:
 #   PORT=18090 bash scripts/start_stt.sh
 #   PORT=18090 STT_MODEL=sensevoice-small bash scripts/start_stt.sh
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+VENV_PYTHON="$ROOT/env/venv_shopguide_backend/bin/python"
+PYTHON_BIN="${PYTHON_BIN:-}"
+if [ -z "$PYTHON_BIN" ]; then
+    if [ -x "$VENV_PYTHON" ]; then
+        PYTHON_BIN="$VENV_PYTHON"
+    elif command -v python3 >/dev/null 2>&1; then
+        PYTHON_BIN="$(command -v python3)"
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_BIN="$(command -v python)"
+    else
+        echo "No usable Python found for STT service" >&2
+        exit 1
+    fi
+fi
 
 PORT="${PORT:-18090}"
 HOST="${HOST:-0.0.0.0}"
 MODEL="${STT_MODEL:-paraformer-zh}"
 DEVICE="${STT_DEVICE:-0}"
 
-echo "Starting FunASR STT service on ${HOST}:${PORT} with model ${MODEL}..."
+echo "Starting FunASR STT service on ${HOST}:${PORT} with model ${MODEL} using ${PYTHON_BIN}..."
 
-python - <<PY
+"$PYTHON_BIN" - <<PY
 from funasr import AutoModel
 from funasr.utils.postprocess_utils import rich_transcription_postprocess
 from fastapi import FastAPI, File, UploadFile

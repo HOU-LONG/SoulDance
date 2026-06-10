@@ -368,3 +368,19 @@ def test_product_image_asset_url_is_served_by_backend():
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/")
     assert response.content
+
+
+def test_product_image_url_ignores_private_server_base_url(monkeypatch):
+    from backend.app.config import get_settings
+    from backend.app.image_assets import _get_base_url, product_image_url_auto
+
+    monkeypatch.setenv("SERVER_BASE_URL", "http://192.168.3.116:8000")
+    get_settings.cache_clear()
+    _get_base_url.cache_clear()
+    try:
+        image_url = product_image_url_auto("demo/images/product.jpg")
+        assert image_url.startswith("/assets/products/")
+        assert "192.168." not in image_url
+    finally:
+        get_settings.cache_clear()
+        _get_base_url.cache_clear()

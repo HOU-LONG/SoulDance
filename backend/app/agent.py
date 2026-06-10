@@ -14,12 +14,21 @@ from .cart_intent import (
     _cart_product_display_name,
     _cart_message,
 )
-from .constraint_filter import canonical_brand, dedupe, explain_filter, extract_excluded_brands, hard_filter
+from .comparison_presenter import comparison_item, comparison_reason
+from .constraint_filter import canonical_brand, dedupe, extract_excluded_brands, hard_filter
 from .utils import extract_json
 from .embedding_retriever import BM25OnlyRetriever
 from .image_assets import product_image_url_auto as product_image_url
 from .knowledge_base import evidence_review_summary, product_evidence
 from .intent_compiler import IntentCompiler
+from .keywords import (
+    CHEAPER_ALTERNATIVE_MARKERS,
+    DIFFERENT_BRAND_MARKERS,
+    EXPLAIN_FOCUS_MARKERS,
+    MORE_EXPENSIVE_ALTERNATIVE_MARKERS,
+    PRODUCT_REQUEST_MARKERS,
+)
+from .messages import insufficient_comparison_products_text, unknown_category_text
 from .llm_client import FakeLLMClient
 from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, StructuredMemoryCache
 from .models import (
@@ -768,7 +777,7 @@ class ShopGuideAgent:
             products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
         message_id = _message_id()
         if len(products) < 2:
-            text = "我还没有足够的最近推荐商品可以对比。你可以先让我推荐几款，再说第一款和第二款怎么选。"
+            text = insufficient_comparison_products_text()
             return [
                 _assistant_state(message_id, "clarifying", "缺少可对比商品"),
                 *_text_delta_events(message_id, text),
@@ -791,10 +800,10 @@ class ShopGuideAgent:
             "overall_winner": result.overall_winner,
             "overall_reason": result.overall_reason,
             "scenario_recommendations": result.scenario_recommendations,
-            "items": [_comparison_item(product, request.message, dimension_names, context.last_plan) for product in products],
+            "items": [comparison_item(product, request.message, dimension_names, context.last_plan) for product in products],
             "recommendation": {
                 "product_id": winner.product_id if winner else None,
-                "reason": result.overall_reason or _comparison_reason(winner, request.message) if winner else "",
+                "reason": (result.overall_reason or comparison_reason(winner, request.message)) if winner else "",
             },
         }
         text = (
@@ -1716,76 +1725,6 @@ def _resolve_mentioned_product_ids(text: str, last_product_ids: list[str]) -> li
     return [last_product_ids[index] for index in indexes if index < len(last_product_ids)]
 
 
-def _comparison_item(product: Product, text: str, dimensions: list[str], plan: RetrievalPlan | None = None) -> dict:
-    points = []
-    if "油皮" in text and "油皮" in product.search_text:
-        points.append("明确提到适合油皮")
-    if "清爽" in product.search_text:
-        points.append("质地或反馈偏清爽")
-    if product.review_rating:
-        points.append(f"评价均分 {product.review_rating:.1f}")
-    if not points:
-        points.append("与当前需求语义相关")
-    return {
-        "product_id": product.product_id,
-        "name": product.title,
-        "brand": product.brand,
-        "price": product.price,
-        "key_points": points[:3],
-        "dimension_values": _comparison_dimension_values(product, text, dimensions),
-        "risk_flags": _comparison_risk_flags(product, plan),
-    }
-
-
-def _comparison_dimension_values(product: Product, text: str, dimensions: list[str]) -> dict[str, str]:
-    values: dict[str, str] = {}
-    for dimension in dimensions:
-        if dimension == "价格":
-            values[dimension] = f"{product.price:.0f} 元"
-        elif dimension == "品牌":
-            values[dimension] = product.brand
-        elif dimension == "类目":
-            values[dimension] = product.sub_category or product.category
-        elif dimension == "用户关心点":
-            values[dimension] = _comparison_need_value(product, text)
-        elif dimension == "适合油皮":
-            values[dimension] = "明确覆盖" if "油皮" in product.search_text else "未明确提及"
-        elif dimension == "清爽度":
-            values[dimension] = "偏清爽" if "清爽" in product.search_text else "未明确提及"
-        elif dimension == "口碑":
-            values[dimension] = f"{product.review_rating:.1f}" if product.review_rating else "暂无评分"
-        else:
-            values[dimension] = "可参考商品详情"
-    return values
-
-
-def _comparison_need_value(product: Product, text: str) -> str:
-    if "油皮" in text:
-        return "匹配油皮需求" if "油皮" in product.search_text else "油皮信息不足"
-    if "便宜" in text or "价格" in text:
-        return "价格更低优先"
-    if "清爽" in text:
-        return "清爽相关" if "清爽" in product.search_text else "清爽信息不足"
-    return "与当前对比需求相关"
-
-
-def _comparison_risk_flags(product: Product, plan: RetrievalPlan | None) -> list[str]:
-    if not plan:
-        return []
-    reason = explain_filter(product, plan.hard_constraints)
-    return [reason] if reason else []
-
-
-def _comparison_reason(product: Product, text: str) -> str:
-    if "油皮" in text and "油皮" in product.search_text:
-        return "它的商品信息里更明确覆盖油皮需求"
-    if "清爽" in product.search_text:
-        return "它更贴近日常清爽使用场景"
-    if product.review_rating:
-        return "它的评价表现更稳"
-    return "它和当前需求的商品信息更贴近"
-
-
 def _slot_constraints(slot: str) -> HardConstraints:
     aliases = {"防晒霜": "防晒", "速干T恤": "速干T恤", "帽子": "帽子", "背包": "背包"}
     sub_category = aliases.get(slot, slot)
@@ -1798,17 +1737,15 @@ def _default_plan(text: str) -> RetrievalPlan:
 
 
 def _looks_like_product_request(text: str) -> bool:
-    return any(word in text for word in ["推荐", "找", "买", "想要", "有没有"])
+    return any(word in text for word in PRODUCT_REQUEST_MARKERS)
 
 
 def _unknown_category_text(text: str) -> str:
-    return "当前商品库里还没有能稳定匹配这个需求的类目。为了不跨类目乱推荐，我先不返回商品卡。你可以换成现有商品类目再试。"
+    return unknown_category_text()
 
 
 def _is_explain_focus_request(text: str, ir) -> bool:
-    return ir.response_goal == "explain_focus_product" or any(
-        word in text for word in ["刚刚那个是什么", "刚才那个是什么", "为什么推荐", "介绍一下", "这个是什么"]
-    )
+    return ir.response_goal == "explain_focus_product" or any(word in text for word in EXPLAIN_FOCUS_MARKERS)
 
 
 def _wants_cheaper_alternative(text: str, ir) -> bool:
@@ -1816,7 +1753,7 @@ def _wants_cheaper_alternative(text: str, ir) -> bool:
         return True
     if ir.constraint_edits.add.soft_preferences.get("price_preference") == "更便宜":
         return True
-    return any(word in text for word in ["更便宜", "便宜点", "便宜的", "价格低"])
+    return any(word in text for word in CHEAPER_ALTERNATIVE_MARKERS)
 
 
 def _wants_more_expensive_alternative(text: str, ir) -> bool:
@@ -1824,15 +1761,13 @@ def _wants_more_expensive_alternative(text: str, ir) -> bool:
         return True
     if ir.constraint_edits.add.soft_preferences.get("price_preference") == "更贵":
         return True
-    return any(word in text for word in ["更贵", "贵一点", "高端", "高价位", "价位高"])
+    return any(word in text for word in MORE_EXPENSIVE_ALTERNATIVE_MARKERS)
 
 
 def _wants_different_brand(text: str, ir=None) -> bool:
     if ir is not None and ir.response_goal == "exclude_current_brand":
         return True
-    return bool(extract_excluded_brands(text)) or any(
-        word in text for word in ["不要这个品牌", "换个品牌", "别的品牌", "不要这个牌子"]
-    )
+    return bool(extract_excluded_brands(text)) or any(word in text for word in DIFFERENT_BRAND_MARKERS)
 
 
 def _focus_product_explanation(product: Product, context: SessionContext) -> str:
@@ -1856,32 +1791,6 @@ def _focus_product_explanation(product: Product, context: SessionContext) -> str
     )
 
 
-def _detect_cart_action(text: str) -> str:
-    if any(word in text for word in ["不要这个品牌", "不要这个牌子"]):
-        return "get_cart"
-    if any(word in text for word in ["下单", "结算"]):
-        return "checkout"
-    if any(word in text for word in ["删掉", "删除", "移除"]):
-        return "remove"
-    if any(word in text for word in ["数量", "改成", "改为"]):
-        return "update_quantity"
-    if any(word in text for word in ["购物车", "加购", "加入", "加到"]):
-        return "add_to_cart"
-    return "get_cart"
-
-
-def _normalize_cart_action(action: str) -> str:
-    if action in {"add", "add_to_cart"}:
-        return "add_to_cart"
-    if action in {"update", "set_quantity", "update_quantity"}:
-        return "update_quantity"
-    if action in {"delete", "remove"}:
-        return "remove"
-    if action in {"checkout", "order"}:
-        return "checkout"
-    return "get_cart"
-
-
 def _resolve_cart_product_id(text: str, context: SessionContext, cart_snapshot: dict) -> str | None:
     mentioned = _resolve_mentioned_product_ids(text, context.last_product_ids)
     if mentioned:
@@ -1894,36 +1803,6 @@ def _resolve_cart_product_id(text: str, context: SessionContext, cart_snapshot: 
     if items:
         return items[0].get("product_id")
     return context.focus_product_id or (context.last_product_ids[0] if context.last_product_ids else None)
-
-
-def _detect_quantity(text: str) -> int | None:
-    match = re.search(r"(?:数量)?(?:改成|改为|设为)?\s*(\d+)", text)
-    if match:
-        return max(int(match.group(1)), 0)
-    chinese_digits = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5}
-    for word, value in chinese_digits.items():
-        if f"{word}件" in text or f"{word}个" in text:
-            return value
-    return None
-
-
-def _cart_product_display_name(cart: CartService, product_id: str) -> str:
-    product = cart.products.get(product_id)
-    if not product:
-        return product_id
-    brand = (product.brand or "").strip()
-    sub_category = (product.sub_category or "").strip()
-    if brand and brand != "未知" and sub_category and brand not in sub_category:
-        return f"{brand}{sub_category}"
-    return product.title or product_id
-
-
-def _cart_message(action: str, product_name: str) -> str:
-    if action == "update_quantity":
-        return f"已更新 {product_name} 的数量。"
-    if action == "remove":
-        return f"已从购物车移除 {product_name}。"
-    return f"已把 {product_name} 加入购物车。"
 
 
 def _update_profile(context: SessionContext, plan: RetrievalPlan) -> None:

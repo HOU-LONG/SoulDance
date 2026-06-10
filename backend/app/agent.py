@@ -7,6 +7,13 @@ import uuid
 
 from .adaptive_retriever import AdaptiveRetriever
 from .cart import CartService
+from .cart_intent import (
+    _detect_cart_action,
+    _normalize_cart_action,
+    _detect_quantity,
+    _cart_product_display_name,
+    _cart_message,
+)
 from .constraint_filter import canonical_brand, dedupe, explain_filter, extract_excluded_brands, hard_filter
 from .utils import extract_json
 from .embedding_retriever import BM25OnlyRetriever
@@ -1730,7 +1737,7 @@ def _comparison_item(product: Product, text: str, dimensions: list[str], plan: R
     }
 
 
-def _slot_constraints(slot: str) -> HardConstraints:
+def _comparison_dimension_values(product: Product, text: str, dimensions: list[str]) -> dict[str, str]:
     values: dict[str, str] = {}
     for dimension in dimensions:
         if dimension == "价格":

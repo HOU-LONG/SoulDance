@@ -3,23 +3,34 @@ from __future__ import annotations
 from functools import lru_cache
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .agent import ShopGuideAgent
 from .cart import CartService
 from .config import Settings, get_settings
+from .concurrency import ConcurrencyGuard
 from .data_loader import load_products
 from .embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
-from .image_assets import product_image_url
-from .llm_client import DoubaoLLMClient, FakeLLMClient
+from .image_assets import product_image_url_auto as product_image_url
+from .feedback_aggregator import FeedbackAggregator
+from .feedback_ranker import FeedbackAwareRanker
+from .feedback_store import FeedbackStore
+from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
-from .models import CartActionRequest, ChatRequest
+from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
+from .session_store import SessionStore
+from .tts_adapter import TTSAdapter
+from .user_profile_store import UserProfileStore
 
 
-def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> FastAPI:
+def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, concurrency_guard: ConcurrencyGuard | None = None) -> FastAPI:
     settings = get_settings()
     products = load_products(settings.dataset_path)
-    llm_client = FakeLLMClient() if use_fake_llm or not settings.ark_api_key else DoubaoLLMClient(settings)
+    llm_client = FakeLLMClient() if use_fake_llm or not settings.effective_api_key else DoubaoLLMClient(settings)
+    if not isinstance(llm_client, FakeLLMClient):
+        llm_client = LLMClientWithBreaker(llm_client)
     retriever = (
         BM25OnlyRetriever(products)
         if use_fake_retriever
@@ -32,32 +43,80 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
     )
     memory_cache = StructuredMemoryCache(settings.memory_cache_path or None)
     recommendation_memory = RecommendationMemoryCache(_recommendation_memory_path(settings.memory_cache_path))
+    session_store = SessionStore(settings.session_dir or None, ttl_days=settings.session_ttl_days)
+
+    # 反馈闭环
+    feedback_store = FeedbackStore(settings.feedback_path or None)
+    feedback_aggregator = FeedbackAggregator(feedback_store)
+    feedback_ranker = FeedbackAwareRanker(feedback_aggregator)
+    user_profile_store = UserProfileStore(settings.user_profile_dir or None)
+
+    tts = TTSAdapter(settings)
     agent = ShopGuideAgent(
         products,
         llm_client,
         retriever,
+        session_store=session_store,
+        tts_adapter=tts,
         memory_cache=memory_cache,
         recommendation_memory=recommendation_memory,
+        feedback_ranker=feedback_ranker,
+        feedback_store=feedback_store,
+        user_profile_store=user_profile_store,
     )
-    cart = CartService(products)
+    cart = CartService(products, settings.cart_path or None)
     product_map = {product.product_id: product for product in products}
+    guard = concurrency_guard or ConcurrencyGuard(
+        max_llm_calls=10,
+        max_connections=50,
+    )
 
     app = FastAPI(title="SoulDance ShopGuide Agent Backend", version="0.1.0")
+
+    @app.on_event("startup")
+    async def _warmup_llm_connection():
+        """预热 LLM API 连接池，避免首次请求的 TCP/TLS 握手延迟。"""
+        if isinstance(llm_client, FakeLLMClient):
+            return
+        try:
+            import logging
+            _log = logging.getLogger("app.main")
+            _ = await llm_client._json_completion([
+                {"role": "user", "content": '{"task":"warmup","message":"ping"}'}
+            ])
+            _log.info("LLM connection pool warmed up")
+        except Exception:
+            pass
+
+    # CORS: 允许 Android / Web 前端跨域访问
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    # GZip: 压缩响应体，移动网络下减少 60-80% 传输量
+    app.add_middleware(GZipMiddleware, minimum_size=256)
+
     app.mount("/assets/products", StaticFiles(directory=str(settings.dataset_path)), name="product_assets")
     app.state.products = products
     app.state.agent = agent
     app.state.cart = cart
+    app.state.concurrency_guard = guard
 
     @app.get("/health")
     def health():
         return {
             "status": "ok",
             "product_count": len(products),
-            "llm": "fake" if isinstance(llm_client, FakeLLMClient) else "doubao",
+            "llm": "fake" if isinstance(llm_client, FakeLLMClient) else settings.llm_provider,
+            "llm_model": settings.effective_model if not isinstance(llm_client, FakeLLMClient) else "fake",
             "retriever": _retriever_label(retriever),
             "memory_cache": memory_cache.stats(),
             "recommendation_memory": recommendation_memory.stats(),
             "structured_rank_cache": memory_cache.stats(),
+            "persisted_sessions": len(agent.sessions._sessions),
         }
 
     @app.get("/api/products")
@@ -76,13 +135,33 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
         plan = await agent.plan(request)
         return plan.model_dump(mode="json")
 
+    @app.get("/api/debug/session")
+    def debug_session(session_id: str):
+        ctx = agent.sessions.get(session_id)
+        return ctx.model_dump(mode="json")
+
+    @app.get("/api/debug/sessions")
+    def debug_sessions():
+        return [
+            {
+                "session_id": sid,
+                "schema_version": ctx.schema_version,
+                "last_activity_at": ctx.last_activity_at,
+                "turn_index": ctx.state.dialog_state.turn_index,
+            }
+            for sid, ctx in agent.sessions._sessions.items()
+        ]
+
     @app.websocket("/ws/chat")
     async def chat_ws(websocket: WebSocket):
         await websocket.accept()
+        guard.connection_enter()
+        active_sessions: set[str] = set()
         try:
             while True:
                 payload = await websocket.receive_json()
                 request = ChatRequest.model_validate(payload)
+                active_sessions.add(request.session_id)
                 if request.type == "cart_action":
                     event = agent.execute_cart_action(
                         request.session_id,
@@ -93,6 +172,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
                     )
                     await websocket.send_json({"type": "cart_update", **event})
                     await websocket.send_json({"type": "done"})
+                    session_store.save(request.session_id)
                     continue
                 cart_event = None
                 compiled_ir = None
@@ -102,14 +182,20 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
                 if cart_event is not None:
                     await websocket.send_json({"type": "cart_update", **cart_event})
                     await websocket.send_json({"type": "done"})
+                    session_store.save(request.session_id)
                     continue
                 async for event in agent.stream_message(request, compiled_ir):
                     await websocket.send_json(event)
+                session_store.save(request.session_id)
         except WebSocketDisconnect:
+            for sid in active_sessions:
+                session_store.save(sid)
             return
         except Exception as exc:
             await websocket.send_json({"type": "error", "message": str(exc)})
             await websocket.send_json({"type": "done"})
+        finally:
+            guard.connection_exit()
 
     @app.get("/api/cart")
     def get_cart(session_id: str):
@@ -134,6 +220,54 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False) -> 
     @app.post("/api/cart/checkout")
     def cart_checkout(request: CartActionRequest):
         return cart.checkout(request.session_id)
+
+    # ---- 反馈闭环 API ----
+
+    @app.post("/api/feedback")
+    def submit_feedback(request: FeedbackEvent):
+        """显式反馈: {session_id, signal_type, product_id?, rating?, action_label?}"""
+        feedback_store.record(request)
+        return {"status": "ok", "total_events": feedback_store.count(request.session_id)}
+
+    @app.get("/api/feedback/{session_id}")
+    def get_feedback(session_id: str):
+        """获取 session 的聚合反馈信号。"""
+        signal = feedback_aggregator.aggregate(session_id)
+        return signal.model_dump(mode="json")
+
+    @app.get("/api/feedback/{session_id}/events")
+    def get_feedback_events(session_id: str):
+        """获取 session 的所有原始反馈事件。"""
+        events = feedback_store.get_all_events(session_id)
+        return {"session_id": session_id, "events": [e.model_dump(mode="json") for e in events]}
+
+    @app.get("/api/profile/{user_id}")
+    def get_user_profile(user_id: str):
+        """获取用户长期偏好画像。"""
+        profile = user_profile_store.get(user_id)
+        ctx = user_profile_store.to_preference_context(user_id)
+        return {"profile": profile.model_dump(mode="json"), "preference_context": ctx}
+
+    from .order_service import OrderService
+    order_service = OrderService(cart, settings.session_dir or None)
+
+    @app.post("/api/order/initiate")
+    def order_initiate(request: CartActionRequest):
+        return order_service.initiate_checkout(request.session_id).model_dump(mode="json")
+
+    @app.get("/api/order/addresses")
+    def order_addresses():
+        return {"addresses": [a.model_dump(mode="json") for a in order_service.get_addresses()]}
+
+    @app.post("/api/order/select_address")
+    def order_select_address(request: OrderActionRequest):
+        order = order_service.select_address(request.order_id, request.address_id or "")
+        return order.model_dump(mode="json") if order else {"error": "order not found"}
+
+    @app.post("/api/order/confirm")
+    def order_confirm(request: OrderActionRequest):
+        order = order_service.confirm_order(request.order_id)
+        return order.model_dump(mode="json") if order else {"error": "order not confirmable"}
 
     return app
 

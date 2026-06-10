@@ -61,7 +61,10 @@ fun AppNavGraph() {
     val cartState by cartViewModel.uiState.collectAsState()
 
     LaunchedEffect(chatState.sessionId, chatState.cartSyncVersion) {
-        cartViewModel.switchSession(chatState.sessionId)
+        cartViewModel.switchSession(
+            sessionId = chatState.sessionId,
+            forceRefresh = chatState.cartSyncVersion > 0L,
+        )
     }
 
     BackHandler(enabled = AppRouteBackStack.previousRoute(route) != null) {

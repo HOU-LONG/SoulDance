@@ -48,9 +48,9 @@ class CartViewModel @JvmOverloads constructor(
         loadCartFromServer()
     }
 
-    fun switchSession(sessionId: String) {
+    fun switchSession(sessionId: String, forceRefresh: Boolean = false) {
         if (sessionId.isBlank()) return
-        if (sessionId == activeSessionId) return
+        if (sessionId == activeSessionId && !forceRefresh) return
         activeSessionId = sessionId
         loadCartFromServer()
     }

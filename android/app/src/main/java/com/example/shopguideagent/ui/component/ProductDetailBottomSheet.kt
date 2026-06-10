@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -215,7 +216,8 @@ private fun ProductEvidenceSection(
     items: List<String>,
     isRisk: Boolean,
 ) {
-    if (items.isEmpty()) return
+    val visibleItems = productDetailEvidenceItems(items)
+    if (visibleItems.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             text = title,
@@ -223,15 +225,26 @@ private fun ProductEvidenceSection(
             style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.SemiBold,
         )
-        items.take(3).forEach { item ->
-            Text(
-                text = item,
-                color = TextSecondary,
-                style = MaterialTheme.typography.bodySmall,
-            )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 168.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            visibleItems.forEach { item ->
+                Text(
+                    text = item,
+                    color = TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
     }
 }
+
+internal fun productDetailEvidenceItems(items: List<String>): List<String> =
+    items.map { it.trim() }.filter { it.isNotEmpty() }
 
 @Composable
 private fun SheetHandle() {

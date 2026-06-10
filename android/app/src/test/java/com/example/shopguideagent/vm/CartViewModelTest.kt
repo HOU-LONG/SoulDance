@@ -194,6 +194,27 @@ class CartViewModelTest {
     }
 
     @Test
+    fun switchSessionCanForceRefreshSameSessionAfterRealtimeCartUpdate() {
+        val api = SessionCartApiClient(
+            carts = mutableMapOf("chat_session_001" to emptyList()),
+        )
+        val store = FakeCartPersistenceStore()
+        val viewModel = CartViewModel(
+            userId = "user_a",
+            sessionId = "chat_session_001",
+            persistenceStore = store,
+            cartApiClient = api,
+        )
+        api.carts["chat_session_001"] = listOf(cartItem("p_digital_008", "小米 17 Ultra", 7499.0, 1))
+
+        viewModel.switchSession("chat_session_001", forceRefresh = true)
+
+        assertEquals(listOf("chat_session_001", "chat_session_001"), api.getCartSessions)
+        assertEquals("p_digital_008", viewModel.uiState.value.items.single().productId)
+        assertEquals("p_digital_008", store.loadCartItems("user_a").single().productId)
+    }
+
+    @Test
     fun clearUsesActiveChatSessionAfterSwitch() {
         val api = SessionCartApiClient(
             carts = mutableMapOf(
@@ -302,7 +323,7 @@ class CartViewModelTest {
     }
 
     private class SessionCartApiClient(
-        private val carts: MutableMap<String, List<CartItemUiModel>>,
+        val carts: MutableMap<String, List<CartItemUiModel>>,
     ) : CartApiClient() {
         val getCartSessions = mutableListOf<String>()
         val clearSessions = mutableListOf<String>()

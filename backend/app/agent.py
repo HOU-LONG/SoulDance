@@ -1209,6 +1209,7 @@ def _product_mention_score(message_text: str, product: Product) -> int:
     sub_category = _normalize_product_match_text(product.sub_category)
     search_text = _normalize_product_match_text(product.search_text)
     aliases = _product_model_aliases(product)
+    short_aliases = _product_short_name_aliases(product)
 
     score = 0
     if brand and brand in message_text:
@@ -1223,6 +1224,9 @@ def _product_mention_score(message_text: str, product: Product) -> int:
     alias_hits = [alias for alias in aliases if alias in message_text]
     if alias_hits:
         score += 120 + min(max(len(alias) for alias in alias_hits), 40)
+    short_alias_hits = [alias for alias in short_aliases if alias in message_text]
+    if short_alias_hits:
+        score += 140 + min(max(len(alias) for alias in short_alias_hits), 40)
     if title and title in message_text:
         score += 160
     if title and message_text in title:
@@ -1232,6 +1236,8 @@ def _product_mention_score(message_text: str, product: Product) -> int:
             score += 10
 
     # Do not resolve on a generic category/sub-category alone.
+    if short_alias_hits:
+        return score
     if alias_hits:
         return score
     if title and title in message_text:
@@ -1241,6 +1247,28 @@ def _product_mention_score(message_text: str, product: Product) -> int:
     if brand_subcategory and brand_subcategory in message_text:
         return score
     return 0
+
+
+def _product_short_name_aliases(product: Product) -> set[str]:
+    title = (product.title or "").strip()
+    if not title:
+        return set()
+    brand = _normalize_product_match_text(product.brand)
+    aliases: set[str] = set()
+    first_segment = _normalize_product_match_text(re.split(r"\s+", title, maxsplit=1)[0])
+    if len(first_segment) >= 4:
+        aliases.add(first_segment)
+
+    tokens = [
+        _normalize_product_match_text(token)
+        for token in re.findall(r"[A-Za-z]+|\d+|[\u4e00-\u9fff]+", title)
+    ]
+    tokens = [token for token in tokens if token]
+    if brand and tokens and tokens[0] == brand and len(tokens) > 1:
+        brand_phrase = f"{brand}{tokens[1]}"
+        if len(brand_phrase) >= 4:
+            aliases.add(brand_phrase)
+    return aliases
 
 
 def _product_model_aliases(product: Product) -> set[str]:

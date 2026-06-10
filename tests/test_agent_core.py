@@ -3305,6 +3305,29 @@ def test_named_product_cart_command_resolves_catalog_product():
     assert "雀巢" in event["cart"]["items"][0]["name"]
 
 
+def test_unique_short_product_name_cart_command_adds_dongpeng_directly():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    cart = CartService(products)
+
+    event = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_dongpeng_cart",
+                message="将东鹏特饮加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert event["success"] is True
+    assert event["action"] == "add_to_cart"
+    assert event["product_id"] == "p_food_005"
+    assert event["cart"]["items"][0]["product_id"] == "p_food_005"
+    assert event["cart"]["items"][0]["quantity"] == 1
+
+
 def test_named_alternative_phone_cart_command_uses_mentioned_product_not_focus():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())

@@ -13,7 +13,7 @@ from backend.app.llm_client import (
     _response_evidence_payload,
 )
 from backend.app.memory_cache import RecommendationMemoryCache, StructuredMemoryCache
-from backend.app.models import ChatRequest, HardConstraints, Product, RankedProduct, RetrievalPlan
+from backend.app.models import ChatRequest, HardConstraints, PendingClarification, Product, RankedProduct, RetrievalPlan
 from backend.app.taxonomy import TaxonomyResolver
 
 
@@ -2816,6 +2816,103 @@ def test_specific_category_gift_recommends_without_generic_gift_clarification():
     assert plan.soft_preferences.get("occasion") == "送礼"
 
 
+def test_generic_makeup_gift_uses_beauty_category_not_food_or_clothing():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_makeup_for_mom",
+                message="想要一个化妆的，送给妈妈",
+            )
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["category"] == "美妆护肤" for event in product_events)
+    plan = agent.sessions.get("demo_makeup_for_mom").last_plan
+    assert plan.hard_constraints.category == "美妆护肤"
+    assert plan.hard_constraints.sub_category is None
+    assert plan.soft_preferences.get("recipient") == "长辈"
+    assert plan.soft_preferences.get("occasion") == "送礼"
+
+
+def test_makeup_aliases_resolve_to_beauty_category():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    for index, message in enumerate(["想买化妆品送妈妈", "彩妆送女朋友"]):
+        events = asyncio.run(
+            agent.handle_message(
+                ChatRequest(type="user_message", session_id=f"demo_makeup_alias_{index}", message=message)
+            )
+        )
+
+        product_events = [event for event in events if event["type"] == "product_item"]
+        assert product_events
+        assert all(event["product"]["category"] == "美妆护肤" for event in product_events)
+        plan = agent.sessions.get(f"demo_makeup_alias_{index}").last_plan
+        assert plan.hard_constraints.category == "美妆护肤"
+
+
+def test_makeup_gift_clarification_answer_keeps_beauty_category():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    context = agent.sessions.get("demo_makeup_gift_pending")
+    context.state.pending_clarification = PendingClarification(
+        category="美妆护肤",
+        sub_category=None,
+        question="送礼我需要先确认预算和对象：更偏实用、惊喜感，还是稳妥不踩雷？",
+    )
+    context.state.constraint_state.hard.category = "美妆护肤"
+    context.state.constraint_state.soft = {"recipient": "长辈", "occasion": "送礼"}
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_makeup_gift_pending", message="更有惊喜感")
+        )
+    )
+
+    event_types = [event["type"] for event in events]
+    assert "clarification_request" not in event_types
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert product_events
+    assert all(event["product"]["category"] == "美妆护肤" for event in product_events)
+    plan = agent.sessions.get("demo_makeup_gift_pending").last_plan
+    assert plan.hard_constraints.category == "美妆护肤"
+
+
+def test_makeup_followup_more_expensive_stays_in_beauty_category():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    session_id = "demo_makeup_followup_category_lock"
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="想要一个化妆的，送给妈妈")
+        )
+    )
+    first_primary = _primary_product_event(first_events)["product"]
+
+    second_events = asyncio.run(
+        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+    )
+
+    product_events = [event for event in second_events if event["type"] == "product_item"]
+    if product_events:
+        assert all(event["product"]["category"] == "美妆护肤" for event in product_events)
+        assert product_events[0]["product"]["price"] > first_primary["price"]
+    else:
+        assert "filter_recovery_options" in [event["type"] for event in second_events]
+    plan = agent.sessions.get(session_id).last_plan
+    assert plan.hard_constraints.category == "美妆护肤"
+
+
 def test_generic_gift_without_category_still_clarifies():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
@@ -2992,3 +3089,45 @@ def test_default_recommendation_text_starts_with_conclusion():
     assert text.startswith("结论：")
     assert "先给你一个明确主推" not in text
     assert "评论摘要" in text
+def test_named_product_cart_command_resolves_catalog_product():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    cart = CartService(products)
+
+    event = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_named_product_cart",
+                message="将两份雀巢咖啡加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert event["action"] == "add_to_cart"
+    assert event["product_id"] == "p_food_002"
+    assert event["cart"]["items"][0]["quantity"] == 2
+    assert "雀巢" in event["cart"]["items"][0]["name"]
+
+
+def test_product_card_includes_dynamic_generated_tags():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_dynamic_product_tags",
+                message="推荐一款雀巢咖啡",
+            )
+        )
+    )
+
+    product = next(event["product"] for event in events if event["type"] == "product_item")
+    generated = product["derived_attributes"]["generated_tags"]
+    generated_values = [item["value"] for item in generated]
+    assert generated_values
+    assert any(tag in generated_values for tag in ["雀巢", "咖啡", "速溶", "三合一"])
+    assert product["tags"] != [product["category"], product["sub_category"], product.get("brand_region")]

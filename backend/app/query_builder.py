@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .constraint_filter import dedupe
 from .models import HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR
 from .planner_agent import _clarification_policy, _detect_category, _parent_category
 from .taxonomy import TaxonomyResolver
@@ -18,7 +19,7 @@ class QueryBuilder:
         for key, value in ir.query_intent.soft_preferences.items():
             if value:
                 soft.setdefault(key, value)
-        query_terms = _dedupe(
+        query_terms = dedupe(
             [
                 *ir.query_intent.query_terms,
                 user_message,
@@ -81,9 +82,3 @@ def _fill_category_from_text(hard: HardConstraints, text: str, taxonomy: Taxonom
         hard.category = hard.category or _parent_category(category)
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    for value in values:
-        if value and value not in result:
-            result.append(value)
-    return result

@@ -331,6 +331,31 @@ def test_websocket_oral_cart_followup_without_recommendation_does_not_add_random
     assert done_event["type"] == "done"
 
 
+def test_websocket_named_product_cart_command_adds_nestle_coffee():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": "demo_ws_named_cart_nestle",
+                "message": "将两份雀巢咖啡加入购物车",
+            }
+        )
+        cart_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    assert cart_event["type"] == "cart_update"
+    assert cart_event["action"] == "add_to_cart"
+    assert cart_event["product_id"] == "p_food_002"
+    assert cart_event["cart"]["items"][0]["quantity"] == 2
+    assert "雀巢" in cart_event["cart"]["items"][0]["name"]
+    assert "雀巢咖啡" in cart_event["message"]
+    assert "p_food_002" not in cart_event["message"]
+    assert done_event["type"] == "done"
+
+
 def test_product_image_asset_url_is_served_by_backend():
     app = create_app(use_fake_llm=True, use_fake_retriever=True)
     client = TestClient(app)

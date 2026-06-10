@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from .constraint_filter import dedupe
 from .models import ConstraintEdits, HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR
-from .semantic_layer import _add_constraints, _dedupe, _relax_constraints, _remove_constraints
+from .semantic_layer import _add_constraints, _relax_constraints, _remove_constraints
 
 
 class StateReducer:
@@ -71,8 +72,8 @@ def _sync_legacy_context(context: SessionContext) -> None:
     if hard.price_max is not None:
         context.global_profile["budget_max"] = hard.price_max
     if hard.include_brands:
-        context.global_profile["include_brands"] = _dedupe(hard.include_brands)
+        context.global_profile["include_brands"] = dedupe(hard.include_brands)
     if hard.exclude_terms:
-        context.global_profile["exclude_terms"] = _dedupe(hard.exclude_terms)
+        context.global_profile["exclude_terms"] = dedupe(hard.exclude_terms)
     if hard.exclude_brand_regions:
-        context.global_profile["exclude_brand_regions"] = _dedupe(hard.exclude_brand_regions)
+        context.global_profile["exclude_brand_regions"] = dedupe(hard.exclude_brand_regions)

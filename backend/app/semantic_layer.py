@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
 from pydantic import ValidationError
 
-from .constraint_filter import extract_excluded_brands, extract_included_brands
+from .constraint_filter import dedupe, extract_excluded_brands, extract_included_brands
 from .models import CartOperation, ChatRequest, ConstraintEdits, HardConstraints, ProductReference, RetrievalPlan, SemanticFrame, SessionContext
+from .utils import extract_json
 
 
 class SemanticParser:
@@ -23,6 +23,9 @@ class SemanticParser:
                     request_type=request.type,
                 )
                 frame = _parse_frame(raw)
+                if frame.confidence < 0.6:
+                    frame.intent = "clarification"
+                    frame.clarification_question = frame.clarification_question or "我没太理解你的意思，可以再说具体一点吗？比如想买什么、预算多少，或者有什么偏好。"
                 guarded = _merge_rule_guards(frame, request)
                 if guarded.intent == "unclear_input":
                     recovered = await self._try_contextual_followup_judge(request, semantic_context_payload(context))
@@ -145,6 +148,12 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
         soft["recipient"] = "长辈"
     if "礼物" in text or "送人" in text or "送给" in text or "送" in text:
         soft["occasion"] = "送礼"
+    if "惊喜" in text:
+        soft["gift_style"] = "惊喜感"
+    if "稳妥" in text or "不踩雷" in text:
+        soft["gift_style"] = "稳妥不踩雷"
+    if "实用" in text:
+        soft["gift_style"] = "实用"
     if request.type == "product_followup":
         intent = "product_followup"
     return SemanticFrame(intent=intent, constraint_edits=edits)
@@ -183,23 +192,11 @@ def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, A
 
 
 def _parse_frame(raw: str) -> SemanticFrame:
-    data = _extract_json(raw)
+    data = extract_json(raw)
     _normalize_semantic_frame_data(data)
     return SemanticFrame.model_validate(data)
 
 
-def _extract_json(raw: str) -> dict[str, Any]:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?", "", raw).strip()
-        raw = re.sub(r"```$", "", raw).strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, flags=re.S)
-        if not match:
-            raise
-        return json.loads(match.group(0))
 
 
 def _normalize_semantic_frame_data(data: dict[str, Any]) -> None:
@@ -224,16 +221,16 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     if guarded.intent == "cart_operation" and frame.intent not in {"product_followup", "compare_products"} and frame.cart_operation is None:
         frame.intent = guarded.intent
         frame.cart_operation = guarded.cart_operation
-    frame.constraint_edits.add.exclude_terms = _dedupe(
+    frame.constraint_edits.add.exclude_terms = dedupe(
         frame.constraint_edits.add.exclude_terms + guarded.constraint_edits.add.exclude_terms
     )
-    frame.constraint_edits.add.exclude_brand_regions = _dedupe(
+    frame.constraint_edits.add.exclude_brand_regions = dedupe(
         frame.constraint_edits.add.exclude_brand_regions + guarded.constraint_edits.add.exclude_brand_regions
     )
-    frame.constraint_edits.add.include_brands = _dedupe(
+    frame.constraint_edits.add.include_brands = dedupe(
         frame.constraint_edits.add.include_brands + guarded.constraint_edits.add.include_brands
     )
-    frame.constraint_edits.add.exclude_brands = _dedupe(
+    frame.constraint_edits.add.exclude_brands = dedupe(
         frame.constraint_edits.add.exclude_brands + guarded.constraint_edits.add.exclude_brands
     )
     if guarded.constraint_edits.add.price_min is not None:
@@ -241,13 +238,13 @@ def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFr
     if guarded.constraint_edits.add.price_max is not None:
         frame.constraint_edits.add.price_max = guarded.constraint_edits.add.price_max
     frame.constraint_edits.add.soft_preferences.update(guarded.constraint_edits.add.soft_preferences)
-    frame.constraint_edits.remove.exclude_terms = _dedupe(
+    frame.constraint_edits.remove.exclude_terms = dedupe(
         frame.constraint_edits.remove.exclude_terms + guarded.constraint_edits.remove.exclude_terms
     )
-    frame.constraint_edits.remove.exclude_brand_regions = _dedupe(
+    frame.constraint_edits.remove.exclude_brand_regions = dedupe(
         frame.constraint_edits.remove.exclude_brand_regions + guarded.constraint_edits.remove.exclude_brand_regions
     )
-    frame.constraint_edits.remove.exclude_brands = _dedupe(
+    frame.constraint_edits.remove.exclude_brands = dedupe(
         frame.constraint_edits.remove.exclude_brands + guarded.constraint_edits.remove.exclude_brands
     )
     return frame
@@ -279,7 +276,7 @@ def _has_shopping_signal(text: str) -> bool:
     return bool(
         re.search(
             r"推荐|找|买|想要|有没有|预算|以内|以下|以上|不低于|不要|不含|排除|对比|比较|哪个更|怎么选|购物车|加购|加入|下单|结算|"
-            r"防晒|精华|护肤|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
             text or "",
             flags=re.I,
         )
@@ -395,10 +392,10 @@ def _add_constraints(constraints: HardConstraints, patch) -> None:
         constraints.price_min = patch.price_min
     if patch.price_max is not None:
         constraints.price_max = patch.price_max
-    constraints.exclude_terms = _dedupe(constraints.exclude_terms + patch.exclude_terms)
-    constraints.include_brands = _dedupe(constraints.include_brands + patch.include_brands)
-    constraints.exclude_brands = _dedupe(constraints.exclude_brands + patch.exclude_brands)
-    constraints.exclude_brand_regions = _dedupe(constraints.exclude_brand_regions + patch.exclude_brand_regions)
+    constraints.exclude_terms = dedupe(constraints.exclude_terms + patch.exclude_terms)
+    constraints.include_brands = dedupe(constraints.include_brands + patch.include_brands)
+    constraints.exclude_brands = dedupe(constraints.exclude_brands + patch.exclude_brands)
+    constraints.exclude_brand_regions = dedupe(constraints.exclude_brand_regions + patch.exclude_brand_regions)
 
 
 def _build_retrieval_query(message: str, constraints: HardConstraints, soft_preferences: dict[str, str]) -> str:
@@ -493,6 +490,27 @@ def _normalize_cart_action(action: str) -> str:
 
 
 def _detect_quantity(text: str) -> int | None:
+    text = text or ""
+    units = "件个份瓶盒包袋罐条"
+    match = re.search(rf"(?:数量)?(?:改成|改为|设为)?\s*(\d+)\s*(?:[{units}])?", text)
+    if match:
+        return max(int(match.group(1)), 0)
+    chinese_digits_extended = {
+        "一": 1,
+        "两": 2,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }
+    for word, value in chinese_digits_extended.items():
+        if re.search(rf"{word}\s*(?:[{units}])", text):
+            return value
     match = re.search(r"(?:数量)?(?:改成|改为|设为)?\s*(\d+)", text)
     if match:
         return max(int(match.group(1)), 0)
@@ -527,10 +545,3 @@ def _detect_price_max(text: str) -> float | None:
         return float(match.group(1))
     return None
 
-
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    for value in values:
-        if value and value not in result:
-            result.append(value)
-    return result

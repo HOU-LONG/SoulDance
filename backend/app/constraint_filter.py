@@ -97,7 +97,7 @@ def extract_included_brands(text: str) -> list[str]:
     for canonical, aliases in BRAND_ALIASES.items():
         if any(alias.lower() in lowered for alias in aliases):
             brands.append(canonical)
-    return _dedupe(brands)
+    return dedupe(brands)
 
 
 def extract_excluded_brands(text: str) -> list[str]:
@@ -108,7 +108,7 @@ def extract_excluded_brands(text: str) -> list[str]:
     for canonical, aliases in BRAND_ALIASES.items():
         if any(alias.lower() in lowered for alias in aliases):
             brands.append(canonical)
-    return _dedupe(brands)
+    return dedupe(brands)
 
 
 def _brand_matches(product: Product, excluded_brand: str) -> bool:
@@ -120,7 +120,7 @@ def _brand_matches(product: Product, excluded_brand: str) -> bool:
     return any(alias.lower() in haystack for alias in aliases)
 
 
-def _dedupe(values: list[str]) -> list[str]:
+def dedupe(values: list[str]) -> list[str]:
     result: list[str] = []
     for value in values:
         if value and value not in result:

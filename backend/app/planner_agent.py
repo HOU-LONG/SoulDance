@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
 from pydantic import ValidationError
 
-from .constraint_filter import extract_included_brands
+from .constraint_filter import dedupe, extract_included_brands
 from .models import ChatRequest, HardConstraints, RetrievalPlan, SessionContext
+from .utils import extract_json
 
 
 CATEGORY_ALIASES = {
+    "美妆礼物": "美妆护肤",
+    "化妆品": "美妆护肤",
+    "化妆的": "美妆护肤",
+    "化妆": "美妆护肤",
+    "彩妆类": "美妆护肤",
+    "彩妆": "美妆护肤",
     "防晒霜": "防晒",
     "防晒": "防晒",
     "洗面奶": "洁面",
@@ -36,7 +42,18 @@ class PlannerAgent:
     def __init__(self, llm_client: Any | None = None):
         self.llm_client = llm_client
 
-    async def create_plan(self, request: ChatRequest, context: SessionContext | None = None) -> RetrievalPlan:
+    async def create_plan(self, request: ChatRequest, context: SessionContext | None = None, use_llm: bool = False) -> RetrievalPlan:
+        if use_llm and self.llm_client is not None:
+            try:
+                raw = await self.llm_client.parse_semantic_frame(
+                    request.message,
+                    context.model_dump(mode="json") if context else {},
+                    request_type=request.type,
+                )
+                plan = self._parse_llm_plan(raw)
+                return self._merge_rule_guards(plan, request, context)
+            except Exception:
+                pass
         return self.rule_plan(request, context)
 
     def rule_plan(self, request: ChatRequest, context: SessionContext | None = None) -> RetrievalPlan:
@@ -54,7 +71,7 @@ class PlannerAgent:
 
         included_brands = extract_included_brands(text)
         if included_brands:
-            constraints.include_brands = _dedupe(constraints.include_brands + included_brands)
+            constraints.include_brands = dedupe(constraints.include_brands + included_brands)
 
         price_min = _detect_price_min(text)
         if price_min is not None:
@@ -74,10 +91,10 @@ class PlannerAgent:
                 constraints.category = inherited.category
             if constraints.sub_category is None:
                 constraints.sub_category = inherited.sub_category
-            constraints.exclude_terms = _dedupe(inherited.exclude_terms + constraints.exclude_terms)
-            constraints.include_brands = _dedupe(inherited.include_brands + constraints.include_brands)
-            constraints.exclude_brands = _dedupe(inherited.exclude_brands + constraints.exclude_brands)
-            constraints.exclude_brand_regions = _dedupe(
+            constraints.exclude_terms = dedupe(inherited.exclude_terms + constraints.exclude_terms)
+            constraints.include_brands = dedupe(inherited.include_brands + constraints.include_brands)
+            constraints.exclude_brands = dedupe(inherited.exclude_brands + constraints.exclude_brands)
+            constraints.exclude_brand_regions = dedupe(
                 inherited.exclude_brand_regions + constraints.exclude_brand_regions
             )
             if constraints.price_min is None:
@@ -87,11 +104,11 @@ class PlannerAgent:
 
         if re.search(r"不要|不含|排除|除了", text):
             if "酒精" in text or "乙醇" in text:
-                constraints.exclude_terms = _dedupe(constraints.exclude_terms + ["酒精"])
+                constraints.exclude_terms = dedupe(constraints.exclude_terms + ["酒精"])
             if "日系" in text or "日本" in text:
-                constraints.exclude_brand_regions = _dedupe(constraints.exclude_brand_regions + ["日本"])
+                constraints.exclude_brand_regions = dedupe(constraints.exclude_brand_regions + ["日本"])
             if "苹果" in text or "Apple" in text or "apple" in text:
-                constraints.exclude_brands = _dedupe(constraints.exclude_brands + ["苹果"])
+                constraints.exclude_brands = dedupe(constraints.exclude_brands + ["苹果"])
         if "油皮" in text or "混油" in text:
             soft["skin_type"] = "油皮"
         if "敏感肌" in text:
@@ -110,6 +127,12 @@ class PlannerAgent:
             soft["priority"] = "续航"
         if "性价比" in text:
             soft["priority"] = "性价比"
+        if "惊喜" in text:
+            soft["gift_style"] = "惊喜感"
+        if "稳妥" in text or "不踩雷" in text:
+            soft["gift_style"] = "稳妥不踩雷"
+        if "实用" in text:
+            soft["gift_style"] = "实用"
 
         need_clarification, clarification_question = _clarification_policy(text, category, constraints, soft, intent)
         if need_clarification:
@@ -147,7 +170,7 @@ class PlannerAgent:
         )
 
     def _parse_llm_plan(self, raw: str) -> RetrievalPlan:
-        data = _extract_json(raw)
+        data = extract_json(raw)
         return RetrievalPlan.model_validate(data)
 
     def _merge_rule_guards(
@@ -160,10 +183,10 @@ class PlannerAgent:
             constraints.price_min = rule_constraints.price_min
         if rule_constraints.price_max is not None:
             constraints.price_max = rule_constraints.price_max
-        constraints.exclude_terms = _dedupe(constraints.exclude_terms + rule_constraints.exclude_terms)
-        constraints.include_brands = _dedupe(constraints.include_brands + rule_constraints.include_brands)
-        constraints.exclude_brands = _dedupe(constraints.exclude_brands + rule_constraints.exclude_brands)
-        constraints.exclude_brand_regions = _dedupe(
+        constraints.exclude_terms = dedupe(constraints.exclude_terms + rule_constraints.exclude_terms)
+        constraints.include_brands = dedupe(constraints.include_brands + rule_constraints.include_brands)
+        constraints.exclude_brands = dedupe(constraints.exclude_brands + rule_constraints.exclude_brands)
+        constraints.exclude_brand_regions = dedupe(
             constraints.exclude_brand_regions + rule_constraints.exclude_brand_regions
         )
         if not constraints.category:
@@ -185,25 +208,13 @@ class PlannerAgent:
         return plan
 
 
-def _extract_json(raw: str) -> dict[str, Any]:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?", "", raw).strip()
-        raw = re.sub(r"```$", "", raw).strip()
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, flags=re.S)
-        if not match:
-            raise
-        return json.loads(match.group(0))
 
 
 def _detect_category(text: str) -> str | None:
     for key, category in CATEGORY_ALIASES.items():
         if key in text:
             return category
-    if any(word in text for word in ["护肤", "美妆", "面霜", "精华"]):
+    if any(word in text for word in ["护肤", "美妆", "化妆", "化妆品", "彩妆", "面霜", "精华"]):
         return "美妆护肤"
     if any(word in text for word in ["电脑", "平板", "数码"]):
         return "数码电子"
@@ -236,7 +247,7 @@ def _is_small_talk_intent(text: str) -> bool:
         return True
     if re.search(
         r"推荐|找|买|想要|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
-        r"防晒|精华|护肤|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+        r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
         text or "",
         flags=re.I,
     ):
@@ -257,7 +268,7 @@ def _has_shopping_admission_signal(text: str) -> bool:
     return bool(
         re.search(
             r"推荐|找|买|想要|想买|看看|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
-            r"防晒|精华|护肤|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
             text or "",
             flags=re.I,
         )
@@ -287,11 +298,13 @@ def _clarification_policy(
         return True, "选平板我需要先知道你更看重便携、性能，还是性价比？也可以直接告诉我预算。"
     if category == "服饰运动" and constraints.sub_category is None and _is_generic_shoe_request(text):
         return True, "选鞋我需要先知道你主要用于跑步、篮球，还是户外/通勤？也可以直接告诉我预算。"
-    if _is_generic_gift_request(text) and not constraints.sub_category and (
+    if _is_generic_gift_request(text) and not category and not constraints.sub_category and (
         (constraints.price_max is None and constraints.price_min is None) or "recipient" not in soft
     ):
         return True, "送礼我需要先确认预算和对象：更偏实用、惊喜感，还是稳妥不踩雷？"
     if category == "美妆护肤" and constraints.sub_category is None and constraints.price_max is None and constraints.price_min is None:
+        if soft.get("occasion") == "送礼" or "recipient" in soft:
+            return False, None
         if "skin_type" not in soft and "effect" not in soft:
             return True, "护肤品我需要先确认肤质或功效：油皮清爽、敏感肌温和，还是保湿修护？"
     return False, None
@@ -339,9 +352,3 @@ def _detect_price_max(text: str) -> float | None:
     return None
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    for value in values:
-        if value and value not in result:
-            result.append(value)
-    return result

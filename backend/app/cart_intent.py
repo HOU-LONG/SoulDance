@@ -11,6 +11,22 @@ from .cart import CartService
 def _detect_cart_action(text: str) -> str:
     if any(word in text for word in ["不要这个品牌", "不要这个牌子"]):
         return "get_cart"
+    if any(
+        word in text
+        for word in [
+            "清空购物车",
+            "购物车清空",
+            "清一下购物车",
+            "购物车清一下",
+            "全部删掉",
+            "全部删除",
+            "都删掉",
+            "都删除",
+            "全删了",
+            "不要了",
+        ]
+    ):
+        return "clear_cart"
     if any(word in text for word in ["下单", "结算"]):
         return "checkout"
     if any(word in text for word in ["删掉", "删除", "移除"]):
@@ -36,6 +52,8 @@ def _normalize_cart_action(action: str) -> str:
         return "remove"
     if action in {"checkout", "order"}:
         return "checkout"
+    if action in {"clear", "clear_cart", "empty_cart"}:
+        return "clear_cart"
     return "get_cart"
 
 
@@ -76,6 +94,8 @@ def _cart_product_display_name(cart: CartService, product_id: str) -> str:
 
 
 def _cart_message(action: str, product_name: str) -> str:
+    if action == "clear_cart":
+        return "已清空购物车。"
     if action == "update_quantity":
         return f"已更新 {product_name} 的数量。"
     if action == "remove":

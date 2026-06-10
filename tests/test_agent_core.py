@@ -131,6 +131,18 @@ def test_hard_filter_excludes_brand_aliases_and_explains_reason():
     assert "华为" in explain_filter(huawei_product, HardConstraints(exclude_brands=["华为"]))
 
 
+def test_response_prompt_requires_short_paragraphs_or_bullets():
+    prompt = Path("backend/app/prompts/v1/response.txt").read_text(encoding="utf-8")
+
+    assert "2-4" in prompt
+    assert "短段落" in prompt
+    assert "短列表" in prompt
+    assert "**\u7ed3\u8bba\uff1a**" in prompt
+    assert "**\u4e3b\u63a8\uff1a**" in prompt
+    assert "**\u5907\u9009\uff1a**" in prompt
+    assert "**\u4e0b\u4e00\u6b65\uff1a**" in prompt
+
+
 class HumanizedChitchatLLM(FakeLLMClient):
     def __init__(self):
         self.messages = []
@@ -258,6 +270,58 @@ def test_taxonomy_resolver_covers_dataset_subcategories_and_aliases():
     assert resolver.resolve("精华液").sub_category == "精华"
     assert resolver.resolve("猫粮") is None
 
+    dongpeng = resolver.resolve_task_object("\u6211\u8981\u4e00\u74f6\u4e1c\u9e4f\u7279\u996e")
+    assert dongpeng is not None
+    assert dongpeng.category == "\u98df\u54c1\u996e\u6599"
+    assert dongpeng.sub_category == "\u529f\u80fd\u996e\u6599"
+
+
+def test_specific_food_product_request_builds_retrieval_plan():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    plan = asyncio.run(
+        agent.plan(ChatRequest(type="user_message", session_id="demo_dongpeng", message="\u6211\u8981\u4e00\u74f6\u4e1c\u9e4f\u7279\u996e"))
+    )
+
+    assert plan.intent == "recommend_product"
+    assert plan.hard_constraints.category == "\u98df\u54c1\u996e\u6599"
+    assert plan.hard_constraints.sub_category == "\u529f\u80fd\u996e\u6599"
+
+
+def test_taxonomy_resolver_recognizes_unique_catalog_title_aliases():
+    products = load_products("ecommerce_agent_dataset")
+    resolver = TaxonomyResolver.from_products(products)
+
+    alias_to_products = {}
+    for product in products:
+        alias = _catalog_title_alias_for_test(product)
+        if alias:
+            alias_to_products.setdefault(alias, []).append(product)
+
+    failures = []
+    for alias, matched_products in alias_to_products.items():
+        if len(matched_products) != 1:
+            continue
+        product = matched_products[0]
+        match = resolver.resolve_task_object(f"我要一个{alias}")
+        if match is None or match.category != product.category or match.sub_category != product.sub_category:
+            failures.append((alias, product.product_id, product.category, product.sub_category, match))
+
+    assert failures == []
+
+
+def _catalog_title_alias_for_test(product):
+    title = (product.title or "").strip()
+    if not title:
+        return ""
+    tokens = title.split()
+    first = tokens[0].strip("，,、()（）") if tokens else ""
+    if first and first != product.brand and len(first) >= 3:
+        return first
+    if len(tokens) >= 2:
+        return f"{tokens[0]}{tokens[1]}".strip("，,、()（）")
+    return first
 
 def test_planner_extracts_budget_and_negative_constraints():
     products = load_products("ecommerce_agent_dataset")
@@ -3192,9 +3256,12 @@ def test_default_recommendation_text_starts_with_conclusion():
     )
 
     text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
-    assert text.startswith("结论：")
-    assert "先给你一个明确主推" not in text
-    assert "评论摘要" in text
+    assert text.startswith("**\u7ed3\u8bba\uff1a**")
+    assert "\n\n" in text
+    assert "**\u4e3b\u63a8\uff1a**" in text
+    assert "**\u8bc4\u8bba\u6458\u8981\uff1a**" in text
+    assert "**\u4e0b\u4e00\u6b65\uff1a**" in text
+    assert "\u5148\u7ed9\u4f60\u4e00\u4e2a\u660e\u786e\u4e3b\u63a8" not in text
 def test_named_product_cart_command_resolves_catalog_product():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())

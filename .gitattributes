@@ -1,0 +1,13 @@
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh text eol=lf
+*.kt text eol=lf
+*.java text eol=lf
+*.kts text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.jsonl text eol=lf
+*.jar binary
+*.png binary
+*.jpg binary
+*.jpeg binary

@@ -254,7 +254,10 @@ class FakeLLMClient:
         focus_product: Product | None = None,
     ) -> str:
         if not ranked_products:
-            return '我按你的条件筛了一遍，暂时没有找到完全合适的商品。可以放宽预算或减少一个排除条件再试。'
+            return (
+                '**结论：** 我按你的条件筛了一遍，暂时没有找到完全合适的商品。'
+                '\n\n**下一步：** 可以放宽预算或减少一个排除条件再试。'
+            )
         primary = ranked_products[0]
         constraints = plan.hard_constraints
         handled: list[str] = []
@@ -275,17 +278,19 @@ class FakeLLMClient:
         )
         review_text = review_summary.get('positive_summary') or '暂无足够相关评论'
         alternatives = ranked_products[1:4]
+        sections = [
+            f'**结论：** 优先看「{primary.product.title}」。我已按「{handled_text}」筛选，主推价 {primary.product.price:.0f} 元。',
+            f'**主推：** {primary.reason}。',
+            f'**评论摘要：** {review_text}。',
+        ]
         if alternatives:
-            alt_text = '；备选差异：' + '、'.join(
-                f'{item.product.title}偏{item.reason}' for item in alternatives
+            sections.append(
+                '**备选：** 备选差异：' + '；'.join(
+                    f'{item.product.title}偏{item.reason}' for item in alternatives
+                ) + '。'
             )
-        else:
-            alt_text = ''
-        return (
-            f'结论：优先看「{primary.product.title}」。'
-            f'我已按「{handled_text}」筛选，主推价 {primary.product.price:.0f} 元，{primary.reason}。'
-            f'评论摘要：{review_text}。{alt_text} 如果你想更便宜、更清爽或换个品牌，我可以继续帮你换。'
-        )
+        sections.append('**下一步：** 如果你想更便宜、更清爽或换个品牌，我可以继续帮你换。')
+        return '\n\n'.join(sections)
 
     async def select_products(
         self,

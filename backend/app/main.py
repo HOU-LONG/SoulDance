@@ -20,6 +20,7 @@ from .feedback_store import FeedbackStore
 from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
+from .semantic_layer import rule_semantic_frame
 from .session_store import SessionStore
 from .stt_adapter import STTAdapter
 from .tts_adapter import TTSAdapter
@@ -179,8 +180,12 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                 cart_event = None
                 compiled_ir = None
                 if request.type != "product_followup":
-                    compiled_ir = await agent.compile_intent(request)
-                    cart_event = await agent.try_handle_cart_message(request, cart, compiled_ir)
+                    rule_frame = rule_semantic_frame(request)
+                    if rule_frame.intent == "cart_operation" and rule_frame.cart_operation is not None:
+                        cart_event = await agent.try_handle_cart_message(request, cart, rule_frame)
+                    else:
+                        compiled_ir = await agent.compile_intent(request)
+                        cart_event = await agent.try_handle_cart_message(request, cart, compiled_ir)
                 if cart_event is not None:
                     await websocket.send_json({"type": "cart_update", **cart_event})
                     await websocket.send_json({"type": "done"})
@@ -322,6 +327,8 @@ def _handle_cart_action(cart: CartService, request: ChatRequest) -> dict:
         return _cart_success(cart.update_quantity(request.session_id, request.product_id or "", request.quantity))
     if action == "remove":
         return _cart_success(cart.remove(request.session_id, request.product_id or ""))
+    if action == "clear_cart":
+        return _cart_success(cart.clear(request.session_id))
     if action == "checkout":
         snapshot = cart.get(request.session_id)
         if not snapshot.get("items"):

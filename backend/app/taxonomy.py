@@ -97,6 +97,8 @@ DEFAULT_ALIASES = {
     "坚果零食": "坚果/零食",
     "功能饮料": "功能饮料",
     "能量饮料": "功能饮料",
+    "特饮": "功能饮料",
+    "东鹏特饮": "功能饮料",
     "碳酸饮料": "碳酸饮料",
     "气泡水": "碳酸饮料",
     "牛奶": "牛奶",
@@ -126,9 +128,18 @@ class TaxonomyResolver:
     @classmethod
     def from_products(cls, products: list[Product]) -> "TaxonomyResolver":
         categories: dict[str, set[str]] = {}
+        alias_targets: dict[str, set[str]] = {}
         for product in products:
             categories.setdefault(product.category, set()).add(product.sub_category)
-        return cls(categories)
+            for alias in _catalog_title_aliases(product):
+                if alias:
+                    alias_targets.setdefault(alias, set()).add(product.sub_category)
+        aliases = {
+            alias: next(iter(targets))
+            for alias, targets in alias_targets.items()
+            if len(targets) == 1
+        }
+        return cls(categories, aliases=aliases)
 
     def resolve(self, text: str | None) -> TaxonomyMatch | None:
         text = _normalize(text or "")
@@ -206,6 +217,33 @@ class TaxonomyResolver:
             if key and key in normalized and category in self.categories:
                 return TaxonomyMatch(category=category, sub_category=None, matched_text=alias)
         return None
+
+
+def _catalog_title_aliases(product: Product) -> set[str]:
+    title = (product.title or "").strip()
+    brand = (product.brand or "").strip()
+    sub_category = (product.sub_category or "").strip()
+    category = (product.category or "").strip()
+    aliases: set[str] = set()
+    if brand and sub_category:
+        aliases.add(f"{brand}{sub_category}")
+    if brand and category:
+        aliases.add(f"{brand}{category}")
+    if not title:
+        return aliases
+    tokens = [token.strip("，,、()（）") for token in title.split() if token.strip("，,、()（）")]
+    if not tokens:
+        return aliases
+    first = tokens[0]
+    if first and first != brand and len(first) >= 3:
+        aliases.add(first)
+    if len(tokens) >= 2:
+        aliases.add(f"{tokens[0]}{tokens[1]}")
+        aliases.add(f"{tokens[0]} {tokens[1]}")
+    if len(tokens) >= 3 and tokens[0] == brand:
+        aliases.add(f"{tokens[0]}{tokens[1]}{tokens[2]}")
+        aliases.add(f"{tokens[0]} {tokens[1]} {tokens[2]}")
+    return {alias for alias in aliases if len(_normalize(alias)) >= 3}
 
 
 def _normalize(text: str) -> str:

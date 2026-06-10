@@ -1,10 +1,12 @@
 # SoulDance ShopGuide Agent 比赛技术说明
 
-## 1. 项目概述：从商品问答到可验证导购决策流
+飞书文档链接：待填写（提交前替换为已开放权限链接）
 
-SoulDance ShopGuide 是一个面向电商导购场景的多轮智能导购系统。它的目标不是把商品信息检索出来后交给大模型自由回答，而是把真实购物对话中的模糊表达、多轮追问、反选排除、评论噪声、缓存复用和购物动作，统一编排成一个可验证、可交互、可加速的导购决策流程。
+## 1. 项目概述：理解与表达解耦的导购 Agent
 
-真实导购里，用户很少用标准搜索词表达需求。他们会说：
+SoulDance ShopGuide 是一个面向电商导购场景的多轮智能导购系统。项目面向真实购物对话中的几个高频挑战：用户表达模糊、条件会逐轮补充、会反选品牌或成分、会要求多商品对比，也会在推荐之后直接加入购物车。
+
+典型输入包括：
 
 ```text
 想要一个化妆的，送给妈妈
@@ -14,85 +16,55 @@ SoulDance ShopGuide 是一个面向电商导购场景的多轮智能导购系统
 就这个来两件
 ```
 
-这些表达背后包含了类目理解、送礼场景、价格方向、品牌反选、商品引用、对比决策和购物车动作。普通 RAG 问答如果只是“检索商品 -> 把商品和评论塞给 LLM -> 生成回答”，很容易出现以下问题：
-
-- 上下文继承错误：用户换了购物对象，系统还沿用上一轮任务。
-- 商品卡不可信：LLM 文本主推一个商品，客户端商品卡却展示另一个商品。
-- 约束被绕过：用户说不要某品牌、不要酒精、预算 4000 以内，结果仍出现违规商品。
-- 评论证据污染：手机商品里混入食品评论，或者护肤商品里负面风险被正向文案盖掉。
-- 性能不可控：相同问题重复走完整检索、排序和 LLM selection，响应变慢。
-
-因此，ShopGuide 的核心不是“让大模型多说几句导购话”，而是把自然语言购物需求转成结构化、可复核、可落地的购物决策。
-
-## 2. 核心问题：真实导购为什么不能只靠普通 RAG
-
-真实电商导购至少同时面对四类问题。
-
-第一，用户表达不标准。`化妆的` 需要识别成美妆护肤，`电脑` 在当前商品库里默认对应笔记本电脑，`鞋` 又不能强行映射成某一种鞋，而要根据用途继续澄清。
-
-第二，对话跨轮发生。用户会先说 `我要华为手机`，下一句说 `不要华为，换一款`；也会先问电脑，下一句说 `我想要鞋`。系统必须判断这一轮是补充条件、商品追问、澄清回答，还是新购物任务。
-
-第三，商品证据嘈杂。商品描述、FAQ 和评论都可以作为证据，但不是所有文本都适合进入推荐理由。`物流快` 对拍照手机帮助有限，`好吃` 出现在手机评论里应被忽略，`刺痛/泛红` 出现在敏感肌面霜评论里则要作为风险保留。
-
-第四，推荐结果必须可信。LLM 可以参与理解和表达，但不能自由生成商品 ID，不能绕过价格、品牌、类目、成分等硬约束，也不能控制购物车状态。
-
-ShopGuide 将这些问题合并成一个工程目标：
-
-```text
-真实导购 = 多轮语言理解 + 商品决策 + 可信证据 + 可执行动作
-```
-
-## 3. 整体方案：把导购拆成连续决策流程
-
-ShopGuide 将一次导购拆成连续阶段：
-
-```text
-理解需求
--> 维护任务
--> 检索召回
--> 约束过滤
--> 证据治理
--> 候选决策
--> 最终校验
--> 交互输出
-```
-
-主链路使用豆包 Ark OpenAI-compatible API。LLM 参与三件事：
-
-- 语义理解：把用户自然语言解析成结构化意图和约束。
-- 候选内选择：只在后端候选池里选择已有 `product_id`。
-- 自然语言表达：基于最终商品和证据摘要生成简短导购结论。
-
-后端负责：
-
-- Session 任务状态。
-- taxonomy 类目解析。
-- 预算、品牌、类目、成分、价格上下限等硬约束。
-- RAG 检索、排序和证据治理。
-- cache 命中安全校验。
-- 购物车状态机。
-- 商品卡最终准入。
-- WebSocket / REST 事件协议。
-
-完整链路如下：
+系统采用“结构化理解”和“自然语言表达”分工的设计：
 
 ```text
 用户输入
-  -> LLM 语义理解：推荐 / 追问 / 反选 / 对比 / 购物车 / 闲聊
-  -> Session 任务状态：current_task / focus_product / pending_clarification / pending_recovery
-  -> RetrievalPlan：类目、预算、品牌、成分、软偏好
-  -> Memory Router：尝试复用结构化推荐决策
-  -> RAG 召回：BM25 / BGE embedding
-  -> Hard Filter：预算、品牌、类目、成分、价格上下限
-  -> EvidenceBundle：support / risk / ignored
-  -> LLM Candidate Selection：候选池内选择 product_id
-  -> Backend Final Validation：复核商品合法性、主推一致性、数量上限
-  -> 输出事件：文本、商品卡、澄清、恢复、对比、购物车、语音
+  |
+  |-- Flash（fast_model）
+  |      -> Intent / Slot / 分类
+  |      -> 商品筛选意图 / 追问分类
+  |      -> RetrievalPlan JSON 结构化
+  |
+  |-- Shopping Decision Engine
+  |      -> Session 状态
+  |      -> Cache
+  |      -> 检索、排序、过滤
+  |      -> 证据治理、候选选择、最终校验
+  |
+  |-- Pro（model）
+         -> 推荐解释 / 闲聊 / 自然语言回复
+         -> 用户看到的结果
 ```
 
-这个流程保证了两件事：大模型有足够语义能力理解真实用户表达，后端又能对商品和动作做最终裁决。
+Flash 负责高频、确定性、结构化的“阅读理解”；Pro 负责用户可读的“写作表达”。后端承接中间的导购决策链路，控制商品、价格、约束、购物车和事件输出。这样的分工让推荐过程具备可验证、可交互、可扩展的工程边界。
 
-## 4. 一次请求如何被处理
+## 2. 系统架构
+
+系统主链路使用 DeepSeek Flash / DeepSeek Pro。Embedding 使用本地 `bge-small-zh-v1.5`，适配当前小数据集并减少外部 API 往返。语音输入使用豆包 ASR API，语音输出在比赛演示配置中使用豆包 TTS API。
+
+| 系统层级 | 核心职责 |
+|---|---|
+| Flash 理解层 | 解析 Intent、Slot、类目、追问类型，生成 RetrievalPlan JSON |
+| Session 状态层 | 维护当前任务、多轮上下文、focus 商品、澄清和恢复状态 |
+| Shopping Decision Engine | 检索、排序、过滤、证据治理、候选选择和最终校验 |
+| Pro 表达层 | 基于最终结构化结果生成推荐解释、评论摘要和闲聊回复 |
+| Event Layer | 输出商品卡、结构化对比、购物车、语音和快捷操作 |
+
+核心链路：
+
+```text
+用户消息
+  -> Flash：Intent / Slot / 分类 / RetrievalPlan JSON
+  -> Session：current_task / focus_product / pending state
+  -> Decision Engine：Cache / Retrieve / Rerank / Filter / Validate
+  -> Pro：自然语言表达
+  -> Event Layer：text_delta / product_item / comparison_result / cart_update / audio_delta
+```
+
+评委可以把系统理解为一个导购决策流水线：Flash 把用户话语转成可执行计划，后端执行商品决策，Pro 把决策结果说清楚，客户端只消费最终可渲染事件。
+
+## 3. 一次导购请求如何执行
 
 以用户输入为例：
 
@@ -100,179 +72,145 @@ ShopGuide 将一次导购拆成连续阶段：
 推荐一款手机，预算4000，拍照优先
 ```
 
-系统首先通过 LLM semantic parser 判断这是商品推荐请求，并提取结构化信息：
-
-```json
-{
-  "intent": "recommend_product",
-  "constraint_edits": {
-    "add": {
-      "sub_category": "智能手机",
-      "price_max": 4000,
-      "soft_preferences": {
-        "priority": "拍照"
-      }
-    }
-  }
-}
-```
-
-这一步只描述“用户想要什么”，不决定最终推荐哪款商品。
-
-随后后端把语义结果写入 session 状态，并生成 `RetrievalPlan`：
+执行流程：
 
 ```text
-category = 数码电子
-sub_category = 智能手机
-price_max = 4000
-soft_preferences.priority = 拍照
-retrieval_query = 手机 拍照 预算4000
+Flash
+  -> intent = recommend_product
+  -> sub_category = 智能手机
+  -> price_max = 4000
+  -> priority = 拍照
+
+Session
+  -> 更新当前购物任务
+  -> 合并预算、类目、偏好和历史上下文
+
+RetrievalPlan
+  -> 生成可执行检索计划
+  -> 包含类目、预算、品牌、排除项、搜索词
+
+Memory Cache
+  -> 尝试复用已验证过的结构化推荐决策
+
+Retrieve + Rerank
+  -> BM25 召回关键词相关商品
+  -> 本地 BGE embedding 召回语义相关商品
+  -> 对候选商品做初步排序
+
+Hard Filter
+  -> 校验预算、价格上下限、品牌、类目、成分
+
+EvidenceBundle
+  -> 商品描述 / FAQ / 评论切块
+  -> 分成 support / risk / ignored
+
+Candidate Selection
+  -> 在候选池内选择 product_id
+
+Backend Validation
+  -> 复核 product_id、primary、数量上限和所有硬约束
+
+Pro
+  -> 生成主推结论、评论摘要、备选差异
+
+Event Output
+  -> text_delta
+  -> product_item
+  -> quick_actions
+  -> done
 ```
 
-在检索前，系统先经过 Memory Router。如果相同或兼容的结构化推荐决策已经存在，就尝试复用缓存；如果没有命中，再进入 RAG 检索和排序。
+这个流程把“理解、决策、表达、渲染”分开管理。商品卡只来自最终校验后的 `product_item` 事件，客户端看到的结果和后端 primary 商品保持一致。
 
-检索后，后端执行 hard filter，过滤掉预算外、类目不符、品牌或成分不符合要求的商品。随后 EvidenceBundle 对商品内部评论、FAQ 和描述做内容级治理，计算哪些证据支持当前需求，哪些是风险，哪些与当前需求无关。
+## 4. Shopping Decision Engine
 
-然后 LLM Candidate Selection 只在候选池内选择商品。它输出的是结构化 JSON，而不是自由文本：
+Shopping Decision Engine 是系统的核心执行层，负责把结构化需求变成可落地的商品决策。
+
+### 4.1 Retrieval
+
+检索层采用 hybrid scoring。实现上由 `EmbeddingRetriever` 统一完成检索打分：
+
+```text
+query
+  -> jieba 分词
+  -> BM25 关键词分
+  -> 本地 BGE 向量相似度分
+  -> 归一化后融合：0.65 * dense_score + 0.35 * bm25_score
+  -> 返回 top_k 候选商品
+```
+
+两类信号的作用：
+
+- 关键词搜索：BM25 负责精确词命中，适合品牌词、类目词和显式偏好，例如“华为”“拍照”“面霜”。
+- 语义搜索：本地 BGE embedding 会把用户需求和商品内容转成向量，再比较语义相似度，适合口语化表达和近义需求，例如“清爽防晒”“油皮不闷”“送妈妈稳妥”。
+
+本地 embedding 采用 `bge-small-zh-v1.5`。当前商品数据集规模较小，本地模型可以承担语义召回增强，减少 embedding API 往返带来的延迟。模型目录缺失或加载异常时，检索器会自动使用 BM25 分数完成召回。
+
+### 4.2 EvidenceBundle
+
+商品说明、FAQ 和评论会被拆成 evidence chunks。系统根据当前需求把内容分成三类：
+
+```text
+support  支持推荐的证据
+risk     风险、负面反馈或约束冲突
+ignored  与当前需求弱相关或跨类目噪声
+```
+
+例子：
+
+```text
+用户要拍照手机：
+夜拍清晰 / 抓拍快 / 影像旗舰 -> support
+机身偏重 / 发热明显 -> risk
+好吃 / 入口香甜 -> ignored
+
+用户要敏感肌面霜：
+温和 / 修护屏障 -> support
+刺痛 / 泛红 -> risk
+物流快 / 包装好 -> 弱相关或 ignored
+```
+
+EvidenceBundle 的价值在于“运行时治理证据”。原始评论保留在商品数据中，当前轮导购根据用户需求判断哪些内容能支持推荐、哪些内容需要提示风险、哪些内容应该退出推荐摘要。
+
+### 4.3 Candidate Selection
+
+候选商品经过召回、排序、硬过滤和证据治理后，再进入候选选择阶段。选择层只输出已有候选池内的 `product_id` 和简短理由，例如：
 
 ```json
 {
-  "should_recommend": true,
-  "need_clarification": false,
-  "selected_product_ids": ["p_xxx", "p_yyy"],
+  "selected_product_ids": ["phone_001", "phone_002"],
   "reasons": {
-    "p_xxx": "匹配拍照优先，价格在预算内",
-    "p_yyy": "作为更高性价比备选"
+    "phone_001": "匹配拍照优先，价格在预算内"
   }
 }
 ```
 
-后端再次校验：
+这个输出还会经过后端校验，保证商品存在、价格和品牌满足约束、类目一致、数量合理。
+
+### 4.4 Backend Validation
+
+最终校验覆盖：
 
 ```text
-product_id 必须来自候选池
-商品必须存在
-商品必须满足 hard filter
-商品数量最多 4 个
-第一张商品卡必须是唯一 primary
+product_id 存在性
+类目 / 子类目一致性
+预算、价格上限、价格下限
+品牌包含 / 品牌排除
+成分排除
+候选范围
+出卡数量
+primary 一致性
 ```
 
-最后 Response Writer 基于最终允许的商品和证据摘要生成简短导购文本，WebSocket 再输出标准事件：
+`final_selected_products[0]` 是唯一主推。文本、商品卡、quick actions、session focus 都围绕这个 primary 生成，避免“文案主推”和“商品卡主推”错位。
 
-```text
-assistant_state
-text_delta
-assistant_state(selection)
-text_delta
-products_start
-product_item
-products_done
-quick_actions
-done
-```
+## 5. Cache：缓存可验证导购决策
 
-`product_item` 的语义是最终可见商品卡，不是 RAG 候选。
+ShopGuide 的缓存围绕结构化决策设计，保存可复核的推荐结果和排序结果。
 
-## 5. LLM 的角色与边界
+### 5.1 Recommendation Memory
 
-ShopGuide 当前主链路使用豆包 Ark OpenAI-compatible API。系统中没有让 LLM 直接做全局 planner，也没有让 LLM 直接操作购物车或生成可展示商品卡。
-
-LLM 在系统里有三个受控角色。
-
-### 5.1 语义理解
-
-Semantic prompt 负责把自然语言解析成结构化 IR，包括：
-
-```text
-intent
-constraint_edits
-query_intent
-cart_operation
-references
-response_goal
-clarification_question
-```
-
-它可以识别：
-
-```text
-推荐商品
-商品 follow-up
-品牌反选
-价格方向
-结构化对比
-购物车动作
-闲聊 / 不明确输入
-```
-
-后端 rule guard 会补齐硬约束，例如 `不要酒精`、`不要 Apple`、`10000以上`、`4000以内`。这样即使 LLM 漏掉关键约束，后端仍会保留安全边界。
-
-### 5.2 候选池内选择
-
-Selection prompt 只接收后端筛出的候选商品。LLM 只能返回候选里的 `product_id`，不能编造商品，也不能选择候选池外的商品。
-
-后端会丢弃以下结果：
-
-```text
-候选池外 product_id
-不存在的 product_id
-违反预算的商品
-违反品牌排除的商品
-违反类目/子类目的商品
-违反成分排除的商品
-```
-
-因此 LLM selection 是候选池内 reranker，而不是自由推荐器。
-
-### 5.3 自然语言表达
-
-Response prompt 接收的是最终商品和摘要证据：
-
-```text
-allowed_products
-selected_primary
-hard_constraints_applied
-review_summary
-forbidden_claims
-```
-
-它只能生成 `text_delta`，不能修改：
-
-```text
-product_item
-商品价格
-商品顺序
-购物车
-事件类型
-hard filter 结果
-```
-
-如果 LLM 文案把备选商品写成主推，后端会回退到确定性文案，保证文本主推和商品卡 primary 一致。
-
-## 6. Cache：缓存可验证决策，而不是缓存最终回答
-
-ShopGuide 的 cache 设计服务于导购可信性，而不是简单保存 LLM 回复全文。
-
-普通回答缓存通常是：
-
-```text
-query -> final answer text
-```
-
-这种方式在导购场景有风险：用户上下文变化、预算变化、品牌排除变化、商品库存或价格变化时，旧回答会失去适用边界。
-
-ShopGuide 缓存的是结构化导购决策：
-
-```text
-query + taxonomy + hard_constraints + soft_preferences
--> selected_product_ids + roles + reasons + short_response_summary
-```
-
-### 6.1 Recommendation Memory
-
-Recommendation Memory 是高层缓存，缓存最终推荐决策。
-
-缓存内容包括：
+Recommendation Memory 缓存最终推荐决策：
 
 ```text
 normalized_query
@@ -284,186 +222,43 @@ roles
 reasons
 short_response_summary
 catalog_fingerprint
-prompt_version
 ```
 
-命中条件包括：
+完全相同或高度规范化一致的请求命中后，可以跳过 retriever、ranker 和 candidate selection。命中后仍会执行商品存在性、taxonomy、hard filter 和最终出卡校验。
+
+### 5.2 Structured Rank Cache
+
+Structured Rank Cache 缓存：
 
 ```text
-query 规范化后一致或高度兼容
-taxonomy 一致
-hard constraints 一致
-soft preferences 兼容
-商品仍存在
-当前请求不是 product_followup
+RetrievalPlan -> RankedProduct
 ```
-
-命中后可以跳过：
-
-```text
-retriever
-ranker
-LLM product selection
-```
-
-但不会跳过：
-
-```text
-product_id 存在性校验
-taxonomy 校验
-hard filter
-最终商品卡事件渲染
-```
-
-### 6.2 Structured Rank Cache
-
-Structured Rank Cache 是低层缓存，缓存 `RetrievalPlan -> RankedProduct` 的排序结果。
 
 cache key 包含：
 
 ```text
 intent
-retrieval_mode
-category
-sub_category
-price_min
-price_max
-include_brands
-exclude_brands
+category / sub_category
+price_min / price_max
+include_brands / exclude_brands
 exclude_terms
-exclude_brand_regions
 soft_preferences
 retrieval_query
+catalog_fingerprint
 ```
 
-因此下面两个请求不会共用缓存：
+因此：
 
 ```text
 推荐防晒霜，不要酒精
 推荐防晒霜，酒精可以接受
 ```
 
-它们的 hard constraints 不同，必须走不同决策路径。
+会进入不同缓存分支。ShopGuide 的缓存策略可以概括为：快，但不乱快。
 
-### 6.3 可观测性
+## 6. 多轮状态与事件协议
 
-WebSocket `assistant_state` 会暴露：
-
-```text
-memory_mode = miss / exact_hit / semantic_hit / disabled_for_followup
-```
-
-`/health` 会返回：
-
-```text
-memory_cache
-recommendation_memory
-structured_rank_cache
-```
-
-这个设计可以概括为：快，但不乱快。缓存提升速度，但每次命中后仍要重新通过商品和约束校验。
-
-## 7. 数据治理与 EvidenceBundle
-
-ShopGuide 的商品数据来自本地电商商品库，统一加载为结构化 schema：
-
-```text
-product_id
-title
-brand
-category
-sub_category
-price
-image_path
-skus
-marketing_description
-faqs
-reviews
-brand_region
-extracted_terms
-review_rating
-```
-
-系统启动时会从真实商品数据构建 taxonomy，并维护 alias。
-
-类目 alias 示例：
-
-```text
-手机 -> 智能手机
-电脑 -> 笔记本电脑
-跑鞋 -> 跑步鞋
-化妆 / 化妆品 / 彩妆 -> 美妆护肤
-鞋 -> 服饰运动泛类目
-```
-
-品牌 alias 示例：
-
-```text
-华为 / HUAWEI
-苹果 / Apple
-小米 / Xiaomi
-荣耀 / HONOR
-耐克 / Nike
-```
-
-### 7.1 为什么不提前删除无关评论
-
-无关评论是否无关，依赖当前用户需求。
-
-同一句评论对不同需求会有不同作用。例如：
-
-```text
-“机身偏重”
-```
-
-对于拍照优先用户，它可能只是轻微风险；对于轻薄便携用户，它是强风险。因此系统不在入库前静态删除评论，而是在运行时按当前需求治理证据。
-
-### 7.2 EvidenceBundle 内容级 reranker
-
-系统将商品描述、FAQ 和评论切成 evidence chunks，再根据当前需求分成：
-
-```text
-support_chunks   支持当前推荐的证据
-risk_chunks      风险、负面反馈或约束冲突
-ignored_chunks   与当前需求无关或跨类目噪声
-```
-
-示例一：用户要拍照手机。
-
-```text
-夜拍清晰 / 抓拍快 / 影像旗舰 -> support_chunks
-物流快 / 包装好 -> 不作为强推荐证据
-好吃 / 入口香甜 -> ignored_chunks
-```
-
-示例二：用户要敏感肌面霜。
-
-```text
-温和 / 修护屏障 / 舒缓 -> support_chunks
-刺痛 / 泛红 / 过敏 -> risk_chunks
-```
-
-默认商品卡不会返回 raw evidence，只返回结论型 reason 和商品基础信息。用户主动问“为什么推荐”“评论怎么说”时，系统才基于内部 EvidenceBundle 输出更详细解释。
-
-## 8. 导购动作如何落到统一交互协议
-
-ShopGuide 不只返回一段文本，而是将导购动作统一成客户端可渲染的事件协议。
-
-系统支持：
-
-```text
-推荐商品
-主动澄清
-无匹配恢复
-商品 follow-up
-品牌反选
-结构化对比
-自然语言购物车
-语音输入
-语音播报
-```
-
-多轮上下文不是简单保存 `last_message`，而是保存：
+真实导购往往跨多轮进行。系统在 Session 中维护：
 
 ```text
 current_task
@@ -476,96 +271,135 @@ pending_recovery
 cart_memory
 ```
 
-因此系统可以判断：
+这些状态支撑以下交互：
+
+| 用户表达 | 系统行为 |
+|---|---|
+| 更贵一点 | 在上一轮类目内寻找价格更高的替代商品 |
+| 更便宜一点 | 在上一轮类目内寻找价格更低的替代商品 |
+| 不要这个品牌 | 解析当前 primary 品牌并加入排除约束 |
+| 稳妥不踩雷 | 作为 pending clarification 的补充条件 |
+| 第一款和第三款怎么选 | 引用最近可见推荐集生成结构化对比 |
+| 就这个来两件 | 把当前 focus 商品加入购物车，数量为 2 |
+
+系统输出采用事件协议：
 
 ```text
-更贵一点        -> 对当前 focus 商品做价格方向 follow-up
-我要鞋          -> 新购物任务
-稳妥不踩雷      -> 上一轮澄清问题的回答
-不要这个品牌    -> 排除当前主推商品品牌
-第一款和第三款  -> 引用最近可见推荐集
-就这个来两件    -> 购物车加购当前主推商品，数量为 2
+assistant_state          状态、intent、retrieval_mode、memory_mode
+text_delta               流式文本
+clarification_request    澄清问题
+filter_recovery_options  无匹配恢复选项
+products_start           商品卡开始
+product_item             最终可见商品卡
+products_done            商品卡结束
+quick_actions            快捷追问按钮
+comparison_result        结构化商品对比
+cart_update              购物车更新
+audio_delta              语音流
+done                     本轮结束
 ```
+
+客户端消费的是可渲染事件：文本、商品卡、对比表、购物车和语音流。RAG 中间候选、内部证据 chunk 和未校验结果只存在于后端流程中。
+
+## 7. 用户交互示例
+
+### 多轮导购体验示例
+
+![Flash / Pro 分工示意](assets/shopguide_flash_pro_flow.jpg)
+
+这张图展示了项目的核心交互思路：Flash 负责把用户话语转成结构化导购状态，Pro 负责把最终决策表达给用户。结合实际导购链路，系统可以完成以下体验：
+
+### 多轮状态继承
+
+用户可以先给预算，再补充偏好，再要求换款。系统会把预算、类目、品牌、focus 商品和历史推荐集合并到同一轮任务中，支持“更贵一点”“更便宜一点”“刚刚那个为什么推荐”等追问。
+
+### 反选能力
+
+用户表达“不要 OPPO”“不要小米”“不要这个品牌”时，系统会把品牌 alias 归一化后写入硬约束，并在最终出卡前重新过滤。
+
+### 评论证据治理
+
+推荐解释包含简短评论摘要，例如优点、风险和适配场景。无关评论进入 `ignored`，负面反馈进入 `risk`，推荐理由优先使用与当前需求相关的证据。
+
+### Event 驱动交互
+
+客户端收到的是结构化事件：商品卡、快捷操作、对比结果、购物车更新和语音流。用户看到的导购体验接近完整购物流程，而非单段文本回复。
+
+## 8. 问题与解决方案
+
+| 问题 | 解决方案 |
+|---|---|
+| `化妆的送妈妈` 推荐到食品礼盒 | Taxonomy alias 将 `化妆/化妆品/彩妆` 归入美妆护肤，并保留送礼、长辈偏好 |
+| `不要华为` 仍返回 HUAWEI | 品牌 alias 统一为 canonical brand，写入 `exclude_brands` 后由 Hard Filter 执行 |
+| `更贵一点` 跳到其他类目 | Follow-up 继承上一轮 `category/sub_category`，只改变相对价格方向 |
+| 文本主推和商品卡 primary 不一致 | `final_selected_products[0]` 作为唯一 primary，Pro 只解释该商品 |
+| 评论污染推荐理由 | EvidenceBundle 将证据分为 `support/risk/ignored`，推荐摘要使用相关证据 |
+| cache 错误复用 | cache key 包含 taxonomy 和 hard constraints，命中后仍执行最终校验 |
+| 对比找不到上一轮商品 | Session event memory 保存最近可见推荐集，引用解析基于可见商品 |
+| 语音演示延迟 | 输入使用豆包 ASR API，输出使用豆包 TTS API，保证演示实时性 |
+
+这一组问题来自真实调试过程，也体现了系统从“能回答”到“能稳定导购”的关键工程收敛。
 
 ## 9. 多模态语音能力
 
-ShopGuide 支持语音输入和语音播报，语音能力通过 adapter 接入导购链路。
-
-语音输入链路：
+语音作为输入输出模态接入同一条导购链路：
 
 ```text
 用户语音
--> /api/stt
--> STTAdapter
--> 识别文本
--> 标准导购链路
+  -> 豆包 ASR API
+  -> 文本
+  -> Flash
+  -> Shopping Decision Engine
+  -> Pro
+  -> 豆包 TTS API
+  -> 语音播报
 ```
 
-语音播报链路：
+输入语音使用豆包 ASR API。输出语音在比赛演示配置中使用豆包 TTS API，当前配置为：
 
 ```text
-导购文本
--> TTSAdapter
--> 语音合成服务
--> 音频事件 / 音频结果
+TTS_PROVIDER=doubao_chunked_v3
+DOUBAO_TTS_URL=https://openspeech.bytedance.com/api/v3/tts/unidirectional
+DOUBAO_TTS_MODEL=seed-tts-2.0-standard
 ```
 
-相关配置：
+后端 `TTSAdapter` 同时保留 `openai_audio`、`mimo` 和 `doubao_chunked_v3` 多 provider 适配，便于本地服务联调和不同环境切换。比赛演示口径采用豆包 TTS。
 
-```text
-STT_ENABLED
-STT_PROVIDER
-STT_BASE_URL
-STT_AUDIO_FORMAT
-STT_SAMPLE_RATE
+本地开源语音模型在部署后响应较慢，比赛演示更重视低延迟、稳定性和实时交互，所以语音输入输出选择成熟 API 服务。
 
-TTS_ENABLED
-TTS_PROVIDER
-TTS_BASE_URL
-TTS_DEFAULT_VOICE
-TTS_RESPONSE_FORMAT
-```
+## 10. 技术栈
 
-语音并不改变商品决策逻辑。它复用同一套语义理解、检索、证据治理、候选选择、最终校验和事件输出流程。
+| 类别 | 技术 |
+|---|---|
+| 后端 | Python 3.12、FastAPI、WebSocket、Pydantic v2、Uvicorn、HTTPX |
+| 主链路 LLM | DeepSeek Flash、DeepSeek Pro、OpenAI-compatible Chat Completions、JSON structured output |
+| 检索 | BM25、本地 `bge-small-zh-v1.5`、Sentence Transformers、jieba、rank-bm25 |
+| 排序与证据 | Hard Filter、EvidenceBundle、Candidate Selection、Backend Validation |
+| 语音 | 豆包 ASR API、豆包 TTS API、STTAdapter、TTSAdapter |
+| 存储 | 内存 Session、内存 Cache、可选 JSON 持久化 |
+| 测试 | Pytest、WebSocket/API 行为测试、Agent 核心场景测试 |
 
-## 10. 工程实现
+## 11. 项目亮点
 
-### 10.1 技术栈
+### 11.1 理解与表达解耦的双模型链路
 
-后端：
+ShopGuide 使用 DeepSeek Flash 处理高频结构化理解，用 DeepSeek Pro 处理最终自然语言表达。Flash 输出 Intent、Slot、分类和 RetrievalPlan JSON，后端完成检索、约束、证据治理和校验，Pro 基于最终结果生成用户可读回复。相比单模型全包方案，这种链路在成本、延迟和结构化稳定性上更适合导购场景。
 
-```text
-Python 3.12
-FastAPI
-Uvicorn
-WebSocket streaming
-Pydantic v2
-HTTPX
-OpenAI-compatible SDK
-Pytest
-```
+### 11.2 EvidenceBundle 动态证据治理
 
-LLM 与检索：
+系统会把每个商品的评论、FAQ 和商品描述切成短证据片段，再结合当前用户需求重新判断这些片段的用途：
 
-```text
-豆包 Ark OpenAI-compatible API
-BM25
-BGE small zh embedding
-Sentence Transformers
-jieba
-rank-bm25
-```
+- `support`：能支持当前推荐的内容，例如用户要拍照手机时，“夜拍清晰”“抓拍快”会进入支持证据。
+- `risk`：可能影响购买决策的负面反馈，例如“机身偏重”“敏感肌刺痛”“续航一般”会进入风险提示。
+- `ignored`：和当前商品或当前需求关系弱的内容，例如手机商品里混入“好吃、入口香甜”这类食品评论，会退出推荐摘要。
 
-语音：
+最终商品卡默认只展示结论型理由和简短评论摘要；用户追问“为什么推荐”“评论怎么说”时，系统再基于 EvidenceBundle 展开解释。这样既能利用真实评论增强可信度，也能降低无关评论对推荐结果的干扰。
 
-```text
-STTAdapter
-TTSAdapter
-Doubao ASR / TTS compatible configuration
-Qwen3-TTS compatible configuration
-```
+### 11.3 可验证导购决策缓存
 
-### 10.2 依赖环境
+系统缓存结构化导购决策和排序结果，包括 `selected_product_ids`、taxonomy、constraints、roles、reasons 和 summary。命中后继续执行商品存在性、taxonomy、hard filter 和最终校验，在提速的同时保持预算、品牌、类目和成分约束有效。
+
+## 附录 A：依赖环境与配置说明
 
 后端环境：
 
@@ -573,43 +407,30 @@ Qwen3-TTS compatible configuration
 env/venv_shopguide_backend
 ```
 
-语音模型环境：
+本地 embedding 模型：
+
+```text
+model/bge-small-zh-v1.5
+```
+
+语音模型兼容环境：
 
 ```text
 env/venv_vllm_cu128
 env/conda_gcc12
 ```
 
-核心依赖：
-
-```text
-fastapi
-uvicorn
-openai
-httpx
-websockets
-pydantic
-numpy
-jieba
-rank-bm25
-sentence-transformers
-pytest
-pytest-asyncio
-python-multipart
-```
-
-### 10.3 配置说明
-
-比赛演示主链路使用豆包 Ark：
+主链路 LLM 配置：
 
 ```bash
-LLM_PROVIDER=doubao
-ARK_API_KEY=运行时密钥
-ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3/
-ARK_MODEL=ep-20260514111645-lmgt2
+LLM_PROVIDER=deepseek
+LLM_MODEL=deepseek-pro
+LLM_FAST_MODEL=deepseek-flash
+LLM_API_KEY=运行时密钥
+LLM_BASE_URL=DeepSeek OpenAI-compatible endpoint
 ```
 
-Embedding：
+Embedding 配置：
 
 ```bash
 USE_EMBEDDING=1
@@ -625,36 +446,37 @@ SHOPGUIDE_CART_PATH=data/carts.json
 SHOPGUIDE_MEMORY_CACHE_PATH=cache/shopguide_memory.jsonl
 ```
 
-语音：
+豆包语音配置：
 
 ```bash
 STT_ENABLED=true
 STT_PROVIDER=doubao_ws
-STT_BASE_URL=http://127.0.0.1:18090
+DOUBAO_ASR_WS_URL=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
 
 TTS_ENABLED=true
 TTS_PROVIDER=doubao_chunked_v3
-TTS_BASE_URL=http://127.0.0.1:18880
+DOUBAO_TTS_URL=https://openspeech.bytedance.com/api/v3/tts/unidirectional
+DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_MODEL=seed-tts-2.0-standard
 ```
 
-API key 只通过运行时环境变量注入，不写入源码、文档、缓存或日志。
+API key 通过运行时环境变量注入，源码、文档、缓存和日志均不承载密钥内容。
 
-### 10.4 目录结构
+## 附录 B：目录结构
 
 ```text
 backend/app/
   main.py                 FastAPI 入口，REST/WebSocket API
   agent.py                ShopGuide Agent 编排主链路
-  intent_compiler.py      LLM 语义理解入口
+  intent_compiler.py      Flash 结构化语义理解入口
   semantic_layer.py       语义 IR、fallback、安全 guard
-  state_reducer.py        session 状态更新
   query_builder.py        RetrievalPlan 构建
+  state_reducer.py        Session 状态更新
   taxonomy.py             类目解析与 alias 映射
-  ranker.py               商品排序
   knowledge_base.py       EvidenceBundle 与证据处理
   memory_cache.py         推荐缓存与检索缓存
-  reference_resolver.py   多轮引用解析
   constraint_filter.py    预算、品牌、成分硬过滤
+  reference_resolver.py   多轮引用解析
   cart.py                 购物车状态机
   stt_adapter.py          STT 接口适配
   tts_adapter.py          TTS 接口适配
@@ -674,88 +496,38 @@ docs/
   stt_deployment.md
 ```
 
-## 11. API 与事件协议
+## 附录 C：接口与事件
 
-### 11.1 REST API
-
-```text
-GET  /health
-GET  /api/products
-GET  /api/products/{product_id}
-POST /api/debug/retrieval_plan
-GET  /api/debug/session
-GET  /api/debug/sessions
-
-GET  /api/cart
-POST /api/cart/add
-POST /api/cart/update_quantity
-POST /api/cart/remove
-POST /api/cart/clear
-POST /api/cart/checkout
-
-POST /api/stt
-POST /api/feedback
-```
-
-### 11.2 WebSocket API
-
-入口：
+核心接口：
 
 ```text
-/ws/chat
+WebSocket /ws/chat
+REST 商品接口
+REST 购物车接口
+REST 调试接口
+STT 上传 / 语音识别接口
+反馈接口
 ```
 
-请求示例：
-
-```json
-{
-  "type": "user_message",
-  "session_id": "demo_001",
-  "message": "推荐一款手机，预算4000，拍照优先",
-  "input_type": "text",
-  "tts_enabled": false
-}
-```
-
-主要事件：
+核心事件：
 
 ```text
-assistant_state          当前阶段、intent、retrieval_mode、memory_mode
-text_delta               流式文本
-clarification_request    主动澄清问题
-filter_recovery_options  无匹配恢复选项
-products_start           商品卡开始
-product_item             最终可见商品卡
-products_done            商品卡结束
-quick_actions            快捷追问按钮
-comparison_result        结构化商品对比
-cart_update              购物车更新
-done                     本轮结束
+assistant_state
+text_delta
+clarification_request
+filter_recovery_options
+products_start
+product_item
+products_done
+quick_actions
+comparison_result
+cart_update
+audio_delta
+audio_done
+done
 ```
 
-商品卡结构：
-
-```json
-{
-  "type": "product_item",
-  "role": "primary",
-  "product": {
-    "product_id": "p_xxx",
-    "name": "商品名称",
-    "brand": "品牌",
-    "category": "美妆护肤",
-    "sub_category": "精华",
-    "price": 300,
-    "main_image_url": "/assets/products/...",
-    "tags": ["美妆护肤", "精华", "中国"],
-    "reason": "匹配送礼场景，口碑稳妥"
-  }
-}
-```
-
-正式商品卡不返回 raw evidence。默认只返回商品基础信息、图片、价格、标签和短 reason。
-
-## 12. 测试验证
+## 附录 D：测试验证
 
 核心测试命令：
 
@@ -763,130 +535,22 @@ done                     本轮结束
 env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -q
 ```
 
-当前核心后端测试覆盖：
+覆盖范围：
 
 ```text
-LLM semantic parse
-LLM candidate selection
-商品卡事件顺序
-动态推荐数量
+语义解析
+候选选择
 预算上下限
-品牌 include / exclude
+品牌排除
 成分排除
-多轮 follow-up
+多轮追问
 任务切换
-pending clarification
-pending recovery
+澄清继承
+无匹配恢复
 结构化对比
-购物车操作
-memory cache
-EvidenceBundle rerank
-无关评论抗干扰
-商品图片 URL
+自然语言购物车
+cache 命中与约束隔离
+EvidenceBundle 抗无关评论
+商品卡事件顺序
 STT / TTS adapter
 ```
-
-核心回归测试确保：
-
-```text
-商品卡不会在 LLM selection 前发送
-product_item 只代表最终可见商品
-LLM 不能选择候选池外商品
-cache 命中不绕过 hard filter
-文本主推和商品卡 primary 一致
-无匹配需求不会乱推无关商品
-```
-
-## 13. 关键问题解决方案
-
-### 13.1 `化妆的送妈妈` 不再落到食品礼盒
-
-问题：用户说 `想要一个化妆的，送给妈妈`，系统如果只识别到 `送礼/妈妈`，就会沿泛礼物方向推荐，容易出现食品礼盒。
-
-解决：
-
-```text
-化妆 / 化妆品 / 彩妆 -> 美妆护肤
-recipient = 长辈
-occasion = 送礼
-```
-
-因此系统会在美妆护肤大类内推荐适合作为礼物的商品，不会跳到食品或服饰。
-
-### 13.2 `不要华为` 不再返回 HUAWEI
-
-问题：用户先要华为手机，再说 `不要华为，换一款`，如果品牌别名不统一，系统会把 `华为` 和 `HUAWEI` 当成不同品牌。
-
-解决：
-
-```text
-华为 / HUAWEI -> canonical brand
-exclude_brands 写入 hard constraints
-follow-up 重新 hard filter
-```
-
-商品卡发送前必须再次通过品牌过滤。
-
-### 13.3 `更贵一点` 不跨类目
-
-问题：用户在美妆任务后说 `更贵一点`，系统不能跳到服饰或食品。
-
-解决：
-
-```text
-follow-up 默认继承上一轮 category/sub_category
-更贵/更便宜只是相对 focus 商品的价格方向
-无明确新类目时禁止跨类目漂移
-```
-
-### 13.4 文本主推和商品卡 primary 一致
-
-问题：LLM 文案存在表达漂移风险，可能把备选 A 写成主推，但商品卡 primary 是 B。
-
-解决：
-
-```text
-final_selected_products[0] 是唯一 primary
-selected_primary、focus_product_id、product_item.role=primary 指向同一商品
-LLM 文案漂移时回退到确定性文案
-```
-
-### 13.5 无关评论不进入推荐证据
-
-问题：评论数据中会混入无关内容，例如手机商品出现 `好吃、入口香甜`。
-
-解决：
-
-```text
-原始评论保留
-运行时按当前需求切 evidence chunks
-无关评论进入 ignored_chunks
-response writer 只接收摘要证据
-```
-
-### 13.6 cache 命中不绕过 hard filter
-
-问题：缓存如果直接复用最终回答，会导致预算或品牌约束失去校验边界。
-
-解决：
-
-```text
-缓存结构化决策，不缓存最终长回答
-命中后重建商品对象
-重新执行 taxonomy 和 hard filter
-再输出标准 product_item
-```
-
-## 14. 项目亮点 / 创新点
-
-### 14.1 动态证据治理
-
-ShopGuide 不只是召回商品，还对商品内部评论、FAQ 和描述做 evidence chunk 分级。系统根据当前用户需求动态划分 `support / risk / ignored`，既能抵抗无关评论注入，又能保留对用户重要的负面风险。
-
-### 14.2 结构化导购决策缓存
-
-系统缓存的是 `selected_product_ids`、taxonomy、constraints、reason 和 summary，而不是 LLM 最终回答文本。缓存命中后仍重新执行商品存在性、类目和 hard filter 校验，在提升速度的同时保证推荐安全。
-
-### 14.3 事件化导购协议
-
-推荐、澄清、恢复、对比、购物车和语音都通过统一 REST/WebSocket 协议输出。客户端不需要理解 RAG 中间状态，只消费最终可渲染事件，因此系统更接近真实导购产品，而不是只返回一段聊天文本的 demo。

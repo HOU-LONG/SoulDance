@@ -4,6 +4,7 @@ import base64
 import io
 import json
 import logging
+import re
 import uuid
 import wave
 
@@ -12,6 +13,52 @@ import httpx
 from .config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+def markdown_to_tts_text(markdown: str) -> str:
+    """Convert display Markdown into the same plain text a user visually reads."""
+    text = markdown.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"!\[([^\]]*)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+
+    lines: list[str] = []
+    in_code_fence = False
+    for raw_line in text.split("\n"):
+        stripped = raw_line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_fence = not in_code_fence
+            continue
+        if re.match(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$", stripped):
+            continue
+        if re.match(r"^([-*_])(\s*\1){2,}\s*$", stripped):
+            continue
+        line = raw_line
+        if not in_code_fence:
+            line = re.sub(r"^\s{0,3}#{1,6}\s+", "", line)
+            line = re.sub(r"^\s*>\s?", "", line)
+            line = re.sub(r"^\s*[-*+]\s+", "", line)
+            line = re.sub(r"^\s*\d+[.)]\s+", "", line)
+        lines.append(line)
+
+    text = "\n".join(lines)
+    text = re.sub(r"\*\*([^*\n]+?)\*\*", r"\1", text)
+    text = re.sub(r"__([^_\n]+?)__", r"\1", text)
+    text = re.sub(r"~~(.+?)~~", r"\1", text)
+    text = re.sub(r"`([^`\n]+?)`", r"\1", text)
+    text = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"\1", text)
+    text = re.sub(r"(?<!_)_([^_\n]+?)_(?!_)", r"\1", text)
+
+    normalized_lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
+    output: list[str] = []
+    previous_blank = False
+    for line in normalized_lines:
+        if line:
+            output.append(line)
+            previous_blank = False
+        elif output and not previous_blank:
+            output.append("")
+            previous_blank = True
+    return "\n".join(output).strip()
 
 
 class TTSAdapter:
@@ -31,16 +78,19 @@ class TTSAdapter:
         if not self.settings.tts_enabled:
             return []
 
-        text = text[: self.settings.tts_max_text_length]
+        speech_text = markdown_to_tts_text(text)
+        if not speech_text.strip():
+            return []
+        speech_text = speech_text[: self.settings.tts_max_text_length]
         provider = self.settings.tts_provider.lower()
 
         try:
             if provider in {"mimo", "xiaomi_mimo"}:
-                audio_bytes, response_format = await self._request_mimo_audio(text, voice)
+                audio_bytes, response_format = await self._request_mimo_audio(speech_text, voice)
             elif provider in {"doubao_chunked_v3", "doubao_tts", "volc_tts"}:
-                audio_bytes, response_format = await self._request_doubao_chunked_audio(text, voice)
+                audio_bytes, response_format = await self._request_doubao_chunked_audio(speech_text, voice)
             else:
-                audio_bytes = await self._request_openai_audio(text, voice)
+                audio_bytes = await self._request_openai_audio(speech_text, voice)
                 response_format = self.settings.tts_response_format
         except Exception as exc:
             logger.warning("TTS request failed: %s", exc)

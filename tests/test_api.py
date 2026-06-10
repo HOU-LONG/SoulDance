@@ -33,6 +33,15 @@ class CountingSemanticLLM(FakeLLMClient):
         return '{"intent": "recommend_product"}'
 
 
+class CartCommandSemanticLLM(FakeLLMClient):
+    def __init__(self):
+        self.parse_calls = 0
+
+    async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
+        self.parse_calls += 1
+        return '{"intent": "recommend_product"}'
+
+
 def test_health_endpoint_reports_product_count():
     app = create_app(use_fake_llm=True, use_fake_retriever=True)
     client = TestClient(app)
@@ -376,6 +385,63 @@ def test_websocket_named_product_cart_command_adds_nestle_coffee():
     assert "雀巢咖啡" in cart_event["message"]
     assert "p_food_002" not in cart_event["message"]
     assert done_event["type"] == "done"
+
+
+def test_websocket_rule_cart_command_skips_semantic_llm_parse():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    llm = CartCommandSemanticLLM()
+    app.state.agent.llm_client = llm
+    app.state.agent.semantic_parser.llm_client = llm
+    client = TestClient(app)
+    session_id = "demo_ws_cart_fast_path"
+    client.post("/api/cart/clear", json={"session_id": session_id})
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": session_id,
+                "message": "把雀巢咖啡加入购物车",
+            }
+        )
+        cart_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    assert cart_event["type"] == "cart_update"
+    assert cart_event["action"] == "add_to_cart"
+    assert cart_event["product_id"] == "p_food_002"
+    assert done_event["type"] == "done"
+    assert llm.parse_calls == 0
+
+
+def test_websocket_natural_language_clear_cart_empties_same_session_cart():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+    session_id = "demo_ws_clear_cart"
+    product_id = client.get("/api/products").json()["products"][0]["product_id"]
+    client.post(
+        "/api/cart/add",
+        json={"session_id": session_id, "product_id": product_id, "quantity": 2},
+    )
+
+    with client.websocket_connect("/ws/chat") as websocket:
+        websocket.send_json(
+            {
+                "type": "user_message",
+                "session_id": session_id,
+                "message": "清空购物车",
+            }
+        )
+        cart_event = websocket.receive_json()
+        done_event = websocket.receive_json()
+
+    assert cart_event["type"] == "cart_update"
+    assert cart_event["action"] == "clear_cart"
+    assert cart_event["product_id"] is None
+    assert cart_event["cart"]["items"] == []
+    assert "清空" in cart_event["message"]
+    assert done_event["type"] == "done"
+    assert client.get(f"/api/cart?session_id={session_id}").json()["items"] == []
 
 
 def test_product_image_asset_url_is_served_by_backend():

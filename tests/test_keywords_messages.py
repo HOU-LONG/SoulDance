@@ -9,7 +9,7 @@ from backend.app.messages import insufficient_comparison_products_text, unknown_
 
 
 def test_product_and_followup_keyword_markers_keep_existing_literals():
-    assert PRODUCT_REQUEST_MARKERS == ("推荐", "找", "买", "想要", "有没有")
+    assert PRODUCT_REQUEST_MARKERS == ("推荐", "找", "买", "想要", "想买", "我要", "要一", "要个", "来一", "有没有")
     assert EXPLAIN_FOCUS_MARKERS == ("刚刚那个是什么", "刚才那个是什么", "为什么推荐", "介绍一下", "这个是什么")
     assert CHEAPER_ALTERNATIVE_MARKERS == ("更便宜", "便宜点", "便宜的", "价格低")
     assert MORE_EXPENSIVE_ALTERNATIVE_MARKERS == ("更贵", "贵一点", "高端", "高价位", "价位高")

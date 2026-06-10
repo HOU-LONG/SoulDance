@@ -59,3 +59,12 @@ async def test_no_llm_client_falls_back_to_rule_based():
     context = SessionContext(session_id="s1")
     frame = await parser.parse(request, context)
     assert frame.intent == "recommend_product"
+
+
+@pytest.mark.asyncio
+async def test_specific_i_want_product_name_is_shopping_request():
+    parser = SemanticParser(llm_client=None)
+    request = ChatRequest(type="user_message", session_id="s1", message="\u6211\u8981\u4e00\u74f6\u4e1c\u9e4f\u7279\u996e")
+    context = SessionContext(session_id="s1")
+    frame = await parser.parse(request, context)
+    assert frame.intent == "recommend_product"

@@ -37,6 +37,10 @@ CATEGORY_ALIASES = {
     "咖啡": "咖啡",
     "coffee": "咖啡",
     "cafe": "咖啡",
+    "功能饮料": "功能饮料",
+    "能量饮料": "功能饮料",
+    "特饮": "功能饮料",
+    "东鹏特饮": "功能饮料",
 }
 
 
@@ -222,7 +226,7 @@ def _detect_category(text: str) -> str | None:
         return "数码电子"
     if any(word in text for word in ["运动", "衣服", "背包"]):
         return "服饰运动"
-    if any(word in text for word in ["饮料", "食品", "零食"]):
+    if any(word in text for word in ["饮料", "食品", "零食", "特饮", "功能饮料", "能量饮料"]):
         return "食品饮料"
     return None
 
@@ -269,8 +273,7 @@ def _is_small_talk_intent(text: str) -> bool:
 def _has_shopping_admission_signal(text: str) -> bool:
     return bool(
         re.search(
-            r"推荐|recommend|找|买|buy|want|想要|想买|看看|有没有|预算|budget|under|below|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
-            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|coffee|cafe|饮料|食品|零食|礼物|送人|送给",
+            r"推荐|recommend|找|买|buy|want|想要|想买|我要|要一|要个|来一|来瓶|来个|拿一|看看|有没有|预算|budget|under|below|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|coffee|cafe|饮料|食品|零食|特饮|功能饮料|能量饮料|礼物|送人|送给",
             text or "",
             flags=re.I,
         )
@@ -327,7 +330,7 @@ def _parent_category(sub_category: str | None) -> str | None:
         return "数码电子"
     if sub_category in {"跑步鞋", "篮球鞋", "徒步鞋", "短袖T恤", "背包"}:
         return "服饰运动"
-    if sub_category in {"咖啡", "茶饮", "方便食品"}:
+    if sub_category in {"咖啡", "茶饮", "方便食品", "功能饮料", "碳酸饮料", "牛奶", "酸奶", "调味品", "坚果/零食"}:
         return "食品饮料"
     return None
 

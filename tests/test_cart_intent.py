@@ -12,9 +12,16 @@ def test_agent_reuses_cart_intent_helpers():
 
 def test_detect_cart_action_uses_canonical_mappings():
     assert cart_intent._detect_cart_action("我要下单") == "checkout"
+    assert cart_intent._detect_cart_action("清空购物车") == "clear_cart"
+    assert cart_intent._detect_cart_action("购物车里的全部删掉") == "clear_cart"
     assert cart_intent._detect_cart_action("把它删掉") == "remove"
     assert cart_intent._detect_cart_action("数量改成2") == "update_quantity"
     assert cart_intent._detect_cart_action("加到购物车") == "add_to_cart"
+
+
+def test_normalize_cart_action_accepts_clear_cart_aliases():
+    assert cart_intent._normalize_cart_action("clear") == "clear_cart"
+    assert cart_intent._normalize_cart_action("empty_cart") == "clear_cart"
 
 
 def test_detect_quantity_extracts_numeric_and_chinese_values():

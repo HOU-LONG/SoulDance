@@ -902,12 +902,20 @@ class ShopGuideAgent:
 
     def handle_cart_message(self, request: ChatRequest, cart: CartService) -> dict:
         context = self.sessions.get(request.session_id)
-        action = request.action or _detect_cart_action(request.message)
+        action = _normalize_cart_action(request.action or _detect_cart_action(request.message))
         product_id = request.product_id or _resolve_cart_product_id(request.message, context, cart.get(request.session_id))
         quantity = request.quantity
         detected_quantity = _detect_quantity(request.message)
         if detected_quantity is not None:
             quantity = detected_quantity
+        if action == "clear_cart":
+            snapshot = cart.clear(request.session_id)
+            context.recent_cart_product_id = None
+            context.state.cart_memory.recent_product_id = None
+            return {"action": action, "product_id": None, "cart": snapshot, "success": True, "message": _cart_message(action, "")}
+        if action == "get_cart":
+            snapshot = cart.get(request.session_id)
+            return {"action": action, "product_id": None, "cart": snapshot, "success": True, "message": "这是当前购物车。"}
         if action == "checkout":
             snapshot = cart.checkout(request.session_id)
             return {"action": action, "product_id": product_id, "cart": snapshot, "message": "已为你模拟下单。"}
@@ -1001,6 +1009,8 @@ class ShopGuideAgent:
         action = _normalize_cart_action(frame.cart_operation.action)
         quantity = max(frame.cart_operation.quantity, 0)
         product_id = None
+        if action in {"get_cart", "clear_cart", "checkout"}:
+            return self._execute_cart_action(request.session_id, action, None, quantity, cart)
         if action in {"add_to_cart", "update_quantity"}:
             product_id = self._resolve_product_mention_for_cart(request.message)
         if not product_id:
@@ -1053,7 +1063,28 @@ class ShopGuideAgent:
         quantity: int,
         cart: CartService,
     ) -> dict:
+        action = _normalize_cart_action(action)
         context = self.sessions.get(session_id)
+        if action == "get_cart":
+            snapshot = cart.get(session_id)
+            return {
+                "action": action,
+                "product_id": None,
+                "cart": snapshot,
+                "success": True,
+                "message": "这是当前购物车。",
+            }
+        if action == "clear_cart":
+            snapshot = cart.clear(session_id)
+            context.recent_cart_product_id = None
+            context.state.cart_memory.recent_product_id = None
+            return {
+                "action": action,
+                "product_id": None,
+                "cart": snapshot,
+                "success": True,
+                "message": _cart_message(action, ""),
+            }
         if action == "checkout":
             current = cart.get(session_id)
             if not current.get("items"):
@@ -1525,8 +1556,8 @@ def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: T
         return True
     return bool(
         re.search(
-            r"推荐|找|买|想要|想买|看看|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
-            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|礼物|送人|送给",
+            r"推荐|找|买|想要|想买|我要|要一|要个|来一|来瓶|来个|拿一|看看|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|特饮|功能饮料|能量饮料|礼物|送人|送给",
             message or "",
             flags=re.I,
         )

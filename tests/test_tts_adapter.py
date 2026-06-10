@@ -9,6 +9,7 @@ from httpx import Response
 
 from backend.app.tts_adapter import TTSAdapter
 from backend.app.tts_adapter import _decode_doubao_tts_chunks
+from backend.app.tts_adapter import markdown_to_tts_text
 from backend.app.config import Settings
 
 
@@ -31,6 +32,37 @@ def test_decode_doubao_tts_accepts_success_code_20000000():
     }
 
     assert _decode_doubao_tts_chunks([json.dumps(payload).encode("utf-8")]) == pcm
+
+
+def test_markdown_to_tts_text_matches_rendered_plain_text():
+    source = (
+        "**结论：** 优先看「东鹏特饮」。\n\n"
+        "**主推：** 类目精确匹配。\n"
+        "- [查看商品](https://example.com)\n"
+        "- `功能饮料`"
+    )
+
+    text = markdown_to_tts_text(source)
+
+    assert text == "结论： 优先看「东鹏特饮」。\n\n主推： 类目精确匹配。\n查看商品\n功能饮料"
+    assert "**" not in text
+    assert "`" not in text
+    assert "https://example.com" not in text
+
+
+@pytest.mark.asyncio
+async def test_synthesize_events_sends_plain_text_to_tts_provider(adapter):
+    fake_wav = _wav_bytes()
+    source = "**结论：** 优先看「东鹏特饮」。\n\n**主推：** 类目精确匹配。"
+    with respx.mock:
+        route = respx.post("http://127.0.0.1:18880/v1/audio/speech").mock(
+            return_value=Response(200, content=fake_wav)
+        )
+        await adapter.synthesize_events(source, enabled=True)
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["input"] == "结论： 优先看「东鹏特饮」。\n\n主推： 类目精确匹配。"
+    assert "**" not in body["input"]
 
 
 @pytest.fixture

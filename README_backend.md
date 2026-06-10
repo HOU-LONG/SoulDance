@@ -46,6 +46,20 @@ For quick local/backend-only checks without dense embedding:
 export USE_EMBEDDING=0
 ```
 
+## Session & Cart Persistence
+
+By default sessions and carts are kept in memory and lost on restart. To persist them to disk:
+
+```bash
+export SHOPGUIDE_SESSION_DIR="data/sessions"
+export SHOPGUIDE_CART_PATH="data/carts.json"
+```
+
+- `SHOPGUIDE_SESSION_DIR`: each session gets its own JSON file under this directory.
+- `SHOPGUIDE_CART_PATH`: all shopping carts are stored in a single JSON file.
+
+If these variables are unset, the backend falls back to the previous in-memory behavior.
+
 ## Commands
 
 ```bash
@@ -86,4 +100,37 @@ docs/qwen3_tts_usage.md
 ```
 
 The ShopGuide backend should call that service over HTTP when TTS wiring is enabled; it should not import or run vLLM-Omni inside the backend environment.
+
+## FunASR STT
+
+FunASR runs as a separate HTTP service for speech-to-text. See:
+
+```text
+docs/stt_deployment.md
+```
+
+Quick start:
+
+```bash
+PORT=18090 bash scripts/start_stt.sh
+curl -fsS http://127.0.0.1:18090/health
+```
+
+## Full Voice-Enabled Startup
+
+```bash
+# 1. TTS
+GPU=2 PORT=18880 nohup ./start_qwen.sh > logs/qwen3_tts.log 2>&1 &
+curl -fsS http://127.0.0.1:18880/health
+
+# 2. STT
+PORT=18090 nohup bash scripts/start_stt.sh > logs/stt.log 2>&1 &
+curl -fsS http://127.0.0.1:18090/health
+
+# 3. Backend
+export ARK_API_KEY="your-runtime-key"
+export TTS_BASE_URL=http://127.0.0.1:18880
+export STT_BASE_URL=http://127.0.0.1:18090
+./start_backend.sh
+```
 

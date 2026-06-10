@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import AsyncIterator
 
 import httpx
 
@@ -22,11 +21,11 @@ class TTSAdapter:
         enabled: bool = False,
         voice: str | None = None,
         message_id: str = "",
-    ) -> AsyncIterator[dict]:
+    ) -> list[dict]:
         if not enabled or not text.strip():
-            return
+            return []
         if not self.settings.tts_enabled:
-            return
+            return []
 
         text = text[: self.settings.tts_max_text_length]
         instructions = self.settings.voice_preset.get(
@@ -43,6 +42,7 @@ class TTSAdapter:
             "stream": self.settings.tts_stream,
         }
 
+        events: list[dict] = []
         try:
             resp = await self.client.post(
                 f"{self.settings.tts_base_url}/v1/audio/speech",
@@ -52,21 +52,22 @@ class TTSAdapter:
             resp.raise_for_status()
         except Exception as exc:
             logger.warning("TTS request failed: %s", exc)
-            yield {
-                "type": "audio_error",
-                "message_id": message_id,
-                "message": "语音合成失败",
-            }
-            return
+            return [
+                {
+                    "type": "audio_error",
+                    "message_id": message_id,
+                    "message": "语音合成失败",
+                }
+            ]
 
         audio_bytes = resp.content
         if not audio_bytes:
-            return
+            return events
 
         chunk_size = self._chunk_size_for(audio_bytes)
         for i in range(0, len(audio_bytes), chunk_size):
             chunk = audio_bytes[i : i + chunk_size]
-            yield {
+            events.append({
                 "type": "audio_delta",
                 "message_id": message_id,
                 "encoding": self.settings.tts_response_format,
@@ -74,12 +75,13 @@ class TTSAdapter:
                 "channels": 1,
                 "data": base64.b64encode(chunk).decode("ascii"),
                 "is_last": False,
-            }
+            })
 
-        yield {
+        events.append({
             "type": "audio_done",
             "message_id": message_id,
-        }
+        })
+        return events
 
     def _chunk_size_for(self, audio_bytes: bytes) -> int:
         # Simple estimate based on chunk_duration_ms.

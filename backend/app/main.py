@@ -201,27 +201,36 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
 
     @app.get("/api/cart")
     def get_cart(session_id: str):
-        return cart.get(session_id)
+        return _cart_success(cart.get(session_id))
 
     @app.post("/api/cart/add")
     def cart_add(request: CartActionRequest):
-        return cart.add(request.session_id, request.product_id or "", request.quantity)
+        return _cart_success(cart.add(request.session_id, request.product_id or "", request.quantity))
 
     @app.post("/api/cart/update_quantity")
     def cart_update(request: CartActionRequest):
-        return cart.update_quantity(request.session_id, request.product_id or "", request.quantity)
+        return _cart_success(cart.update_quantity(request.session_id, request.product_id or "", request.quantity))
 
     @app.post("/api/cart/remove")
     def cart_remove(request: CartActionRequest):
-        return cart.remove(request.session_id, request.product_id or "")
+        return _cart_success(cart.remove(request.session_id, request.product_id or ""))
 
     @app.post("/api/cart/clear")
     def cart_clear(request: CartActionRequest):
-        return cart.clear(request.session_id)
+        return _cart_success(cart.clear(request.session_id))
 
     @app.post("/api/cart/checkout")
     def cart_checkout(request: CartActionRequest):
-        return cart.checkout(request.session_id)
+        snapshot = cart.get(request.session_id)
+        if not snapshot.get("items"):
+            raise HTTPException(status_code=400, detail="购物车为空，无法结算。")
+        result = cart.checkout(request.session_id)
+        return {
+            **result,
+            "success": True,
+            "message": "结算成功。",
+            "total": result.get("paid_amount", 0.0),
+        }
 
     # ---- 语音输入 API ----
 
@@ -308,14 +317,27 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
 def _handle_cart_action(cart: CartService, request: ChatRequest) -> dict:
     action = request.action or "add_to_cart"
     if action == "add_to_cart":
-        return cart.add(request.session_id, request.product_id or "", request.quantity)
+        return _cart_success(cart.add(request.session_id, request.product_id or "", request.quantity))
     if action == "update_quantity":
-        return cart.update_quantity(request.session_id, request.product_id or "", request.quantity)
+        return _cart_success(cart.update_quantity(request.session_id, request.product_id or "", request.quantity))
     if action == "remove":
-        return cart.remove(request.session_id, request.product_id or "")
+        return _cart_success(cart.remove(request.session_id, request.product_id or ""))
     if action == "checkout":
-        return cart.checkout(request.session_id)
-    return cart.get(request.session_id)
+        snapshot = cart.get(request.session_id)
+        if not snapshot.get("items"):
+            return {**_cart_success(snapshot), "success": False, "message": "购物车为空，无法结算。"}
+        result = cart.checkout(request.session_id)
+        return {**result, "success": True, "message": "结算成功。", "total": result.get("paid_amount", 0.0)}
+    return _cart_success(cart.get(request.session_id))
+
+
+def _cart_success(snapshot: dict) -> dict:
+    return {
+        **snapshot,
+        "success": True,
+        "total": snapshot.get("total_amount", snapshot.get("total", 0.0)),
+        "message": snapshot.get("message", "ok"),
+    }
 
 
 def _product_summary(product):

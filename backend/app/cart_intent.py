@@ -17,7 +17,12 @@ def _detect_cart_action(text: str) -> str:
         return "remove"
     if any(word in text for word in ["数量", "改成", "改为"]):
         return "update_quantity"
-    if any(word in text for word in ["购物车", "加购", "加入", "加到"]):
+    if any(word in text for word in ["购物车", "加购", "加入", "加到", "添加", "放购物车"]):
+        return "add_to_cart"
+    if re.search(
+        r"就这个|要这个|这个要|这款要|要这款|就它了|就这款|刚才.*(?:要|来|买)|(?:来|买)[一两二三四五六七八九十\d]+[件个份瓶盒包袋罐条杯](?:这个|这款|它|咖啡)?$",
+        text or "",
+    ):
         return "add_to_cart"
     return "get_cart"
 
@@ -35,12 +40,26 @@ def _normalize_cart_action(action: str) -> str:
 
 
 def _detect_quantity(text: str) -> int | None:
-    match = re.search(r"(?:数量)?(?:改成|改为|设为)?\s*(\d+)", text)
+    text = text or ""
+    units = "件个份瓶盒包袋罐条杯"
+    match = re.search(rf"(?:数量)?(?:改成|改为|设为)?\s*(\d+)\s*(?:[{units}])?", text)
     if match:
         return max(int(match.group(1)), 0)
-    chinese_digits = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5}
+    chinese_digits = {
+        "一": 1,
+        "两": 2,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }
     for word, value in chinese_digits.items():
-        if f"{word}件" in text or f"{word}个" in text:
+        if re.search(rf"{word}\s*(?:[{units}])", text):
             return value
     return None
 

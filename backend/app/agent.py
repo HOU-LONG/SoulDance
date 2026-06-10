@@ -350,11 +350,21 @@ class ShopGuideAgent:
             more_expensive_than_price = focus_product.price
             plan.soft_preferences["price_preference"] = "更贵"
             context.state.constraint_state.soft["price_preference"] = "更贵"
-        explicit_excluded_brands = extract_excluded_brands(request.message)
+        explicit_excluded_brands = dedupe(
+            extract_excluded_brands(request.message)
+            + _catalog_brands_mentioned_for_exclusion(request.message, self.products)
+        )
         if focus_product and _wants_different_brand(request.message, ir):
             explicit_excluded_brands.append(canonical_brand(focus_product.brand))
         if explicit_excluded_brands:
+            explicit_excluded_brands = dedupe(explicit_excluded_brands)
+            excluded_canonical = {canonical_brand(brand) for brand in explicit_excluded_brands}
+            plan.hard_constraints.include_brands = [
+                brand for brand in plan.hard_constraints.include_brands
+                if canonical_brand(brand) not in excluded_canonical
+            ]
             plan.hard_constraints.exclude_brands = dedupe(plan.hard_constraints.exclude_brands + explicit_excluded_brands)
+            context.state.constraint_state.hard.include_brands = list(plan.hard_constraints.include_brands)
             context.state.constraint_state.hard.exclude_brands = list(plan.hard_constraints.exclude_brands)
             for brand in explicit_excluded_brands:
                 context.negative_feedback.append(f"不要品牌:{brand}")
@@ -1045,8 +1055,23 @@ class ShopGuideAgent:
     ) -> dict:
         context = self.sessions.get(session_id)
         if action == "checkout":
+            current = cart.get(session_id)
+            if not current.get("items"):
+                return {
+                    "action": action,
+                    "product_id": product_id,
+                    "cart": current,
+                    "success": False,
+                    "message": "购物车为空，无法结算。",
+                }
             snapshot = cart.checkout(session_id)
-            return {"action": action, "product_id": product_id, "cart": snapshot, "message": "已为你模拟下单。"}
+            return {
+                "action": action,
+                "product_id": product_id,
+                "cart": snapshot,
+                "success": True,
+                "message": "已为你模拟下单。",
+            }
         if not product_id:
             snapshot = cart.get(session_id)
             return {"action": "get_cart", "product_id": None, "cart": snapshot, "message": "我还没找到要操作的商品。"}
@@ -1063,12 +1088,30 @@ class ShopGuideAgent:
             "action": action,
             "product_id": product_id,
             "cart": snapshot,
+            "success": True,
             "message": _cart_message(action, _cart_product_display_name(cart, product_id)),
         }
 
 
 def _normalize_product_match_text(text: str | None) -> str:
     return re.sub(r"[\s,，。！？!?:：；;、（）()【】\[\]\"'“”‘’]+", "", (text or "").lower())
+
+
+def _catalog_brands_mentioned_for_exclusion(message: str, products: list[Product]) -> list[str]:
+    if not re.search(r"不要|不考虑|排除|避开|除了|别|非", message or ""):
+        return []
+    message_text = _normalize_product_match_text(message)
+    brands: list[str] = []
+    seen_raw: set[str] = set()
+    for product in products:
+        brand = (product.brand or "").strip()
+        if not brand or brand in seen_raw:
+            continue
+        seen_raw.add(brand)
+        normalized = _normalize_product_match_text(brand)
+        if normalized and normalized in message_text:
+            brands.append(canonical_brand(brand))
+    return dedupe(brands)
 
 
 def _product_mention_score(message_text: str, product: Product) -> int:

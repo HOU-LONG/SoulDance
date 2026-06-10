@@ -57,7 +57,7 @@ class DoubaoLLMClient:
     @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(1, 8))
     async def _json_completion(self, messages: list[dict[str, str]], temperature: float = 0) -> str:
         kwargs: dict[str, Any] = {
-            'model': self.fast_model,
+            'model': getattr(self, 'fast_model', self.model),
             'messages': messages,
             'temperature': temperature,
             'response_format': {'type': 'json_object'},

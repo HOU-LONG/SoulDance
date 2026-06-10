@@ -72,6 +72,8 @@ class CartService:
                     "quantity": quantity,
                     "amount": amount,
                     "main_image_url": product_image_url(product.image_path),
+                    "image_url": product_image_url(product.image_path),
+                    "selected": True,
                 }
             )
         return {"session_id": session_id, "items": items, "total_amount": total}

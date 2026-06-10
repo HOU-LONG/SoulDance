@@ -20,6 +20,9 @@ def test_detect_cart_action_uses_canonical_mappings():
 def test_detect_quantity_extracts_numeric_and_chinese_values():
     assert cart_intent._detect_quantity("数量改成2") == 2
     assert cart_intent._detect_quantity("我要两件") == 2
+    assert cart_intent._detect_quantity("来一杯咖啡") == 1
+    assert cart_intent._detect_quantity("加两杯咖啡") == 2
+    assert cart_intent._detect_quantity("买三盒") == 3
 
 
 def test_cart_message_for_remove_action():

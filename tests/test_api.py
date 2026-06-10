@@ -64,23 +64,41 @@ def test_cart_rest_flow():
     app = create_app(use_fake_llm=True, use_fake_retriever=True)
     client = TestClient(app)
     product_id = client.get("/api/products").json()["products"][0]["product_id"]
+    session_id = "demo_rest_flow"
+    client.post("/api/cart/clear", json={"session_id": session_id})
 
     add_response = client.post(
         "/api/cart/add",
-        json={"session_id": "demo", "product_id": product_id, "quantity": 1},
+        json={"session_id": session_id, "product_id": product_id, "quantity": 1},
     )
     assert add_response.status_code == 200
+    assert add_response.json()["success"] is True
 
     update_response = client.post(
         "/api/cart/update_quantity",
-        json={"session_id": "demo", "product_id": product_id, "quantity": 2},
+        json={"session_id": session_id, "product_id": product_id, "quantity": 2},
     )
     assert update_response.status_code == 200
+    assert update_response.json()["success"] is True
     assert update_response.json()["items"][0]["quantity"] == 2
 
-    checkout_response = client.post("/api/cart/checkout", json={"session_id": "demo"})
+    checkout_response = client.post("/api/cart/checkout", json={"session_id": session_id})
     assert checkout_response.status_code == 200
+    assert checkout_response.json()["success"] is True
     assert checkout_response.json()["status"] == "ok"
+    assert checkout_response.json()["paid_amount"] > 0
+
+
+def test_empty_cart_checkout_returns_clear_error():
+    app = create_app(use_fake_llm=True, use_fake_retriever=True)
+    client = TestClient(app)
+    session_id = "demo_empty_checkout"
+    client.post("/api/cart/clear", json={"session_id": session_id})
+
+    checkout_response = client.post("/api/cart/checkout", json={"session_id": session_id})
+
+    assert checkout_response.status_code == 400
+    assert "购物车" in checkout_response.json()["detail"]
 
 
 def test_websocket_recommendation_event_order_and_quick_actions():
@@ -238,6 +256,7 @@ def test_websocket_cart_operation_can_be_detected_by_semantic_frame_without_keyw
     app.state.agent.llm_client = SemanticCartLLM()
     app.state.agent.semantic_parser.llm_client = app.state.agent.llm_client
     client = TestClient(app)
+    client.post("/api/cart/clear", json={"session_id": "demo_ws_semantic_cart"})
 
     with client.websocket_connect("/ws/chat") as websocket:
         websocket.send_json(
@@ -275,6 +294,7 @@ def test_websocket_cart_operation_can_be_detected_by_semantic_frame_without_keyw
 def test_websocket_oral_cart_followup_is_rule_guarded_after_recommendation():
     app = create_app(use_fake_llm=True, use_fake_retriever=True)
     client = TestClient(app)
+    client.post("/api/cart/clear", json={"session_id": "demo_ws_oral_cart"})
 
     with client.websocket_connect("/ws/chat") as websocket:
         websocket.send_json(
@@ -334,12 +354,14 @@ def test_websocket_oral_cart_followup_without_recommendation_does_not_add_random
 def test_websocket_named_product_cart_command_adds_nestle_coffee():
     app = create_app(use_fake_llm=True, use_fake_retriever=True)
     client = TestClient(app)
+    session_id = "demo_ws_named_cart_nestle"
+    client.post("/api/cart/clear", json={"session_id": session_id})
 
     with client.websocket_connect("/ws/chat") as websocket:
         websocket.send_json(
             {
                 "type": "user_message",
-                "session_id": "demo_ws_named_cart_nestle",
+                "session_id": session_id,
                 "message": "将两份雀巢咖啡加入购物车",
             }
         )

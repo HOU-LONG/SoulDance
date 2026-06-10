@@ -2388,6 +2388,80 @@ def test_price_min_and_price_max_parse_separately():
     assert low_plan.hard_constraints.price_max == 4000
 
 
+def test_price_max_parse_common_upper_bound_phrases():
+    products = load_products("ecommerce_agent_dataset")
+    phrases = [
+        "我想要一杯不超过30元的咖啡",
+        "30以内咖啡",
+        "预算30买咖啡",
+        "低于30元的咖啡",
+        "咖啡最多30元",
+        "coffee under 30",
+    ]
+
+    for index, message in enumerate(phrases):
+        agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+        asyncio.run(
+            agent.handle_message(
+                ChatRequest(type="user_message", session_id=f"demo_price_max_phrase_{index}", message=message)
+            )
+        )
+        plan = agent.sessions.get(f"demo_price_max_phrase_{index}").last_plan
+        assert plan.hard_constraints.price_min is None
+        assert plan.hard_constraints.price_max == 30
+
+
+def test_budget_limited_coffee_never_returns_over_budget_products():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+
+    events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id="demo_coffee_under_30", message="我想要一杯不超过30元的咖啡")
+        )
+    )
+
+    product_events = [event for event in events if event["type"] == "product_item"]
+    assert all(event["product"]["price"] <= 30 for event in product_events)
+    text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
+    if not product_events:
+        assert "30 元以内" in text or "30元以内" in text
+
+
+def test_product_followup_excludes_named_brand_from_recommendations():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    session_id = "demo_followup_no_nestle"
+
+    first_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(type="user_message", session_id=session_id, message="推荐一款咖啡")
+        )
+    )
+    primary = next(event["product"] for event in first_events if event["type"] == "product_item")
+
+    second_events = asyncio.run(
+        agent.handle_message(
+            ChatRequest(
+                type="product_followup",
+                session_id=session_id,
+                focus_product_id=primary["product_id"],
+                message="不要雀巢，换一款",
+            )
+        )
+    )
+
+    products_after_followup = [
+        event["product"]
+        for event in second_events
+        if event["type"] in {"replacement_product", "product_item"}
+    ]
+    assert products_after_followup
+    assert all("雀巢" not in product["brand"] for product in products_after_followup)
+    context = agent.sessions.get(session_id)
+    assert "雀巢" in context.last_plan.hard_constraints.exclude_brands
+
+
 def test_cheaper_followup_does_not_persist_focus_price_as_budget_cap():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())

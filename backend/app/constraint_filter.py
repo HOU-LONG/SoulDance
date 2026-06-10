@@ -20,6 +20,11 @@ BRAND_ALIASES = {
     "阿迪达斯": ["阿迪达斯", "adidas"],
     "oppo": ["oppo"],
     "vivo": ["vivo"],
+    "雀巢": ["雀巢", "nestle", "nescafe"],
+    "三顿半": ["三顿半", "saturnbird"],
+    "农夫山泉": ["农夫山泉"],
+    "东方树叶": ["东方树叶"],
+    "红牛": ["红牛", "red bull"],
 }
 
 

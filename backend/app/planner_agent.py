@@ -35,6 +35,8 @@ CATEGORY_ALIASES = {
     "跑鞋": "跑步鞋",
     "跑步鞋": "跑步鞋",
     "咖啡": "咖啡",
+    "coffee": "咖啡",
+    "cafe": "咖啡",
 }
 
 
@@ -246,8 +248,8 @@ def _is_small_talk_intent(text: str) -> bool:
     if not normalized:
         return True
     if re.search(
-        r"推荐|找|买|想要|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
-        r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+        r"推荐|recommend|找|买|buy|want|想要|有没有|预算|budget|under|below|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+        r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|coffee|cafe|饮料|食品|零食|礼物|送人|送给",
         text or "",
         flags=re.I,
     ):
@@ -267,8 +269,8 @@ def _is_small_talk_intent(text: str) -> bool:
 def _has_shopping_admission_signal(text: str) -> bool:
     return bool(
         re.search(
-            r"推荐|找|买|想要|想买|看看|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
-            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|饮料|食品|零食|礼物|送人|送给",
+            r"推荐|recommend|找|买|buy|want|想要|想买|看看|有没有|预算|budget|under|below|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
+            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|手机|笔记本|电脑|耳机|跑鞋|鞋|衣服|背包|咖啡|coffee|cafe|饮料|食品|零食|礼物|送人|送给",
             text or "",
             flags=re.I,
         )
@@ -343,6 +345,19 @@ def _detect_price_min(text: str) -> float | None:
 def _detect_price_max(text: str) -> float | None:
     if _detect_price_min(text) is not None:
         return None
+    match = re.search(
+        r"(?:不超过|不超|不高于|低于|小于|少于|最多|至多|最高)\s*(\d+(?:\.\d+)?)\s*(?:元|块)?",
+        text,
+    )
+    if match:
+        return float(match.group(1))
+    match = re.search(
+        r"(?:under|below|less than|no more than)\s*(\d+(?:\.\d+)?)",
+        text,
+        flags=re.I,
+    )
+    if match:
+        return float(match.group(1))
     match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|块)?\s*(?:以内|以下|内)", text)
     if match:
         return float(match.group(1))
@@ -350,5 +365,3 @@ def _detect_price_max(text: str) -> float | None:
     if match:
         return float(match.group(1))
     return None
-
-

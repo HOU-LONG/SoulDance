@@ -225,10 +225,22 @@ class ChatRequest(BaseModel):
     quantity: int = 1
 
 
+class STTResponse(BaseModel):
+    text: str
+    is_final: bool = True
+    confidence: float | None = None
+    language: str | None = "zh"
+
+
 class CartActionRequest(BaseModel):
     session_id: str
     product_id: str | None = None
     quantity: int = 1
+
+
+class OrderActionRequest(BaseModel):
+    order_id: str
+    address_id: str | None = None
 
 
 class ProductCard(BaseModel):
@@ -239,8 +251,14 @@ class ProductCard(BaseModel):
     sub_category: str
     price: float
     main_image_url: str
-    tags: list[str]
-    reason: str
+    image_url: str = ""          # Android 端兼容字段
+    tags: list[str] = Field(default_factory=list)
+    reason: str = ""
+    is_primary: bool = False     # Android 端主推标记
+    derived_attributes: dict[str, Any] = Field(default_factory=dict)
+    positive_feedback_summary: list[str] = Field(default_factory=list)
+    negative_feedback_summary: list[str] = Field(default_factory=list)
+    risk_tags: list[str] = Field(default_factory=list)
 
 
 class SessionContext(BaseModel):
@@ -255,7 +273,84 @@ class SessionContext(BaseModel):
     last_recommendations: list[dict[str, object]] = Field(default_factory=list)
     negative_feedback: list[str] = Field(default_factory=list)
     recent_cart_product_id: str | None = None
+    schema_version: int = 1
+    last_activity_at: str = ""
 
     def model_post_init(self, __context: Any) -> None:
         if not self.state.session_id:
             self.state.session_id = self.session_id
+
+
+class Address(BaseModel):
+    address_id: str
+    name: str
+    phone: str
+    province: str
+    city: str
+    detail: str = ""
+    is_default: bool = False
+
+
+class OrderItem(BaseModel):
+    product_id: str
+    title: str
+    price: float
+    quantity: int
+    amount: float
+
+
+class Order(BaseModel):
+    order_id: str
+    session_id: str
+    status: str
+    items: list[OrderItem] = Field(default_factory=list)
+    total_amount: float = 0.0
+    address: Address | None = None
+
+
+class DimensionScore(BaseModel):
+    dimension: str
+    winner_product_id: str | None = None
+    scores: dict[str, float] = Field(default_factory=dict)
+    explanation: str = ""
+
+
+class ComparisonResult(BaseModel):
+    product_ids: list[str]
+    dimensions: list[DimensionScore]
+    overall_winner: str | None = None
+    overall_reason: str = ""
+    scenario_recommendations: dict[str, str] = Field(default_factory=dict)
+
+
+# ---------- 反馈闭环模型 ----------
+
+class FeedbackEvent(BaseModel):
+    """单条反馈事件（隐式行为 + 显式评价）"""
+    session_id: str
+    signal_type: str = "explicit_rating"
+    # explicit_rating | quick_action | add_to_cart | followup | checkout | clarification_answer
+    product_id: str | None = None
+    rating: int | None = None               # 1=👍, -1=👎
+    action_label: str | None = None          # "更便宜" / "不要Apple" / "更适合户外"
+    context: dict = Field(default_factory=dict)  # plan / candidates 快照
+    timestamp: str = ""
+
+
+class FeedbackSignal(BaseModel):
+    """单次聚合后的反馈信号权重"""
+    product_boosts: dict[str, float] = Field(default_factory=dict)
+    brand_weights: dict[str, float] = Field(default_factory=dict)
+    price_preference: str | None = None       # "更便宜" | "更贵"
+    category_affinity: dict[str, float] = Field(default_factory=dict)
+    preference_tags: list[str] = Field(default_factory=list)
+
+
+class UserFeedbackProfile(BaseModel):
+    """跨 session 持久化的用户偏好画像"""
+    user_id: str
+    total_ratings: int = 0
+    liked_product_ids: list[str] = Field(default_factory=list)
+    disliked_product_ids: list[str] = Field(default_factory=list)
+    signals: list[FeedbackSignal] = Field(default_factory=list)  # 最近 N 轮
+    updated_at: str = ""

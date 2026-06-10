@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -21,6 +21,7 @@ from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
 from .session_store import SessionStore
+from .stt_adapter import STTAdapter
 from .tts_adapter import TTSAdapter
 from .user_profile_store import UserProfileStore
 
@@ -52,6 +53,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     user_profile_store = UserProfileStore(settings.user_profile_dir or None)
 
     tts = TTSAdapter(settings)
+    stt_adapter = STTAdapter(settings)
     agent = ShopGuideAgent(
         products,
         llm_client,
@@ -220,6 +222,37 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     @app.post("/api/cart/checkout")
     def cart_checkout(request: CartActionRequest):
         return cart.checkout(request.session_id)
+
+    # ---- 语音输入 API ----
+
+    @app.post("/api/stt")
+    async def stt_endpoint(
+        audio: UploadFile = File(...),
+        session_id: str | None = Form(None),
+        audio_format: str = Form("wav"),
+    ):
+        """语音识别：上传音频文件，返回转写文本。"""
+        from .models import STTResponse
+
+        if not settings.stt_enabled:
+            raise HTTPException(status_code=503, detail="STT is disabled")
+
+        audio_bytes = await audio.read()
+        max_size = settings.stt_max_audio_size_mb * 1024 * 1024
+        if len(audio_bytes) > max_size:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Audio exceeds {settings.stt_max_audio_size_mb}MB limit",
+            )
+
+        try:
+            result = await stt_adapter.transcribe(audio_bytes, audio_format)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+        return STTResponse(**result)
 
     # ---- 反馈闭环 API ----
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SKU(BaseModel):
@@ -223,6 +223,14 @@ class ChatRequest(BaseModel):
     action: str | None = None
     product_id: str | None = None
     quantity: int = 1
+
+    @field_validator("input_type")
+    @classmethod
+    def _validate_input_type(cls, v: str) -> str:
+        allowed = {"text", "voice"}
+        if v not in allowed:
+            raise ValueError(f"input_type must be one of {allowed}")
+        return v
 
 
 class STTResponse(BaseModel):

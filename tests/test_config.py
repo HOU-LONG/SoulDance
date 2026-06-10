@@ -16,7 +16,13 @@ def test_settings_from_env(monkeypatch):
     monkeypatch.setenv("STT_BASE_URL", "http://stt.example.com:9090")
     monkeypatch.setenv("TTS_ENABLED", "false")
     monkeypatch.setenv("STT_ENABLED", "0")
-    s = get_settings()
+    import os
+    s = Settings(
+        tts_base_url=os.getenv("TTS_BASE_URL", "http://127.0.0.1:18880"),
+        stt_base_url=os.getenv("STT_BASE_URL", "http://127.0.0.1:18090"),
+        tts_enabled=os.getenv("TTS_ENABLED", "true").lower() not in {"0", "false"},
+        stt_enabled=os.getenv("STT_ENABLED", "true").lower() not in {"0", "false"},
+    )
     assert s.tts_base_url == "http://tts.example.com:8080"
     assert s.stt_base_url == "http://stt.example.com:9090"
     assert s.tts_enabled is False

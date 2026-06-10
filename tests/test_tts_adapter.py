@@ -32,7 +32,7 @@ async def test_synthesize_events_returns_audio_deltas(adapter):
         route = respx.post("http://127.0.0.1:18880/v1/audio/speech").mock(
             return_value=Response(200, content=fake_wav)
         )
-        events = [e async for e in adapter.synthesize_events("你好", enabled=True)]
+        events = await adapter.synthesize_events("你好", enabled=True)
 
     assert route.called
     audio_deltas = [e for e in events if e["type"] == "audio_delta"]
@@ -44,7 +44,7 @@ async def test_synthesize_events_returns_audio_deltas(adapter):
 
 @pytest.mark.asyncio
 async def test_synthesize_events_disabled_returns_empty(adapter):
-    events = [e async for e in adapter.synthesize_events("你好", enabled=False)]
+    events = await adapter.synthesize_events("你好", enabled=False)
     assert events == []
 
 
@@ -52,5 +52,5 @@ async def test_synthesize_events_disabled_returns_empty(adapter):
 async def test_synthesize_events_respects_tts_enabled_setting():
     settings = Settings(tts_enabled=False)
     adapter = TTSAdapter(settings)
-    events = [e async for e in adapter.synthesize_events("你好", enabled=True)]
+    events = await adapter.synthesize_events("你好", enabled=True)
     assert events == []

@@ -5,10 +5,12 @@ import json
 import re
 import uuid
 
+from .adaptive_retriever import AdaptiveRetriever
 from .cart import CartService
-from .constraint_filter import canonical_brand, explain_filter, extract_excluded_brands, hard_filter
+from .constraint_filter import canonical_brand, dedupe, explain_filter, extract_excluded_brands, hard_filter
+from .utils import extract_json
 from .embedding_retriever import BM25OnlyRetriever
-from .image_assets import product_image_url
+from .image_assets import product_image_url_auto as product_image_url
 from .knowledge_base import evidence_review_summary, product_evidence
 from .intent_compiler import IntentCompiler
 from .llm_client import FakeLLMClient
@@ -47,11 +49,15 @@ class ShopGuideAgent:
         tts_adapter: TTSAdapter | None = None,
         memory_cache: StructuredMemoryCache | None = None,
         recommendation_memory: RecommendationMemoryCache | None = None,
+        feedback_ranker=None,
+        feedback_store=None,
+        user_profile_store=None,
     ):
         self.products = products
         self.product_map = {product.product_id: product for product in products}
         self.llm_client = llm_client or FakeLLMClient()
         self.retriever = retriever or BM25OnlyRetriever(products)
+        self.adaptive_retriever = AdaptiveRetriever(self.retriever)
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent()
         self.semantic_parser = SemanticParser(self.llm_client)
@@ -63,6 +69,36 @@ class ShopGuideAgent:
         self.recommendation_memory = recommendation_memory
         self.taxonomy = TaxonomyResolver.from_products(products)
         self.query_builder = QueryBuilder(self.taxonomy)
+        self.feedback_ranker = feedback_ranker
+        self.feedback_store = feedback_store
+        self.user_profile_store = user_profile_store
+        self._init_tool_registry()
+
+    def _init_tool_registry(self) -> None:
+        from .tools.registry import ToolRegistry
+        from .tools.retrieval import RetrieveProductsTool
+        from .tools.cart import CartTool
+        from .tools.clarify import ClarifyTool
+        from .tools.small_talk import SmallTalkTool
+        self.tool_registry = ToolRegistry()
+        self.tool_registry.register(RetrieveProductsTool(self))
+        self.tool_registry.register(CartTool(self))
+        self.tool_registry.register(ClarifyTool(self))
+
+    def _record_feedback(self, session_id: str, signal_type: str, product_id: str = None,
+                         action_label: str = None, context: dict = None) -> None:
+        """自动记录隐式反馈信号到 FeedbackStore。"""
+        if not self.feedback_store:
+            return
+        from .models import FeedbackEvent
+        event = FeedbackEvent(
+            session_id=session_id,
+            signal_type=signal_type,
+            product_id=product_id,
+            action_label=action_label,
+            context=context or {},
+        )
+        self.feedback_store.record(event)
 
     async def plan(self, request: ChatRequest) -> RetrievalPlan:
         context = self.sessions.get(request.session_id)
@@ -81,12 +117,12 @@ class ShopGuideAgent:
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         return plan
 
-    def retrieve_and_rank(self, plan: RetrievalPlan, limit: int = 8) -> list[RankedProduct]:
+    def retrieve_and_rank(self, plan: RetrievalPlan, limit: int = 8, session_id: str = "") -> list[RankedProduct]:
         if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
             cached = self.memory_cache.get(plan, self.product_map)
             if cached is not None:
                 return cached
-        retrieved = self.retriever.search(plan.retrieval_query, top_k=30)
+        retrieved = self.adaptive_retriever.search(plan, top_k=30)
         if retrieved:
             candidates = [product for product, _ in retrieved]
             scores = {product.product_id: score for product, score in retrieved}
@@ -96,6 +132,9 @@ class ShopGuideAgent:
         ranked = rank_products(candidates, plan, scores, limit=limit)
         if not ranked and candidates != self.products:
             ranked = rank_products(self.products, plan, {}, limit=limit)
+        # 反馈闭环：注入反馈信号权重
+        if self.feedback_ranker and session_id:
+            ranked = self.feedback_ranker.apply(ranked, session_id)
         if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
             self.memory_cache.put(plan, ranked)
         return ranked
@@ -149,7 +188,7 @@ class ShopGuideAgent:
                 yield event
             return
         if plan.intent == "compare_products":
-            for event in self._build_comparison_events(request):
+            for event in await self._build_comparison_events(request):
                 yield event
             return
         if plan.intent == "scenario_bundle":
@@ -180,7 +219,7 @@ class ShopGuideAgent:
             ):
                 yield event
             return
-        ranked = self.retrieve_and_rank(plan)
+        ranked = self.retrieve_and_rank(plan, session_id=request.session_id)
         async for event in self._stream_recommendation_events(request, plan, ranked, context_action):
             yield event
 
@@ -299,7 +338,7 @@ class ShopGuideAgent:
         if focus_product and _wants_different_brand(request.message, ir):
             explicit_excluded_brands.append(canonical_brand(focus_product.brand))
         if explicit_excluded_brands:
-            plan.hard_constraints.exclude_brands = _dedupe(plan.hard_constraints.exclude_brands + explicit_excluded_brands)
+            plan.hard_constraints.exclude_brands = dedupe(plan.hard_constraints.exclude_brands + explicit_excluded_brands)
             context.state.constraint_state.hard.exclude_brands = list(plan.hard_constraints.exclude_brands)
             for brand in explicit_excluded_brands:
                 context.negative_feedback.append(f"不要品牌:{brand}")
@@ -319,10 +358,15 @@ class ShopGuideAgent:
             for event in _text_delta_events(message_id, text):
                 yield event
             yield {"type": "focus_done", "message_id": message_id}
-            for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+            for event in await self.tts.synthesize_events(
+                intro + text,
+                enabled=request.tts_enabled,
+                voice=request.voice,
+                message_id=message_id,
+            ):
                 yield event
             return
-        ranked = [item for item in self.retrieve_and_rank(plan) if hard_filter(item.product, plan.hard_constraints)]
+        ranked = [item for item in self.retrieve_and_rank(plan, session_id=request.session_id) if hard_filter(item.product, plan.hard_constraints)]
         if cheaper_than_price is not None:
             ranked = [item for item in ranked if item.product.price < cheaper_than_price]
         if more_expensive_than_price is not None:
@@ -335,7 +379,7 @@ class ShopGuideAgent:
             context.state.active_focus.product_id = final_selected[0].product.product_id
             context.state.active_focus.source = "followup_primary"
         if final_selected:
-            replacement = _product_card(final_selected[0])
+            replacement = _product_card(final_selected[0], is_primary=True)
             replacement_event = {
                 "type": "replacement_product",
                 "message_id": message_id,
@@ -346,18 +390,19 @@ class ShopGuideAgent:
             yield replacement_event
             text_parts: list[str] = []
             async for event in self._stream_generate_text_events(message_id, request, plan, final_selected, focus_product):
-                text_parts.append(event["text"])
+                if event.get("type") == "text_delta":
+                    text_parts.append(event["text"])
                 yield event
             text = "".join(text_parts)
             if request.type == "user_message":
-                yield {"type": "products_start", "message_id": message_id}
+                yield {"type": "products_start", "message_id": message_id, "expected_count": len(final_selected)}
                 for index, item in enumerate(final_selected):
                     yield {
                         "type": "product_item",
                         "message_id": message_id,
                         "index": index,
                         "role": "primary" if index == 0 else "alternative",
-                        "product": _product_card(item).model_dump(mode="json"),
+                        "product": _product_card(item, is_primary=(index == 0)).model_dump(mode="json"),
                     }
                 yield {"type": "products_done", "message_id": message_id}
             yield _quick_actions_event(message_id, plan, final_selected)
@@ -367,7 +412,12 @@ class ShopGuideAgent:
                 yield event
             yield _filter_recovery_event(message_id, plan)
         yield {"type": "focus_done", "message_id": message_id}
-        for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+        for event in await self.tts.synthesize_events(
+            intro + text,
+            enabled=request.tts_enabled,
+            voice=request.voice,
+            message_id=message_id,
+        ):
             yield event
 
     async def _build_recommendation_events(
@@ -426,7 +476,12 @@ class ShopGuideAgent:
             _remember_pending_recovery(context, request.message, plan, recovery, "no_match")
             yield recovery
             yield {"type": "done", "message_id": message_id}
-            for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+            for event in await self.tts.synthesize_events(
+                intro + text,
+                enabled=request.tts_enabled,
+                voice=request.voice,
+                message_id=message_id,
+            ):
                 yield event
             return
         context = self.sessions.get(request.session_id)
@@ -440,22 +495,28 @@ class ShopGuideAgent:
                 yield event
         else:
             async for event in self._stream_generate_text_events(message_id, request, plan, selected, None):
-                text_parts.append(event["text"])
+                if event.get("type") == "text_delta":
+                    text_parts.append(event["text"])
                 yield event
         text = "".join(text_parts)
-        yield {"type": "products_start", "message_id": message_id}
+        yield {"type": "products_start", "message_id": message_id, "expected_count": len(selected)}
         for index, item in enumerate(selected):
             yield {
                 "type": "product_item",
                 "message_id": message_id,
                 "index": index,
                 "role": "primary" if index == 0 else "alternative",
-                "product": _product_card(item).model_dump(mode="json"),
+                "product": _product_card(item, is_primary=(index == 0)).model_dump(mode="json"),
             }
         yield {"type": "products_done", "message_id": message_id}
         yield _quick_actions_event(message_id, plan, selected)
         yield {"type": "done", "message_id": message_id}
-        for event in await self.tts.synthesize_events(intro + text, request.tts_enabled):
+        for event in await self.tts.synthesize_events(
+            intro + text,
+            enabled=request.tts_enabled,
+            voice=request.voice,
+            message_id=message_id,
+        ):
             yield event
 
     async def _select_products(
@@ -467,13 +528,16 @@ class ShopGuideAgent:
         if not candidates:
             return []
         by_id = {item.product.product_id: item for item in candidates}
+        max_cards = 4
         try:
             raw = await self.llm_client.select_products(request.message, plan, candidates)
-            data = _extract_json_object(raw)
+            data = extract_json(raw)
             if data.get("need_clarification") is True or data.get("should_recommend") is False:
                 return []
             selected_ids = data.get("selected_product_ids", [])
             reasons = data.get("reasons", {})
+            max_cards = data.get("recommended_count", 4)
+            max_cards = min(max(1, max_cards), 4)
         except Exception:
             selected = _fallback_selected_products(candidates)
             return selected
@@ -495,7 +559,7 @@ class ShopGuideAgent:
                 item = item.model_copy(update={"reason": reason})
             selected.append(item)
             seen.add(product_id)
-            if len(selected) >= 4:
+            if len(selected) >= max_cards:
                 break
         if selected:
             return selected
@@ -537,6 +601,15 @@ class ShopGuideAgent:
                     chunks.append(chunk)
             streamed_text = "".join(chunks)
             if streamed_text and _primary_text_matches_selected(streamed_text, ranked):
+                # 幻觉检测
+                from .hallucination_checker import HallucinationChecker
+                report = HallucinationChecker().verify(streamed_text, ranked)
+                if not report.is_clean:
+                    text = await FakeLLMClient().generate_response(request.message, plan, ranked, focus_product)
+                    yield {"type": "hallucination_corrected", "message_id": message_id, "original_issues": report.fabricated_product_ids + report.fabricated_attributes}
+                    for event in _text_delta_events(message_id, text):
+                        yield event
+                    return
                 for chunk in chunks:
                     yield {"type": "text_delta", "message_id": message_id, "text": chunk}
                 return
@@ -680,7 +753,7 @@ class ShopGuideAgent:
             memory_mode=memory_mode,
         )
 
-    def _build_comparison_events(self, request: ChatRequest) -> list[dict]:
+    async def _build_comparison_events(self, request: ChatRequest) -> list[dict]:
         context = self.sessions.get(request.session_id)
         product_ids = _resolve_comparison_product_ids(request.message, context)
         products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
@@ -694,21 +767,32 @@ class ShopGuideAgent:
                 *_text_delta_events(message_id, text),
                 {"type": "done", "message_id": message_id},
             ]
-        recommendation = _pick_comparison_winner(products, request.message)
-        dimensions = _comparison_dimensions(products, request.message)
+        from .comparison_engine import ComparisonEngine
+        engine = ComparisonEngine(self.llm_client)
+        try:
+            result = await engine.compare(products, request.message)
+        except Exception:
+            result = engine._fallback_compare(products, request.message)
+        winner = self.product_map.get(result.overall_winner) if result.overall_winner else products[0]
+        dimension_names = [dim.dimension for dim in result.dimensions]
         comparison = {
             "type": "comparison_result",
             "message_id": message_id,
-            "dimensions": dimensions,
-            "items": [_comparison_item(product, request.message, dimensions, context.last_plan) for product in products],
+            "product_ids": result.product_ids,
+            "dimensions": dimension_names,
+            "structured_dimensions": [dim.model_dump(mode="json") for dim in result.dimensions],
+            "overall_winner": result.overall_winner,
+            "overall_reason": result.overall_reason,
+            "scenario_recommendations": result.scenario_recommendations,
+            "items": [_comparison_item(product, request.message, dimension_names, context.last_plan) for product in products],
             "recommendation": {
-                "product_id": recommendation.product_id,
-                "reason": _comparison_reason(recommendation, request.message),
+                "product_id": winner.product_id if winner else None,
+                "reason": result.overall_reason or _comparison_reason(winner, request.message) if winner else "",
             },
         }
         text = (
             f"我把你刚才看的 {len(products)} 款放在一起比。"
-            f"如果只选一款，我更建议「{recommendation.title}」，因为{comparison['recommendation']['reason']}。"
+            f"如果只选一款，我更建议「{winner.title if winner else products[0].title}」，因为{result.overall_reason or '综合对比'}。"
         )
         _append_context_event(
             context,
@@ -718,7 +802,7 @@ class ShopGuideAgent:
             {"product_ids": [product.product_id for product in products], "comparison": comparison},
         )
         return [
-            _assistant_state(message_id, "comparing", "正在对比最近推荐商品"),
+            _assistant_state(message_id, "comparing", "正在多维度对比商品"),
             *_text_delta_events(message_id, text),
             comparison,
             _quick_actions_event(message_id, context.last_plan or _default_plan(request.message), []),
@@ -754,7 +838,7 @@ class ShopGuideAgent:
                 soft_preferences={"scene": "海边度假"},
                 retrieval_query=query,
             )
-            ranked = self.retrieve_and_rank(slot_plan)
+            ranked = self.retrieve_and_rank(slot_plan, session_id=request.session_id)
             if not ranked:
                 continue
             item = ranked[0]
@@ -890,13 +974,40 @@ class ShopGuideAgent:
             return None
         action = _normalize_cart_action(frame.cart_operation.action)
         quantity = max(frame.cart_operation.quantity, 0)
-        resolution = self.reference_resolver.resolve(
-            frame.cart_operation.target,
-            context,
-            cart.get(request.session_id),
-        )
-        product_id = resolution.product_id
+        product_id = None
+        if action in {"add_to_cart", "update_quantity"}:
+            product_id = self._resolve_product_mention_for_cart(request.message)
+        if not product_id:
+            resolution = self.reference_resolver.resolve(
+                frame.cart_operation.target,
+                context,
+                cart.get(request.session_id),
+            )
+            product_id = resolution.product_id
         return self._execute_cart_action(request.session_id, action, product_id, quantity, cart)
+
+    def _resolve_product_mention_for_cart(self, message: str) -> str | None:
+        message_text = _normalize_product_match_text(message)
+        if not message_text:
+            return None
+
+        scored: list[tuple[int, float, str]] = []
+        for product in self.products:
+            score = _product_mention_score(message_text, product)
+            if score <= 0:
+                continue
+            scored.append((score, -product.price, product.product_id))
+
+        if not scored:
+            return None
+
+        scored.sort(reverse=True)
+        best_score, _, best_product_id = scored[0]
+        if best_score < 80:
+            return None
+        if len(scored) > 1 and best_score == scored[1][0]:
+            return None
+        return best_product_id
 
     def execute_cart_action(
         self,
@@ -932,7 +1043,47 @@ class ShopGuideAgent:
             snapshot = cart.add(session_id, product_id, quantity)
         context.recent_cart_product_id = product_id
         context.state.cart_memory.recent_product_id = product_id
-        return {"action": action, "product_id": product_id, "cart": snapshot, "message": _cart_message(action, product_id)}
+        return {
+            "action": action,
+            "product_id": product_id,
+            "cart": snapshot,
+            "message": _cart_message(action, _cart_product_display_name(cart, product_id)),
+        }
+
+
+def _normalize_product_match_text(text: str | None) -> str:
+    return re.sub(r"[\s,，。！？!?:：；;、（）()【】\[\]\"'“”‘’]+", "", (text or "").lower())
+
+
+def _product_mention_score(message_text: str, product: Product) -> int:
+    title = _normalize_product_match_text(product.title)
+    brand = _normalize_product_match_text(product.brand)
+    category = _normalize_product_match_text(product.category)
+    sub_category = _normalize_product_match_text(product.sub_category)
+    search_text = _normalize_product_match_text(product.search_text)
+
+    score = 0
+    if brand and brand in message_text:
+        score += 45
+    if sub_category and sub_category in message_text:
+        score += 35
+    if category and category in message_text:
+        score += 10
+    brand_subcategory = f"{brand}{sub_category}"
+    if brand_subcategory and brand_subcategory in message_text and brand_subcategory in title:
+        score += 65
+    if title and message_text in title:
+        score += 60
+    for token in [brand_subcategory, brand, sub_category]:
+        if token and token in message_text and token in search_text:
+            score += 10
+
+    # Do not resolve on a generic category/sub-category alone.
+    if brand and brand in message_text:
+        return score
+    if brand_subcategory and brand_subcategory in message_text:
+        return score
+    return 0
 
 
 def _primary_text_matches_selected(text: str, ranked: list[RankedProduct]) -> bool:
@@ -953,10 +1104,11 @@ def _primary_text_matches_selected(text: str, ranked: list[RankedProduct]) -> bo
     return True
 
 
-def _product_card(item: RankedProduct) -> ProductCard:
+def _product_card(item: RankedProduct, is_primary: bool = False) -> ProductCard:
     product = item.product
-    tags = [product.category, product.sub_category, product.brand_region]
-    tags.extend(product.extracted_terms[:3])
+    tags = _product_dynamic_tags(product)
+    review_summary = evidence_review_summary(product, tags)
+    img = product_image_url(product.image_path)
     return ProductCard(
         product_id=product.product_id,
         name=product.title,
@@ -964,10 +1116,71 @@ def _product_card(item: RankedProduct) -> ProductCard:
         category=product.category,
         sub_category=product.sub_category,
         price=product.price,
-        main_image_url=product_image_url(product.image_path),
-        tags=[tag for tag in tags if tag],
+        main_image_url=img,
+        image_url=img,                      # Android 兼容
+        tags=tags,
         reason=item.reason,
+        is_primary=is_primary,
+        derived_attributes={
+            "generated_tags": [
+                {
+                    "value": tag,
+                    "evidence": "title/sub_category/brand/review",
+                    "confidence": 1.0,
+                }
+                for tag in tags
+            ],
+        },
+        positive_feedback_summary=[
+            review_summary["positive_summary"],
+        ] if review_summary.get("positive_summary") else [],
+        negative_feedback_summary=[
+            review_summary["negative_summary"],
+        ] if review_summary.get("negative_summary") else [],
+        risk_tags=_product_risk_tags(product),
     )
+
+
+def _product_dynamic_tags(product: Product) -> list[str]:
+    title = product.title or ""
+    text = f"{title} {product.marketing_description} {product.search_text}"
+    keyword_candidates = [
+        "三合一",
+        "速溶",
+        "冻干",
+        "黑咖啡",
+        "无糖",
+        "低糖",
+        "拍照",
+        "快充",
+        "轻薄",
+        "高刷",
+        "防晒",
+        "保湿",
+        "修护",
+        "清爽",
+        "通勤",
+        "跑步",
+        "速干",
+        "防水",
+    ]
+    candidates = [
+        *product.extracted_terms,
+        product.brand,
+        product.sub_category,
+        *[keyword for keyword in keyword_candidates if keyword in text],
+    ]
+    return dedupe([tag for tag in candidates if tag and tag != "未知"])[:4]
+
+
+def _product_risk_tags(product: Product) -> list[str]:
+    risks: list[str] = []
+    for review in product.reviews[:8]:
+        content = str(review.get("content", ""))
+        rating = float(review.get("rating", 0) or 0)
+        if rating <= 2 and content:
+            risks.append(content[:24])
+    return risks[:2]
 
 
 def _assistant_state(
@@ -1172,7 +1385,7 @@ def _looks_like_clarification_answer(message: str, ir) -> bool:
         return True
     if ir.query_intent.soft_preferences:
         return True
-    return bool(re.search(r"预算|以内|以下|拍照|续航|性价比|性能|轻薄|便携|清爽|温和|保湿|修护", message or ""))
+    return bool(re.search(r"预算|以内|以下|拍照|续航|性价比|性能|轻薄|便携|清爽|温和|保湿|修护|惊喜|稳妥|不踩雷|实用", message or ""))
 
 
 def _is_pending_clarification_answer(context: SessionContext, request: ChatRequest, ir) -> bool:
@@ -1201,27 +1414,18 @@ def _apply_pending_answer_preferences(ir, message: str) -> None:
         soft["texture"] = "温和"
     if "保湿" in message or "修护" in message:
         soft["effect"] = "保湿修护"
+    if "惊喜" in message:
+        soft["gift_style"] = "惊喜感"
+    if "稳妥" in message or "不踩雷" in message:
+        soft["gift_style"] = "稳妥不踩雷"
+    if "实用" in message:
+        soft["gift_style"] = "实用"
 
 
 def _llm_mode(llm_client) -> str:
     if isinstance(llm_client, FakeLLMClient):
         return "fake"
     return "doubao"
-
-
-def _extract_json_object(raw: str) -> dict:
-    raw = (raw or "").strip()
-    if raw.startswith("```"):
-        raw = re.sub(r"^```(?:json)?", "", raw).strip()
-        raw = re.sub(r"```$", "", raw).strip()
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", raw, flags=re.S)
-        if not match:
-            raise
-        data = json.loads(match.group(0))
-    return data if isinstance(data, dict) else {}
 
 
 def _fallback_selected_products(candidates: list[RankedProduct]) -> list[RankedProduct]:
@@ -1263,7 +1467,7 @@ def _has_product_admission_signal(message: str, plan: RetrievalPlan, taxonomy: T
     return bool(
         re.search(
             r"推荐|找|买|想要|想买|看看|有没有|预算|以内|以下|不要|不含|排除|对比|比较|哪个更|购物车|加购|加入|下单|结算|"
-            r"礼物|送人|送给",
+            r"防晒|精华|护肤|美妆|化妆|化妆品|彩妆|礼物|送人|送给",
             message or "",
             flags=re.I,
         )
@@ -1505,17 +1709,6 @@ def _resolve_mentioned_product_ids(text: str, last_product_ids: list[str]) -> li
     return [last_product_ids[index] for index in indexes if index < len(last_product_ids)]
 
 
-def _comparison_dimensions(products: list[Product], text: str) -> list[str]:
-    dimensions = ["价格", "品牌", "类目", "用户关心点"]
-    if "油皮" in text:
-        dimensions.append("适合油皮")
-    if "清爽" in text or any("清爽" in product.search_text for product in products):
-        dimensions.append("清爽度")
-    if any(product.review_rating for product in products):
-        dimensions.append("口碑")
-    return _dedupe(dimensions)
-
-
 def _comparison_item(product: Product, text: str, dimensions: list[str], plan: RetrievalPlan | None = None) -> dict:
     points = []
     if "油皮" in text and "油皮" in product.search_text:
@@ -1537,7 +1730,7 @@ def _comparison_item(product: Product, text: str, dimensions: list[str], plan: R
     }
 
 
-def _comparison_dimension_values(product: Product, text: str, dimensions: list[str]) -> dict[str, str]:
+def _slot_constraints(slot: str) -> HardConstraints:
     values: dict[str, str] = {}
     for dimension in dimensions:
         if dimension == "价格":
@@ -1574,15 +1767,6 @@ def _comparison_risk_flags(product: Product, plan: RetrievalPlan | None) -> list
         return []
     reason = explain_filter(product, plan.hard_constraints)
     return [reason] if reason else []
-
-
-def _pick_comparison_winner(products: list[Product], text: str) -> Product:
-    def score(product: Product) -> tuple[int, float, float]:
-        oil_score = 1 if "油皮" in text and "油皮" in product.search_text else 0
-        clear_score = 1 if "清爽" in product.search_text else 0
-        return oil_score + clear_score, product.review_rating, -product.price
-
-    return sorted(products, key=score, reverse=True)[0]
 
 
 def _comparison_reason(product: Product, text: str) -> str:
@@ -1716,12 +1900,23 @@ def _detect_quantity(text: str) -> int | None:
     return None
 
 
-def _cart_message(action: str, product_id: str) -> str:
+def _cart_product_display_name(cart: CartService, product_id: str) -> str:
+    product = cart.products.get(product_id)
+    if not product:
+        return product_id
+    brand = (product.brand or "").strip()
+    sub_category = (product.sub_category or "").strip()
+    if brand and brand != "未知" and sub_category and brand not in sub_category:
+        return f"{brand}{sub_category}"
+    return product.title or product_id
+
+
+def _cart_message(action: str, product_name: str) -> str:
     if action == "update_quantity":
-        return f"已更新 {product_id} 的数量。"
+        return f"已更新 {product_name} 的数量。"
     if action == "remove":
-        return f"已从购物车移除 {product_id}。"
-    return f"已把 {product_id} 加入购物车。"
+        return f"已从购物车移除 {product_name}。"
+    return f"已把 {product_name} 加入购物车。"
 
 
 def _update_profile(context: SessionContext, plan: RetrievalPlan) -> None:
@@ -1741,18 +1936,13 @@ def _update_profile(context: SessionContext, plan: RetrievalPlan) -> None:
         context.global_profile["exclude_brand_regions"] = constraints.exclude_brand_regions
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    result: list[str] = []
-    for value in values:
-        if value and value not in result:
-            result.append(value)
-    return result
-
+# 移动端适配：增大 chunk 到 36 字符，减少 WebSocket 帧数，降低移动网络开销
+_TEXT_DELTA_CHUNK_SIZE = 36
 
 def _text_delta_events(message_id: str, text: str) -> list[dict]:
     if not text:
         return []
-    chunks = [text[i : i + 12] for i in range(0, len(text), 12)]
+    chunks = [text[i : i + _TEXT_DELTA_CHUNK_SIZE] for i in range(0, len(text), _TEXT_DELTA_CHUNK_SIZE)]
     return [{"type": "text_delta", "message_id": message_id, "text": chunk} for chunk in chunks]
 
 

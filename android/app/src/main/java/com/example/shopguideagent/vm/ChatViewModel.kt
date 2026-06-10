@@ -482,6 +482,9 @@ class ChatViewModel @JvmOverloads constructor(
                         appendAssistantText(it, event.message)
                     }
                 }
+                if (!event.success) {
+                    return
+                }
                 _uiState.update { current ->
                     current.copy(
                         cartBadgeCount = event.badgeCount,

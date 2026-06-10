@@ -45,6 +45,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.OrderUiModel
+import com.example.shopguideagent.data.model.orderListKey
 import com.example.shopguideagent.ui.theme.AppBackground
 import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.BorderColor
@@ -109,7 +110,7 @@ fun OrdersScreen(
                     .padding(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                itemsIndexed(state.orders, key = { _, it -> it.orderId }) { index, order ->
+                itemsIndexed(state.orders, key = { _, it -> orderListKey(it) }) { index, order ->
                     val staggerDelay = (index * 60).coerceAtMost(300)
                     AnimatedVisibility(
                         visible = contentEntered,

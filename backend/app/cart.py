@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -85,7 +86,7 @@ class CartService:
         return {
             "status": "ok",
             "session_id": session_id,
-            "order_id": f"demo_order_{session_id}",
+            "order_id": f"demo_order_{session_id}_{uuid.uuid4().hex[:8]}",
             "paid_amount": snapshot["total_amount"],
             "items": snapshot["items"],
         }

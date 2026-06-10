@@ -17,8 +17,8 @@ import com.example.shopguideagent.data.remote.CartApiClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import java.util.UUID
 
 class CartViewModel @JvmOverloads constructor(
     private val userId: String = UserSession.USER_ID,
@@ -27,6 +27,8 @@ class CartViewModel @JvmOverloads constructor(
     private val cartApiClient: CartApiClient = CartApiClient(),
 ) : ViewModel() {
     private var activeSessionId: String = sessionId
+    private var cartSyncJob: Job? = null
+    private var cartSyncVersion: Long = 0L
 
     private val _uiState = MutableStateFlow(
         CartUiState(items = persistenceStore.loadCartItems(userId)).recalculate(),
@@ -48,22 +50,29 @@ class CartViewModel @JvmOverloads constructor(
 
     fun switchSession(sessionId: String) {
         if (sessionId.isBlank()) return
+        if (sessionId == activeSessionId) return
         activeSessionId = sessionId
         loadCartFromServer()
     }
 
     private fun loadCartFromServer() {
-        viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isLoading = true)
+        val sessionForRequest = activeSessionId
+        val requestVersion = ++cartSyncVersion
+        cartSyncJob?.cancel()
+        cartSyncJob = viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null).recalculate()
             try {
-                val items = cartApiClient.getCart(activeSessionId)
+                val items = cartApiClient.getCart(sessionForRequest)
+                if (sessionForRequest != activeSessionId || requestVersion != cartSyncVersion) return@launch
                 _uiState.value = CartUiState(items = items).recalculate()
                 persistenceStore.saveCartItems(userId, items)
             } catch (e: Exception) {
-                val localItems = persistenceStore.loadCartItems(userId)
-                _uiState.value = CartUiState(
-                    items = localItems,
-                    errorMessage = "购物车同步失败：${e.message}",
+                if (sessionForRequest != activeSessionId || requestVersion != cartSyncVersion) return@launch
+                val fallbackItems = _uiState.value.items.ifEmpty { persistenceStore.loadCartItems(userId) }
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    items = fallbackItems,
+                    errorMessage = operationError("购物车同步失败", e),
                 ).recalculate()
             }
         }
@@ -85,7 +94,7 @@ class CartViewModel @JvmOverloads constructor(
             try {
                 cartApiClient.addToCart(activeSessionId, product)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = "同步失败：${e.message}").recalculate()
+                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
             }
         }
     }
@@ -112,7 +121,7 @@ class CartViewModel @JvmOverloads constructor(
             try {
                 cartApiClient.updateQuantity(activeSessionId, productId, currentItem.quantity + 1)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = "同步失败：${e.message}").recalculate()
+                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
             }
         }
     }
@@ -135,7 +144,7 @@ class CartViewModel @JvmOverloads constructor(
                     cartApiClient.removeItem(activeSessionId, productId)
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = "同步失败：${e.message}").recalculate()
+                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
             }
         }
     }
@@ -150,7 +159,7 @@ class CartViewModel @JvmOverloads constructor(
             try {
                 cartApiClient.removeItem(activeSessionId, productId)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = "同步失败：${e.message}").recalculate()
+                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
             }
         }
     }
@@ -162,7 +171,7 @@ class CartViewModel @JvmOverloads constructor(
             try {
                 cartApiClient.addToCart(activeSessionId, removed.toProduct(), removed.quantity)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = "同步失败：${e.message}").recalculate()
+                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
             }
         }
     }
@@ -181,7 +190,7 @@ class CartViewModel @JvmOverloads constructor(
             try {
                 cartApiClient.selectItem(activeSessionId, productId, newSelected)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = "同步失败：${e.message}").recalculate()
+                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
             }
         }
     }
@@ -196,7 +205,7 @@ class CartViewModel @JvmOverloads constructor(
             try {
                 cartApiClient.clearCart(activeSessionId)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = "同步失败：${e.message}").recalculate()
+                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
             }
         }
     }
@@ -242,7 +251,7 @@ class CartViewModel @JvmOverloads constructor(
                     _uiState.value = state.copy(errorMessage = "结算失败").recalculate()
                 }
             } catch (e: Exception) {
-                _uiState.value = state.copy(errorMessage = "结算失败：${e.message}").recalculate()
+                _uiState.value = state.copy(errorMessage = operationError("结算失败", e)).recalculate()
             }
         }
     }
@@ -272,6 +281,9 @@ class CartViewModel @JvmOverloads constructor(
         reason = reason,
         stock = stock,
     )
+
+    private fun operationError(prefix: String, error: Exception): String =
+        "$prefix：${error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName}"
 }
 
 private fun CartUiState.recalculate(): CartUiState = CartUiState(

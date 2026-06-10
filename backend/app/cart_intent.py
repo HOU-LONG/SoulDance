@@ -60,7 +60,10 @@ def _normalize_cart_action(action: str) -> str:
 def _detect_quantity(text: str) -> int | None:
     text = text or ""
     units = "件个份瓶盒包袋罐条杯"
-    match = re.search(rf"(?:数量)?(?:改成|改为|设为)?\s*(\d+)\s*(?:[{units}])?", text)
+    match = re.search(rf"(?:数量|改成|改为|设为)\s*(\d+)\s*(?:[{units}])?", text)
+    if match:
+        return max(int(match.group(1)), 0)
+    match = re.search(rf"(\d+)\s*[{units}]", text)
     if match:
         return max(int(match.group(1)), 0)
     chinese_digits = {

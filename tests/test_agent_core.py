@@ -13,7 +13,15 @@ from backend.app.llm_client import (
     _response_evidence_payload,
 )
 from backend.app.memory_cache import RecommendationMemoryCache, StructuredMemoryCache
-from backend.app.models import ChatRequest, HardConstraints, PendingClarification, Product, RankedProduct, RetrievalPlan
+from backend.app.models import (
+    ChatRequest,
+    HardConstraints,
+    PendingClarification,
+    Product,
+    RankedProduct,
+    RecommendationMemoryItem,
+    RetrievalPlan,
+)
 from backend.app.taxonomy import TaxonomyResolver
 
 
@@ -2768,6 +2776,19 @@ def test_cart_service_add_update_checkout():
     assert cart.get("demo")["items"] == []
 
 
+def test_cart_checkout_order_id_is_unique_per_checkout():
+    products = load_products("ecommerce_agent_dataset")
+    cart = CartService(products)
+    product_id = products[0].product_id
+
+    cart.add("demo_unique_order", product_id, 1)
+    first = cart.checkout("demo_unique_order")
+    cart.add("demo_unique_order", product_id, 1)
+    second = cart.checkout("demo_unique_order")
+
+    assert first["order_id"] != second["order_id"]
+
+
 def test_evidence_bundle_classifies_support_risk_and_ignored_chunks():
     from backend.app.knowledge_base import build_evidence_bundle
 
@@ -3282,6 +3303,82 @@ def test_named_product_cart_command_resolves_catalog_product():
     assert event["product_id"] == "p_food_002"
     assert event["cart"]["items"][0]["quantity"] == 2
     assert "雀巢" in event["cart"]["items"][0]["name"]
+
+
+def test_named_alternative_phone_cart_command_uses_mentioned_product_not_focus():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    cart = CartService(products)
+    context = agent.sessions.get("demo_phone_cart_binding")
+    context.focus_product_id = "p_digital_016"
+    context.last_product_ids = ["p_digital_016", "p_digital_008"]
+    context.state.recommendation_memory.items = [
+        RecommendationMemoryItem(product_id="p_digital_016", role="primary", index=0),
+        RecommendationMemoryItem(product_id="p_digital_008", role="alternative", index=1),
+    ]
+
+    event = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_phone_cart_binding",
+                message="将小米17ultra加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert event["action"] == "add_to_cart"
+    assert event["product_id"] == "p_digital_008"
+    assert event["cart"]["items"][0]["product_id"] == "p_digital_008"
+    assert event["cart"]["items"][0]["quantity"] == 1
+
+
+def test_named_phone_cart_command_resolves_compact_model_alias():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    cart = CartService(products)
+
+    event = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_phone_compact_alias",
+                message="将OPPO Reno16加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert event["action"] == "add_to_cart"
+    assert event["product_id"] == "p_digital_016"
+    assert event["cart"]["items"][0]["quantity"] == 1
+
+
+def test_ambiguous_named_cart_command_does_not_fallback_to_focus_product():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    cart = CartService(products)
+    context = agent.sessions.get("demo_ambiguous_named_phone")
+    context.focus_product_id = "p_digital_016"
+    context.last_product_ids = ["p_digital_016", "p_digital_008"]
+
+    event = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_ambiguous_named_phone",
+                message="将小米手机加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert event["success"] is False
+    assert event["action"] == "add_to_cart"
+    assert event["product_id"] is None
+    assert event["cart"]["items"] == []
+    assert "小米" in event["message"]
 
 
 def test_product_card_includes_dynamic_generated_tags():

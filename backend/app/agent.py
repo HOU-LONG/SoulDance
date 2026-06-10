@@ -1011,8 +1011,12 @@ class ShopGuideAgent:
         product_id = None
         if action in {"get_cart", "clear_cart", "checkout"}:
             return self._execute_cart_action(request.session_id, action, None, quantity, cart)
+        has_named_product_hint = False
         if action in {"add_to_cart", "update_quantity"}:
+            has_named_product_hint = _has_explicit_product_hint(request.message, self.products)
             product_id = self._resolve_product_mention_for_cart(request.message)
+            if not product_id and has_named_product_hint:
+                return self._named_product_not_resolved_event(request.session_id, action, request.message, cart)
         if not product_id:
             resolution = self.reference_resolver.resolve(
                 frame.cart_operation.target,
@@ -1023,17 +1027,7 @@ class ShopGuideAgent:
         return self._execute_cart_action(request.session_id, action, product_id, quantity, cart)
 
     def _resolve_product_mention_for_cart(self, message: str) -> str | None:
-        message_text = _normalize_product_match_text(message)
-        if not message_text:
-            return None
-
-        scored: list[tuple[int, float, str]] = []
-        for product in self.products:
-            score = _product_mention_score(message_text, product)
-            if score <= 0:
-                continue
-            scored.append((score, -product.price, product.product_id))
-
+        scored = self._cart_product_candidates(message)
         if not scored:
             return None
 
@@ -1044,6 +1038,56 @@ class ShopGuideAgent:
         if len(scored) > 1 and best_score == scored[1][0]:
             return None
         return best_product_id
+
+    def _cart_product_candidates(self, message: str) -> list[tuple[int, float, str]]:
+        message_text = _normalize_product_match_text(message)
+        if not message_text:
+            return []
+
+        scored: list[tuple[int, float, str]] = []
+        for product in self.products:
+            score = _product_mention_score(message_text, product)
+            if score <= 0:
+                continue
+            scored.append((score, -product.price, product.product_id))
+        scored.sort(reverse=True)
+        return scored
+
+    def _named_product_not_resolved_event(
+        self,
+        session_id: str,
+        action: str,
+        message: str,
+        cart: CartService,
+    ) -> dict:
+        candidates = [
+            self.product_map[product_id]
+            for _, _, product_id in self._cart_product_candidates(message)[:3]
+            if product_id in self.product_map
+        ]
+        candidate_payload = [
+            {
+                "product_id": product.product_id,
+                "name": product.title,
+                "brand": product.brand,
+                "price": product.price,
+            }
+            for product in candidates
+        ]
+        if candidates:
+            names = "、".join(product.title for product in candidates[:3])
+            text = f"我找到了多个可能的商品：{names}。请说完整型号，或点商品卡片上的加购按钮。"
+        else:
+            text = "我还没找到明确要加入购物车的商品。请说完整品牌和型号，或点商品卡片上的加购按钮。"
+        return {
+            "action": action,
+            "product_id": None,
+            "cart": cart.get(session_id),
+            "success": False,
+            "reason": "named_product_not_resolved",
+            "candidates": candidate_payload,
+            "message": text,
+        }
 
     def execute_cart_action(
         self,
@@ -1128,6 +1172,19 @@ def _normalize_product_match_text(text: str | None) -> str:
     return re.sub(r"[\s,，。！？!?:：；;、（）()【】\[\]\"'“”‘’]+", "", (text or "").lower())
 
 
+def _has_explicit_product_hint(message: str, products: list[Product]) -> bool:
+    message_text = _normalize_product_match_text(message)
+    if not message_text:
+        return False
+    for product in products:
+        brand = _normalize_product_match_text(product.brand)
+        if brand and brand in message_text:
+            return True
+        if any(alias in message_text for alias in _product_model_aliases(product)):
+            return True
+    return False
+
+
 def _catalog_brands_mentioned_for_exclusion(message: str, products: list[Product]) -> list[str]:
     if not re.search(r"不要|不考虑|排除|避开|除了|别|非", message or ""):
         return []
@@ -1151,6 +1208,7 @@ def _product_mention_score(message_text: str, product: Product) -> int:
     category = _normalize_product_match_text(product.category)
     sub_category = _normalize_product_match_text(product.sub_category)
     search_text = _normalize_product_match_text(product.search_text)
+    aliases = _product_model_aliases(product)
 
     score = 0
     if brand and brand in message_text:
@@ -1162,6 +1220,11 @@ def _product_mention_score(message_text: str, product: Product) -> int:
     brand_subcategory = f"{brand}{sub_category}"
     if brand_subcategory and brand_subcategory in message_text and brand_subcategory in title:
         score += 65
+    alias_hits = [alias for alias in aliases if alias in message_text]
+    if alias_hits:
+        score += 120 + min(max(len(alias) for alias in alias_hits), 40)
+    if title and title in message_text:
+        score += 160
     if title and message_text in title:
         score += 60
     for token in [brand_subcategory, brand, sub_category]:
@@ -1169,11 +1232,37 @@ def _product_mention_score(message_text: str, product: Product) -> int:
             score += 10
 
     # Do not resolve on a generic category/sub-category alone.
+    if alias_hits:
+        return score
+    if title and title in message_text:
+        return score
     if brand and brand in message_text:
         return score
     if brand_subcategory and brand_subcategory in message_text:
         return score
     return 0
+
+
+def _product_model_aliases(product: Product) -> set[str]:
+    tokens = [
+        _normalize_product_match_text(token)
+        for token in re.findall(r"[A-Za-z]+|\d+|[\u4e00-\u9fff]+", product.title or "")
+    ]
+    tokens = [token for token in tokens if token]
+    aliases: set[str] = set()
+    for start in (0, 1):
+        max_end = min(len(tokens), start + 6)
+        for end in range(start + 2, max_end + 1):
+            alias = "".join(tokens[start:end])
+            if len(alias) >= 4 and re.search(r"[a-z0-9]", alias):
+                aliases.add(alias)
+    brand = _normalize_product_match_text(product.brand)
+    if brand:
+        for alias in list(aliases):
+            if alias.startswith(brand) or len(alias) < 4:
+                continue
+            aliases.add(f"{brand}{alias}")
+    return aliases
 
 
 def _primary_text_matches_selected(text: str, ranked: list[RankedProduct]) -> bool:

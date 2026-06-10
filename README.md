@@ -1,101 +1,92 @@
-# ShopGuide Agent / SoulDance
+# SoulDance / ShopGuide Agent
 
-低压力 AI 导购产品，包含 Android 原生客户端和 FastAPI 后端。用户可以用自然语言说出购物需求，系统会基于商品库给出主推商品、少量备选、商品卡片、购物车操作、语音输入和语音播报。
+SoulDance 是一个低压力 AI 导购 Agent：用户用自然语言说出需求，系统理解预算、品牌、用途和负向偏好，从商品库中给出一个主推商品、少量备选、商品卡片、购物车操作和语音交互。
 
-## 仓库组织
+项目包含 Android 原生客户端和 FastAPI 后端，当前 App 默认连接公网服务，安装 APK 后即可体验。
 
-推荐用一个 GitHub 仓库、一个主分支管理完整产品，按目录区分 Android 和后端：
+## 30 秒快速体验
+
+1. 在 GitHub Releases 下载最新 APK。
+2. 安装到 Android 真机，允许录音权限。
+3. 打开 App 后直接输入或语音说：
 
 ```text
-SoulDance/
-  android/     Android Kotlin + Jetpack Compose 客户端
-  backend/     FastAPI 后端服务
-  docs/        部署、语音、验收和技术说明
-  tests/       后端测试
+我想要一杯不超过30元的咖啡
+我要一瓶东鹏特饮
+推荐一款拍照好的手机，预算8000
+把小米17ultra加入购物车
+清空购物车
+不要雀巢，换一个同类推荐
 ```
 
-不建议用两个长期分支分别存 Android 和后端。分支更适合表达版本或功能开发，比如 `feature/voice-fix`、`release/demo-2026-06-10`。如果 Android 和后端分散在两个长期分支里，用户 clone 后无法一次拿到完整产品，README、Issue、Release 和版本对应关系都会变复杂。
-
-## 当前公网体验地址
-
-当前 Android 客户端默认连接公网后端，真机安装后即可体验。
+当前公网服务：
 
 ```text
 HTTP API: https://continually-replication-allowing-editions.trycloudflare.com/
 WebSocket: wss://continually-replication-allowing-editions.trycloudflare.com/ws/chat
 ```
 
-## 快速体验
+说明：APK 建议通过 GitHub Releases 分发，不提交到 git 历史。当前 Cloudflare Tunnel 是公网演示地址，如果地址变化，需要重新打包 APK。
 
-### 方式 1：下载 APK 直接安装
+## 核心能力
 
-可以把编译好的 APK 上传到 GitHub Releases，用户下载后直接安装使用。因为 App 已经内置公网后端地址，用户不需要本地部署后端。
+- 自然语言导购：理解商品类别、预算、品牌、用途、排除项和多轮追问。
+- 精准商品卡片：默认主推一个商品，必要时给 1-2 个备选，避免搜索引擎式堆结果。
+- 上下文追问：围绕某款商品继续问，例如“不要雀巢”“换便宜点”“更适合拍照吗”。
+- 购物车闭环：支持自然语言加购、清空购物车、购物车页面结算和我的订单展示。
+- 语音交互：支持语音输入、流式语音播报和会话级静音。
+- 公网演示：Android 客户端可直接连接已公开的后端服务，便于评委和体验用户快速验证。
 
-推荐发布方式：
+## 演示路径
 
-1. 在 GitHub 仓库页面创建 `Release`。
-2. 上传 `app-debug.apk` 或正式签名的 release APK。
-3. 在 Release Notes 中写清楚公网后端地址、主要功能和已知限制。
-4. 在 README 里放 Release 下载入口。
+建议按下面顺序体验：
 
-说明：
+1. 商品理解：输入“我想要一杯不超过30元的咖啡”，确认不会出现超预算商品。
+2. 精确检索：输入“我要一瓶东鹏特饮”，确认能找到商品库中的东鹏特饮。
+3. 多轮追问：点击商品卡片下方建议，或输入“不要这个品牌”，确认返回新的推荐。
+4. 自然语言加购：输入“把小米17ultra加入购物车”，确认购物车里是真实的小米商品且数量为 1。
+5. 购物车操作：进入购物车，增减数量、清空购物车、结算。
+6. 订单展示：结算后进入“我的订单”，确认页面稳定且订单可展示。
+7. 语音体验：按住语音键说需求，松开发送，上滑取消；当前会话可静音。
 
-- 可以上传 APK 到 GitHub，但更建议放在 GitHub Releases，而不是直接提交进 git 仓库。
-- Debug APK 适合内部演示和快速体验；面向外部用户时建议发布 signed release APK。
-- Android 安装第三方 APK 时需要允许“安装未知来源应用”。
-- 当前 Cloudflare URL 是临时隧道风格地址；如果隧道地址变化，需要更新 `android/app/src/main/java/com/example/shopguideagent/config/AppConfig.kt` 后重新打包 APK。
-
-### 方式 2：开发者本地编译安装
-
-```powershell
-cd android
-$env:JAVA_HOME='C:\Users\houlong\.jdks\jbr-21.0.11'
-$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
-.\gradlew.bat :app:testDebugUnitTest
-.\gradlew.bat :app:assembleDebug
-```
-
-APK 默认输出：
+## 系统架构
 
 ```text
-android\app\build\outputs\apk\debug\app-debug.apk
+Android App
+  Kotlin + Jetpack Compose
+  MVVM + StateFlow
+  OkHttp / Retrofit / WebSocket
+  SpeechRecognizer + streaming TTS playback
+
+FastAPI Backend
+  商品数据加载与图片资源服务
+  BM25 / embedding 检索
+  语义解析与推荐编排
+  购物车与订单 demo 服务
+  STT / TTS 适配层
+
+Data
+  ecommerce_agent_dataset/
+  商品 JSON、图片、评论和派生标签
 ```
 
-安装到已连接真机：
+Android 只负责 UI 状态、发送正确 payload、展示后端结果；商品推荐、商品匹配、价格过滤和购物车真实状态由后端负责。
 
-```powershell
-adb install -r android\app\build\outputs\apk\debug\app-debug.apk
-```
+## 仓库结构
 
-如果需要自定义构建输出目录，可以设置：
-
-```powershell
-$env:SHOPGUIDE_ANDROID_BUILD_DIR='C:\path\to\build\dir'
-```
-
-## 体验流程
-
-打开 App 后可以直接输入：
+本仓库采用单主分支 monorepo，按目录区分客户端和后端：
 
 ```text
-我要一瓶东鹏特饮
-我想要一杯不超过30元的咖啡
-把东鹏特饮加入购物车
-清空购物车
-不要雀巢
-推荐一款拍照好的手机，预算8000
+SoulDance/
+  android/     Android Kotlin + Jetpack Compose 客户端
+  backend/     FastAPI 后端服务
+  docs/        技术说明、验收清单和运行文档
+  tests/       后端测试
 ```
 
-核心交互：
+不建议用两个长期分支分别保存 Android 和后端。功能开发可以使用短期分支，例如 `feature/cart-fix`；主分支保留完整产品，便于 clone、评审、发布和版本对应。
 
-- 文本聊天：输入购物需求，后端通过 WebSocket 流式返回回答和商品卡片。
-- 商品推荐：默认一个主推商品，必要时展示 1-2 个备选。
-- 商品详情：点击商品卡片打开详情 BottomSheet，可围绕当前商品继续追问。
-- 购物车：支持自然语言加购、清空购物车，以及购物车页面结算。
-- 语音输入：按住麦克风说话，松开发送，上滑取消；首次使用需要授予录音权限。
-- 语音播报：默认开启；当前会话可静音，新会话会恢复默认播报。
-
-## Android 配置
+## Android 开发
 
 公网配置在：
 
@@ -111,73 +102,64 @@ const val BASE_WS_URL = "wss://continually-replication-allowing-editions.tryclou
 const val WS_CHAT_PATH = "/ws/chat"
 ```
 
-如果使用新的 Cloudflare Tunnel 地址，需要同步更新 `BASE_HTTP_URL` 和 `BASE_WS_URL`，然后重新编译 APK。
+本地编译：
 
-## 后端部署
+```powershell
+cd android
+$env:JAVA_HOME='C:\Users\houlong\.jdks\jbr-21.0.11'
+$env:PATH="$env:JAVA_HOME\bin;$env:PATH"
+.\gradlew.bat :app:testDebugUnitTest
+.\gradlew.bat :app:assembleDebug
+```
 
-当前后端运行在：
+APK 输出：
 
 ```text
-mix_A100:/home/huadabioa/houlong/SoulDance
+android\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-进入后端目录：
+安装到真机：
 
-```bash
-ssh mix_A100
-cd /home/huadabioa/houlong/SoulDance
+```powershell
+adb install -r android\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-运行测试：
+如果 Windows 中文路径导致 JUnit 类加载异常，可指定 ASCII 构建目录：
 
-```bash
-env/venv_shopguide_backend/bin/python -m pytest -q
+```powershell
+$env:SHOPGUIDE_ANDROID_BUILD_DIR='C:\path\to\android-build'
 ```
 
-启动或重启 FastAPI：
+## 后端开发
+
+安装依赖后在仓库根目录运行：
 
 ```bash
-pkill -f "uvicorn backend.app.main:app" || true
-mkdir -p logs
-setsid -f env/venv_shopguide_backend/bin/python -m uvicorn backend.app.main:app \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --log-level info \
-  --timeout-keep-alive 120 \
-  --ws-ping-interval 20 \
-  --ws-ping-timeout 10 \
-  --limit-concurrency 20 \
-  > logs/backend.log 2>&1 < /dev/null
+python -m pytest -q
+python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
 ```
 
 本机验证：
 
 ```bash
 curl -fsS http://127.0.0.1:8000/health
+curl -fsS "http://127.0.0.1:8000/api/cart?session_id=demo_session_001"
 ```
-
-启动 Cloudflare 临时公网隧道：
-
-```bash
-nohup /home/huadabioa/bin/cloudflared tunnel --url http://127.0.0.1:8000 \
-  > logs/cloudflared-8000.log 2>&1 &
-tail -f logs/cloudflared-8000.log
-```
-
-复制日志中生成的 `https://*.trycloudflare.com` 地址，然后更新 Android 的 `AppConfig.kt`。
 
 公网验证：
 
 ```powershell
-curl.exe -sS https://<your-subdomain>.trycloudflare.com/health
+curl.exe -sS https://continually-replication-allowing-editions.trycloudflare.com/health
 ```
 
-## 接口概览
+## 主要接口
 
 ```text
 GET  /health
 GET  /api/products
 GET  /api/cart
+POST /api/cart/add
+POST /api/cart/clear
 POST /api/cart/checkout
 POST /api/stt
 WS   /ws/chat
@@ -197,26 +179,45 @@ done
 error
 ```
 
-Android 不在客户端写商品推荐逻辑；商品匹配、价格过滤、购物车真实状态、语音识别和 TTS 都以后端为准。
+## 测试与验收
 
-## 发布 APK 到 GitHub 的建议
+后端：
+
+```bash
+python -m pytest -q
+```
+
+Android：
+
+```powershell
+cd android
+.\gradlew.bat :app:testDebugUnitTest :app:assembleDebug
+```
+
+关键验收点：
+
+- “不超过30元的咖啡”不返回超预算商品。
+- “我要一瓶东鹏特饮”能命中商品库真实商品。
+- “把小米17ultra加入购物车”加入小米 17 Ultra，数量为 1，不会加入主推 OPPO 17 件。
+- 点击购物车和我的订单不闪退，同步失败时保留本地状态并显示原因。
+- Markdown 结构化文本正常显示，语音播报不读出 Markdown 符号。
+
+## 发布 APK
 
 推荐使用 GitHub Releases：
 
 ```text
 GitHub Releases
   -> 上传 app-debug.apk 或 signed release APK
-  -> Release Notes 写清楚当前公网后端地址、支持功能、已知限制
+  -> Release Notes 写清楚公网后端地址、主要功能、已知限制
   -> README 放 Release 下载入口
 ```
 
-不建议把 APK 长期直接提交到主分支，原因是：
+不建议把 APK 长期提交到主分支：
 
 - APK 是构建产物，不是源码。
 - 每次更新都会增加仓库体积。
-- GitHub Releases 更适合管理版本、下载链接和变更说明。
-
-如果公网后端地址稳定，用户下载 APK 后就可以直接使用；如果 Cloudflare 临时地址变化，旧 APK 会连不上，需要重新打包并发布新 Release。
+- Releases 更适合管理版本、下载链接和变更说明。
 
 ## 常见问题
 
@@ -228,43 +229,16 @@ GitHub Releases
 curl.exe -sS https://continually-replication-allowing-editions.trycloudflare.com/health
 ```
 
-如果失败，通常是后端进程或 Cloudflare Tunnel 已停止。
+如果失败，通常是后端进程或 Cloudflare Tunnel 停止。
 
 ### 语音识别失败
 
-确认：
-
-- 手机已授权录音权限。
-- `/api/stt` 可访问。
-- 后端 ASR provider 已配置并运行。
-
-快速检查：
-
-```bash
-curl -fsS http://127.0.0.1:8000/openapi.json | grep /api/stt
-```
+确认手机已授权录音权限，并检查 `/api/stt` 是否可访问。后端未配置 STT provider 时应返回明确错误，Android 会显示失败原因。
 
 ### 商品图片不显示
 
-确认公网后端可访问商品图片资源，并检查 App 当前 `BASE_HTTP_URL` 是否和后端公网地址一致。
+确认 App 当前 `BASE_HTTP_URL` 与后端公网地址一致，并检查商品图片路径是否能通过公网访问。
 
 ### 自己部署后端后 App 仍连接旧服务
 
-更新 `AppConfig.kt` 后必须重新编译并安装 APK。
-
-## 验收命令
-
-Android：
-
-```powershell
-cd android
-.\gradlew.bat :app:testDebugUnitTest
-.\gradlew.bat :app:assembleDebug
-```
-
-后端：
-
-```bash
-env/venv_shopguide_backend/bin/python -m pytest -q
-curl -fsS http://127.0.0.1:8000/health
-```
+更新 `AppConfig.kt` 的 HTTP/WS 地址后，必须重新编译并安装 APK。

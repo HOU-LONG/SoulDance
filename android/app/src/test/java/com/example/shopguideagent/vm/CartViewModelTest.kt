@@ -177,6 +177,23 @@ class CartViewModelTest {
     }
 
     @Test
+    fun switchSessionDoesNotReloadWhenSessionIsUnchanged() {
+        val api = SessionCartApiClient(
+            carts = mutableMapOf("chat_session_001" to emptyList()),
+        )
+        val viewModel = CartViewModel(
+            userId = "user_a",
+            sessionId = "chat_session_001",
+            persistenceStore = FakeCartPersistenceStore(),
+            cartApiClient = api,
+        )
+
+        viewModel.switchSession("chat_session_001")
+
+        assertEquals(listOf("chat_session_001"), api.getCartSessions)
+    }
+
+    @Test
     fun clearUsesActiveChatSessionAfterSwitch() {
         val api = SessionCartApiClient(
             carts = mutableMapOf(

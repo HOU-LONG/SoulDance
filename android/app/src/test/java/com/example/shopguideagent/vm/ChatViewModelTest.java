@@ -330,6 +330,33 @@ public class ChatViewModelTest {
     }
 
     @Test
+    public void failedCartUpdateRendersMessageWithoutBadgeOrSyncChange() throws Exception {
+        ChatViewModel viewModel = viewModelWithCatalog();
+        viewModel.sendMessageStreaming("将小米手机加入购物车");
+        String assistantId = viewModel.getUiState().getValue().getMessages().get(2).getId();
+
+        Method handler = ChatViewModel.class.getDeclaredMethod("handleRealtimeEvent", RealtimeEvent.class);
+        handler.setAccessible(true);
+        handler.invoke(
+                viewModel,
+                new RealtimeEvent.CartUpdate(
+                        assistantId,
+                        0,
+                        "我找到了多个可能的商品，请说完整型号。",
+                        "add_to_cart",
+                        null,
+                        false
+                )
+        );
+
+        assertEquals(0, viewModel.getUiState().getValue().getCartBadgeCount());
+        assertEquals(0L, viewModel.getUiState().getValue().getCartSyncVersion());
+        org.junit.Assert.assertTrue(
+                viewModel.getUiState().getValue().getMessages().get(2).getText().contains("完整型号")
+        );
+    }
+
+    @Test
     public void quickActionsAttachToActiveAssistantMessage() throws Exception {
         ChatViewModel viewModel = viewModelWithCatalog();
         viewModel.sendMessageStreaming("recommend sunscreen");

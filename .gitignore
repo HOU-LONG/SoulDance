@@ -49,6 +49,10 @@ vllm-omni-main/
 
 # Runtime data
 data/
+!android/app/src/main/java/com/example/shopguideagent/data/
+!android/app/src/main/java/com/example/shopguideagent/data/**
+!android/app/src/test/java/com/example/shopguideagent/data/
+!android/app/src/test/java/com/example/shopguideagent/data/**
 
 # Claude Code worktrees (temporary)
 .claude/worktrees/

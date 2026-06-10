@@ -32,5 +32,11 @@ def test_detect_quantity_extracts_numeric_and_chinese_values():
     assert cart_intent._detect_quantity("买三盒") == 3
 
 
+def test_detect_quantity_ignores_model_numbers_without_quantity_units():
+    assert cart_intent._detect_quantity("将小米17ultra加入购物车") is None
+    assert cart_intent._detect_quantity("把OPPO Reno16加入购物车") is None
+    assert cart_intent._detect_quantity("iPhone17 Pro加入购物车") is None
+
+
 def test_cart_message_for_remove_action():
     assert cart_intent._cart_message("remove", "苹果手机") == "已从购物车移除 苹果手机。"

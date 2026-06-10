@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .cart_intent import _detect_quantity as _detect_cart_quantity
 from .constraint_filter import dedupe, extract_excluded_brands, extract_included_brands
 from .models import CartOperation, ChatRequest, ConstraintEdits, HardConstraints, ProductReference, RetrievalPlan, SemanticFrame, SessionContext
 from .utils import extract_json
@@ -507,35 +508,7 @@ def _normalize_cart_action(action: str) -> str:
 
 
 def _detect_quantity(text: str) -> int | None:
-    text = text or ""
-    units = "件个份瓶盒包袋罐条杯"
-    match = re.search(rf"(?:数量)?(?:改成|改为|设为)?\s*(\d+)\s*(?:[{units}])?", text)
-    if match:
-        return max(int(match.group(1)), 0)
-    chinese_digits_extended = {
-        "一": 1,
-        "两": 2,
-        "二": 2,
-        "三": 3,
-        "四": 4,
-        "五": 5,
-        "六": 6,
-        "七": 7,
-        "八": 8,
-        "九": 9,
-        "十": 10,
-    }
-    for word, value in chinese_digits_extended.items():
-        if re.search(rf"{word}\s*(?:[{units}])", text):
-            return value
-    match = re.search(r"(?:数量)?(?:改成|改为|设为)?\s*(\d+)", text)
-    if match:
-        return max(int(match.group(1)), 0)
-    chinese_digits = {"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5}
-    for word, value in chinese_digits.items():
-        if f"{word}件" in text or f"{word}个" in text:
-            return value
-    return None
+    return _detect_cart_quantity(text)
 
 
 def _detect_price_min(text: str) -> float | None:

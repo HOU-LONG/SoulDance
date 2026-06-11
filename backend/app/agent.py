@@ -1044,9 +1044,12 @@ class ShopGuideAgent:
         if not message_text:
             return []
 
+        unique_brand_product_ids = _unique_brand_product_ids_for_message(message_text, self.products)
         scored: list[tuple[int, float, str]] = []
         for product in self.products:
             score = _product_mention_score(message_text, product)
+            if product.product_id in unique_brand_product_ids:
+                score += 100
             if score <= 0:
                 continue
             scored.append((score, -product.price, product.product_id))
@@ -1074,9 +1077,11 @@ class ShopGuideAgent:
             }
             for product in candidates
         ]
-        if candidates:
+        if len(candidates) > 1:
             names = "、".join(product.title for product in candidates[:3])
             text = f"我找到了多个可能的商品：{names}。请说完整型号，或点商品卡片上的加购按钮。"
+        elif candidates:
+            text = f"我找到了一个可能的商品：{candidates[0].title}。请说完整型号，或点商品卡片上的加购按钮。"
         else:
             text = "我还没找到明确要加入购物车的商品。请说完整品牌和型号，或点商品卡片上的加购按钮。"
         return {
@@ -1183,6 +1188,20 @@ def _has_explicit_product_hint(message: str, products: list[Product]) -> bool:
         if any(alias in message_text for alias in _product_model_aliases(product)):
             return True
     return False
+
+
+def _unique_brand_product_ids_for_message(message_text: str, products: list[Product]) -> set[str]:
+    products_by_brand: dict[str, list[Product]] = {}
+    for product in products:
+        brand = _normalize_product_match_text(product.brand)
+        if not brand:
+            continue
+        products_by_brand.setdefault(brand, []).append(product)
+    return {
+        items[0].product_id
+        for brand, items in products_by_brand.items()
+        if len(items) == 1 and brand in message_text
+    }
 
 
 def _catalog_brands_mentioned_for_exclusion(message: str, products: list[Product]) -> list[str]:

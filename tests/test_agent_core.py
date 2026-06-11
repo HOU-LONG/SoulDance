@@ -3328,6 +3328,51 @@ def test_unique_short_product_name_cart_command_adds_dongpeng_directly():
     assert event["cart"]["items"][0]["quantity"] == 1
 
 
+def test_unique_brand_cart_command_adds_product_directly():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    cart = CartService(products)
+
+    event = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_redbull_cart",
+                message="将红牛加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert event["success"] is True
+    assert event["action"] == "add_to_cart"
+    assert event["product_id"] == "p_food_006"
+    assert event["cart"]["items"][0]["product_id"] == "p_food_006"
+    assert event["cart"]["items"][0]["quantity"] == 1
+
+
+def test_multi_product_brand_cart_command_still_requires_disambiguation():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    cart = CartService(products)
+
+    event = asyncio.run(
+        agent.try_handle_cart_message(
+            ChatRequest(
+                type="user_message",
+                session_id="demo_xiaomi_brand_only_cart",
+                message="将小米加入购物车",
+            ),
+            cart,
+        )
+    )
+
+    assert event["success"] is False
+    assert event["product_id"] is None
+    assert event["cart"]["items"] == []
+    assert len(event["candidates"]) > 1
+
+
 def test_named_alternative_phone_cart_command_uses_mentioned_product_not_focus():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())

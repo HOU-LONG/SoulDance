@@ -54,6 +54,16 @@ class AdaptiveRetriever:
         每轮结果按 product_id 合并，保留最高分数。当累计唯一商品数
         达到 min_candidates 时提前终止。
         """
+        if self._should_use_hybrid_retriever():
+            try:
+                from .rag.fusion import HybridRetriever
+
+                hybrid_results = HybridRetriever(self.retriever).search(plan, top_k=top_k)
+                if hybrid_results:
+                    return hybrid_results
+            except Exception:
+                pass
+
         merged: dict[str, tuple[Product, float]] = {}
 
         for round_index in range(self.policy.max_rounds):
@@ -135,4 +145,11 @@ class AdaptiveRetriever:
             retrieval_query=" ".join(query_parts),
             need_clarification=plan.need_clarification,
             clarification_question=plan.clarification_question,
+        )
+
+    def _should_use_hybrid_retriever(self) -> bool:
+        retriever_class = self.retriever.__class__
+        return (
+            retriever_class.__module__.endswith("embedding_retriever")
+            and retriever_class.__name__ in {"EmbeddingRetriever", "BM25OnlyRetriever"}
         )

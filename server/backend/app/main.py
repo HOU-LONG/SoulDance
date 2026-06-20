@@ -22,7 +22,6 @@ from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
 from .order_service import OrderError, OrderService
-from .repositories import CartRepository, OrderRepository, SessionRepository, FeedbackRepository, ProfileRepository
 from .semantic_layer import rule_semantic_frame
 from .session_store import SessionStore
 from .stt_adapter import STTAdapter

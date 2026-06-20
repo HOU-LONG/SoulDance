@@ -20,6 +20,7 @@ from .feedback_store import FeedbackStore
 from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
+from .order_service import OrderError, OrderService
 from .semantic_layer import rule_semantic_frame
 from .session_store import SessionStore
 from .stt_adapter import STTAdapter
@@ -210,15 +211,26 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
 
     @app.post("/api/cart/add")
     def cart_add(request: CartActionRequest):
-        return _cart_success(cart.add(request.session_id, request.product_id or "", request.quantity))
+        return _cart_or_http(
+            lambda: _cart_success(
+                cart.add(
+                    request.session_id,
+                    request.product_id or "",
+                    request.quantity,
+                    idempotency_key=request.idempotency_key,
+                )
+            )
+        )
 
     @app.post("/api/cart/update_quantity")
     def cart_update(request: CartActionRequest):
-        return _cart_success(cart.update_quantity(request.session_id, request.product_id or "", request.quantity))
+        return _cart_or_http(
+            lambda: _cart_success(cart.update_quantity(request.session_id, request.product_id or "", request.quantity))
+        )
 
     @app.post("/api/cart/remove")
     def cart_remove(request: CartActionRequest):
-        return _cart_success(cart.remove(request.session_id, request.product_id or ""))
+        return _cart_or_http(lambda: _cart_success(cart.remove(request.session_id, request.product_id or "")))
 
     @app.post("/api/cart/clear")
     def cart_clear(request: CartActionRequest):
@@ -229,7 +241,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         snapshot = cart.get(request.session_id)
         if not snapshot.get("items"):
             raise HTTPException(status_code=400, detail="购物车为空，无法结算。")
-        result = cart.checkout(request.session_id)
+        result = cart.checkout(request.session_id, idempotency_key=request.idempotency_key)
         return {
             **result,
             "success": True,
@@ -295,12 +307,11 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         ctx = user_profile_store.to_preference_context(user_id)
         return {"profile": profile.model_dump(mode="json"), "preference_context": ctx}
 
-    from .order_service import OrderService
     order_service = OrderService(cart, settings.session_dir or None)
 
     @app.post("/api/order/initiate")
     def order_initiate(request: CartActionRequest):
-        return order_service.initiate_checkout(request.session_id).model_dump(mode="json")
+        return _order_or_http(lambda: order_service.initiate_checkout(request.session_id).model_dump(mode="json"))
 
     @app.get("/api/order/addresses")
     def order_addresses():
@@ -308,13 +319,19 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
 
     @app.post("/api/order/select_address")
     def order_select_address(request: OrderActionRequest):
-        order = order_service.select_address(request.order_id, request.address_id or "")
-        return order.model_dump(mode="json") if order else {"error": "order not found"}
+        return _order_or_http(
+            lambda: order_service.select_address(request.order_id, request.address_id or "").model_dump(mode="json")
+        )
 
     @app.post("/api/order/confirm")
     def order_confirm(request: OrderActionRequest):
-        order = order_service.confirm_order(request.order_id)
-        return order.model_dump(mode="json") if order else {"error": "order not confirmable"}
+        return _order_or_http(
+            lambda: order_service.confirm_order(
+                request.order_id,
+                request.confirmation_token,
+                request.idempotency_key,
+            ).model_dump(mode="json")
+        )
 
     return app
 
@@ -336,6 +353,22 @@ def _handle_cart_action(cart: CartService, request: ChatRequest) -> dict:
         result = cart.checkout(request.session_id)
         return {**result, "success": True, "message": "结算成功。", "total": result.get("paid_amount", 0.0)}
     return _cart_success(cart.get(request.session_id))
+
+
+def _cart_or_http(operation):
+    try:
+        return operation()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+def _order_or_http(operation):
+    try:
+        return operation()
+    except OrderError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 def _cart_success(snapshot: dict) -> dict:

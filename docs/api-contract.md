@@ -34,11 +34,38 @@ Product objects are backend-owned commerce facts. Android may display them but m
 ```http
 GET  /api/cart
 POST /api/cart/add
+POST /api/cart/update_quantity
+POST /api/cart/remove
 POST /api/cart/clear
 POST /api/cart/checkout
 ```
 
 Cart write operations are deterministic backend operations. Agent text must not claim a cart mutation succeeded unless the corresponding tool/API path succeeded.
+
+`/api/cart/add` and `/api/cart/checkout` accept an optional `idempotency_key`. Reusing the same key for the same session returns the first result without applying the mutation again. Product-targeted writes reject invalid quantity values instead of silently coercing them.
+
+## Orders
+
+```http
+POST /api/order/initiate
+GET  /api/order/addresses
+POST /api/order/select_address
+POST /api/order/confirm
+```
+
+Current demo ordering is a protected state machine:
+
+```text
+address_required -> awaiting_confirmation -> completed
+```
+
+Rules:
+
+- `POST /api/order/initiate` rejects an empty cart.
+- `POST /api/order/select_address` attaches a server-known address and returns a `confirmation_token`.
+- `POST /api/order/confirm` must include `confirmation_token` and should include `idempotency_key`.
+- Replaying the same confirm idempotency key returns the same completed order.
+- The server owns address and order facts; the Agent must not fabricate a successful order without this API/tool result.
 
 ## STT
 

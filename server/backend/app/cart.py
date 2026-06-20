@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import uuid
@@ -12,30 +13,45 @@ from .models import Product
 logger = logging.getLogger(__name__)
 
 
+MAX_CART_QUANTITY = 99
+
+
 class CartService:
     def __init__(self, products: list[Product], persist_path: str | Path | None = None):
         self.products = {product.product_id: product for product in products}
         self._carts: dict[str, dict[str, int]] = {}
         self._audit_log: dict[str, list[dict]] = {}
+        self._idempotency_results: dict[str, dict[str, dict]] = {}
         self.persist_path = Path(persist_path) if persist_path else None
         if self.persist_path:
             self.persist_path.parent.mkdir(parents=True, exist_ok=True)
             self._load()
 
-    def add(self, session_id: str, product_id: str, quantity: int = 1) -> dict:
-        if product_id not in self.products:
-            raise KeyError(f"unknown product_id: {product_id}")
+    def add(
+        self,
+        session_id: str,
+        product_id: str,
+        quantity: int = 1,
+        idempotency_key: str | None = None,
+    ) -> dict:
+        existing = self._get_idempotency_result(session_id, idempotency_key)
+        if existing is not None:
+            return existing
+        self._validate_product(product_id)
+        self._validate_quantity(quantity, allow_zero=False)
         cart = self._carts.setdefault(session_id, {})
-        cart[product_id] = cart.get(product_id, 0) + max(quantity, 1)
+        cart[product_id] = cart.get(product_id, 0) + quantity
         self._log_action(session_id, "add", product_id, cart[product_id])
+        snapshot = self.get(session_id)
+        self._remember_idempotency_result(session_id, idempotency_key, snapshot)
         self._save()
-        return self.get(session_id)
+        return snapshot
 
     def update_quantity(self, session_id: str, product_id: str, quantity: int) -> dict:
-        if product_id not in self.products:
-            raise KeyError(f"unknown product_id: {product_id}")
+        self._validate_product(product_id)
+        self._validate_quantity(quantity, allow_zero=True)
         cart = self._carts.setdefault(session_id, {})
-        if quantity <= 0:
+        if quantity == 0:
             cart.pop(product_id, None)
             self._log_action(session_id, "remove", product_id, 0)
         else:
@@ -45,6 +61,7 @@ class CartService:
         return self.get(session_id)
 
     def remove(self, session_id: str, product_id: str) -> dict:
+        self._validate_product(product_id)
         self._carts.setdefault(session_id, {}).pop(product_id, None)
         self._log_action(session_id, "remove", product_id, 0)
         self._save()
@@ -79,20 +96,47 @@ class CartService:
             )
         return {"session_id": session_id, "items": items, "total_amount": total}
 
-    def checkout(self, session_id: str) -> dict:
+    def checkout(self, session_id: str, idempotency_key: str | None = None) -> dict:
+        existing = self._get_idempotency_result(session_id, idempotency_key)
+        if existing is not None:
+            return existing
         snapshot = self.get(session_id)
         self._log_action(session_id, "checkout", None, 0)
         self.clear(session_id)
-        return {
+        result = {
             "status": "ok",
             "session_id": session_id,
             "order_id": f"demo_order_{session_id}_{uuid.uuid4().hex[:8]}",
             "paid_amount": snapshot["total_amount"],
             "items": snapshot["items"],
         }
+        self._remember_idempotency_result(session_id, idempotency_key, result)
+        self._save()
+        return result
 
     def get_audit_log(self, session_id: str) -> list[dict]:
         return list(self._audit_log.get(session_id, []))
+
+    def _validate_product(self, product_id: str) -> None:
+        if product_id not in self.products:
+            raise KeyError(f"unknown product_id: {product_id}")
+
+    def _validate_quantity(self, quantity: int, *, allow_zero: bool) -> None:
+        min_quantity = 0 if allow_zero else 1
+        if quantity < min_quantity or quantity > MAX_CART_QUANTITY:
+            raise ValueError(f"quantity must be between {min_quantity} and {MAX_CART_QUANTITY}")
+
+    def _get_idempotency_result(self, session_id: str, key: str | None) -> dict | None:
+        if not key:
+            return None
+        result = self._idempotency_results.get(session_id, {}).get(key)
+        return copy.deepcopy(result) if result is not None else None
+
+    def _remember_idempotency_result(self, session_id: str, key: str | None, result: dict) -> None:
+        if not key:
+            return
+        bucket = self._idempotency_results.setdefault(session_id, {})
+        bucket[key] = copy.deepcopy(result)
 
     def _log_action(self, session_id: str, action: str, product_id: str | None, quantity: int) -> None:
         entry = {
@@ -113,7 +157,6 @@ class CartService:
             data = json.loads(self.persist_path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 if "carts" in data and "audit_log" in data:
-                    # 新格式: {"carts": {...}, "audit_log": {...}}
                     self._carts = {
                         str(k): {str(pk): int(qv) for pk, qv in v.items()}
                         for k, v in data["carts"].items()
@@ -122,8 +165,14 @@ class CartService:
                     self._audit_log = {
                         str(k): list(v) for k, v in data["audit_log"].items()
                     }
+                    raw_idempotency = data.get("idempotency_results", {})
+                    if isinstance(raw_idempotency, dict):
+                        self._idempotency_results = {
+                            str(k): {str(ik): dict(iv) for ik, iv in v.items() if isinstance(iv, dict)}
+                            for k, v in raw_idempotency.items()
+                            if isinstance(v, dict)
+                        }
                 else:
-                    # 旧格式向后兼容: {session_id: {product_id: quantity}}
                     self._carts = {
                         str(k): {str(pk): int(qv) for pk, qv in v.items()}
                         for k, v in data.items()
@@ -132,6 +181,8 @@ class CartService:
         except Exception:
             logger.warning("Failed to load cart data, resetting", exc_info=True)
             self._carts = {}
+            self._audit_log = {}
+            self._idempotency_results = {}
 
     def _save(self) -> None:
         if not self.persist_path:
@@ -139,5 +190,6 @@ class CartService:
         payload = {
             "carts": self._carts,
             "audit_log": self._audit_log,
+            "idempotency_results": self._idempotency_results,
         }
         self.persist_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

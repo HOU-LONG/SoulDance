@@ -223,6 +223,7 @@ class ChatRequest(BaseModel):
     action: str | None = None
     product_id: str | None = None
     quantity: int = 1
+    idempotency_key: str | None = None
 
     @field_validator("input_type")
     @classmethod
@@ -244,11 +245,14 @@ class CartActionRequest(BaseModel):
     session_id: str
     product_id: str | None = None
     quantity: int = 1
+    idempotency_key: str | None = None
 
 
 class OrderActionRequest(BaseModel):
     order_id: str
     address_id: str | None = None
+    confirmation_token: str | None = None
+    idempotency_key: str | None = None
 
 
 class ProductCard(BaseModel):
@@ -314,6 +318,10 @@ class Order(BaseModel):
     items: list[OrderItem] = Field(default_factory=list)
     total_amount: float = 0.0
     address: Address | None = None
+    confirmation_token: str | None = None
+    idempotency_key: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
 
 
 class DimensionScore(BaseModel):

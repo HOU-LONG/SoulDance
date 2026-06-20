@@ -51,6 +51,12 @@ Required fields:
 - `product_id` when the action targets a product
 - `quantity` when relevant
 
+Optional fields:
+
+- `idempotency_key` for write actions that may be retried by the client
+
+Natural-language cart operations are allowed only when the backend can resolve a concrete cart target from session context, current cart contents, or a unique product name. Checkout/order creation remains protected by the REST order confirmation state machine; Agent text must not claim an order was completed unless the confirmation API/tool succeeded.
+
 ## Server Events
 
 The current client handles these event families:
@@ -72,6 +78,7 @@ error                   recoverable backend error
 - Product cards render only from structured product events.
 - Product detail follow-up input binds to the card product ID.
 - Cart count and cart contents update only from backend cart events or cart REST responses.
+- Repeated idempotent write responses must be rendered as the same completed action, not as a second mutation.
 - WebSocket disconnects must surface as recoverable UI errors and must not crash the app.
 
 ## Non-Goals For Stage 0/01

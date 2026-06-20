@@ -7,12 +7,13 @@ from ..embedding_retriever import EmbeddingRetriever
 from ..models import Product
 from .base import Base
 from .engine import get_engine
-from .models import Product as ProductOrm, SKU as SkuOrm
+from .models import Product as ProductOrm, ProductChunk, SKU as SkuOrm
 
 
 def seed_products(products: list[Product], session: Session, embedder: EmbeddingRetriever | None = None):
     # 清空旧数据以支持重入
     from sqlalchemy import delete
+    session.execute(delete(ProductChunk))
     session.execute(delete(SkuOrm))
     session.execute(delete(ProductOrm))
     session.flush()
@@ -38,6 +39,18 @@ def seed_products(products: list[Product], session: Session, embedder: Embedding
             embedding=embedding,
         )
         session.add(orm)
+        session.add(ProductChunk(
+            chunk_id=f"chunk_{p.product_id}",
+            product_id=p.product_id,
+            category_id=p.category,
+            sub_category=p.sub_category,
+            chunk_type="description",
+            source_type="fixture",
+            trust_level="official",
+            document_version=1,
+            content=chunk_text,
+            embedding=embedding,
+        ))
         for sku in p.skus:
             session.add(SkuOrm(
                 sku_id=sku.sku_id,

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     JSON,
     DateTime,
     Float,
@@ -50,6 +51,49 @@ class Product(Base):
     skus: Mapped[list["SKU"]] = relationship(
         "SKU", back_populates="product", cascade="all, delete-orphan", lazy="selectin"
     )
+    chunks: Mapped[list["ProductChunk"]] = relationship(
+        "ProductChunk",
+        back_populates="product",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class ProductChunk(Base):
+    __tablename__ = "product_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chunk_id: Mapped[str] = mapped_column(
+        String(64),
+        unique=True,
+        nullable=False,
+        index=True,
+        default=lambda: f"chunk_{uuid.uuid4().hex[:12]}",
+    )
+    product_id: Mapped[str] = mapped_column(
+        ForeignKey("products.product_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    sku_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    category_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    sub_category: Mapped[str] = mapped_column(String(128), nullable=False, default="", index=True)
+    chunk_type: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="description", index=True
+    )
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False, default="official_detail")
+    trust_level: Mapped[str] = mapped_column(String(32), nullable=False, default="official")
+    document_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+    product: Mapped[Product] = relationship("Product", back_populates="chunks")
 
 
 class SKU(Base):

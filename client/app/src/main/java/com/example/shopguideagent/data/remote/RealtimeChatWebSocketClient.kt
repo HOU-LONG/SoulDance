@@ -194,6 +194,11 @@ open class RealtimeChatWebSocketClient {
                 messageId = messageId,
                 actions = parseQuickActions(json.optJSONArray("actions")),
             )
+            "ack" -> RealtimeEvent.Ack(
+                messageId = messageId.takeIf { it.isNotBlank() },
+                traceId = json.optString("trace_id").takeIf { it.isNotBlank() },
+                seq = json.optInt("seq", 0),
+            )
             "done" -> RealtimeEvent.Done(messageId.takeIf { it.isNotBlank() })
             "error" -> RealtimeEvent.Error(json.optString("message", "Unknown server error"))
             else -> RealtimeEvent.Unknown(text)

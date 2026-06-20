@@ -55,5 +55,10 @@ sealed class RealtimeEvent {
         val messageId: String,
         val actions: List<QuickActionUiModel>,
     ) : RealtimeEvent()
+    data class Ack(
+        val messageId: String?,
+        val traceId: String?,
+        val seq: Int,
+    ) : RealtimeEvent()
     data class Unknown(val raw: String) : RealtimeEvent()
 }

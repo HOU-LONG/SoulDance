@@ -357,6 +357,25 @@ public class ChatViewModelTest {
     }
 
     @Test
+    public void ackEventIsIgnoredWithoutAddingAssistantMessageOrError() throws Exception {
+        ChatViewModel viewModel = viewModelWithCatalog();
+        viewModel.sendMessageStreaming("first request");
+        String assistantId = viewModel.getUiState().getValue().getMessages().get(2).getId();
+
+        Method handler = ChatViewModel.class.getDeclaredMethod("handleRealtimeEvent", RealtimeEvent.class);
+        handler.setAccessible(true);
+        handler.invoke(
+                viewModel,
+                new RealtimeEvent.Ack(assistantId, "trace_1", 0)
+        );
+
+        assertEquals(3, viewModel.getUiState().getValue().getMessages().size());
+        assertNull(viewModel.getUiState().getValue().getErrorMessage());
+        assertEquals(assistantId, viewModel.getUiState().getValue().getMessages().get(2).getId());
+        org.junit.Assert.assertTrue(viewModel.getUiState().getValue().getMessages().get(2).isStreaming());
+    }
+
+    @Test
     public void quickActionsAttachToActiveAssistantMessage() throws Exception {
         ChatViewModel viewModel = viewModelWithCatalog();
         viewModel.sendMessageStreaming("recommend sunscreen");

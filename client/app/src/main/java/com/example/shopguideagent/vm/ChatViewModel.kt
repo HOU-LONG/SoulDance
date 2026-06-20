@@ -507,6 +507,7 @@ class ChatViewModel @JvmOverloads constructor(
                 activeAssistantId?.let { finishStream(it) }
                 activeAssistantId = null
             }
+            is RealtimeEvent.Ack -> Unit
             is RealtimeEvent.Error -> {
                 (activeFollowUpAssistantId ?: activeAssistantId)?.let {
                     handleStreamInterrupted(it, event.message)

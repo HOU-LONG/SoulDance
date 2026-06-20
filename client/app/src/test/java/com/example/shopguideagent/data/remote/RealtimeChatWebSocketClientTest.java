@@ -52,4 +52,22 @@ public class RealtimeChatWebSocketClientTest {
         assertEquals("Avoid BrandA", first.getLabel());
         assertEquals("Do not recommend BrandA", first.getMessage());
     }
+
+    @Test
+    public void parseAckEventWithTraceMetadata() throws Exception {
+        RealtimeChatWebSocketClient client = new RealtimeChatWebSocketClient();
+        Method parseEvent = RealtimeChatWebSocketClient.class.getDeclaredMethod("parseEvent", String.class);
+        parseEvent.setAccessible(true);
+
+        RealtimeEvent event = (RealtimeEvent) parseEvent.invoke(
+            client,
+            "{\"type\":\"ack\",\"message_id\":\"m1\",\"trace_id\":\"trace_1\",\"seq\":0,\"payload\":{\"state\":\"received\"}}"
+        );
+
+        assertTrue(event instanceof RealtimeEvent.Ack);
+        RealtimeEvent.Ack ack = (RealtimeEvent.Ack) event;
+        assertEquals("m1", ack.getMessageId());
+        assertEquals("trace_1", ack.getTraceId());
+        assertEquals(0, ack.getSeq());
+    }
 }

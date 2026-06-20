@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.CartUiState
+import com.example.shopguideagent.data.model.OrderFlowState
 import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.BorderColor
 import com.example.shopguideagent.ui.theme.BrandPrimary
@@ -43,9 +45,16 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 @Composable
 fun CheckoutBottomSheet(
     state: CartUiState,
+    orderFlowState: OrderFlowState = OrderFlowState.Idle,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
+    val preview = orderFlowState as? OrderFlowState.OrderPreview
+    val isCreating = orderFlowState is OrderFlowState.Creating
+    val isConfirming = preview?.isConfirming == true
+    val totalAmount = preview?.totalAmount ?: state.totalPrice
+    val itemCount = preview?.itemCount ?: state.selectedCount
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = SurfacePrimary,
@@ -88,7 +97,7 @@ fun CheckoutBottomSheet(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        "已选 ${state.selectedCount} 件商品",
+                        "已选 ${itemCount} 件商品",
                         color = TextSecondary,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -96,6 +105,37 @@ fun CheckoutBottomSheet(
             }
 
             Spacer(modifier = Modifier.height(4.dp))
+
+            if (preview != null) {
+                Surface(
+                    shape = RoundedCornerShape(AppCornerRadius.Card),
+                    color = SurfacePrimary,
+                    border = BorderStroke(1.dp, BorderColor),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "收货地址",
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Text(
+                            "${preview.selectedAddress.name} ${preview.selectedAddress.phone}",
+                            color = TextPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Text(
+                            "${preview.selectedAddress.province}${preview.selectedAddress.city}${preview.selectedAddress.detail}",
+                            color = TextSecondary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            }
 
             // Price row
             Surface(
@@ -116,7 +156,7 @@ fun CheckoutBottomSheet(
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     Text(
-                        "¥${"%.2f".format(state.totalPrice)}",
+                        "¥${"%.2f".format(totalAmount)}",
                         color = PriceColor,
                         fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.headlineSmall,
@@ -128,6 +168,7 @@ fun CheckoutBottomSheet(
 
             Button(
                 onClick = onConfirm,
+                enabled = !isCreating && !isConfirming,
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(AppCornerRadius.Control),
                 colors = ButtonDefaults.buttonColors(
@@ -135,7 +176,22 @@ fun CheckoutBottomSheet(
                     contentColor = TextOnDark,
                 ),
             ) {
-                Text("模拟下单", modifier = Modifier.padding(vertical = 4.dp))
+                if (isCreating || isConfirming) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.padding(end = 8.dp),
+                        color = TextOnDark,
+                        strokeWidth = 2.dp,
+                    )
+                }
+                Text(
+                    when {
+                        isCreating -> "正在创建订单"
+                        isConfirming -> "正在确认"
+                        preview != null -> "确认下单"
+                        else -> "选择地址并确认"
+                    },
+                    modifier = Modifier.padding(vertical = 4.dp),
+                )
             }
         }
     }

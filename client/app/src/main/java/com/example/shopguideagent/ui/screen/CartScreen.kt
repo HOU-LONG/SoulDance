@@ -41,7 +41,9 @@ import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.ui.component.CartItemCard
 import com.example.shopguideagent.ui.component.CartSummaryBar
 import com.example.shopguideagent.ui.component.CheckoutBottomSheet
+import com.example.shopguideagent.ui.component.AddressSelectionSheet
 import com.example.shopguideagent.ui.component.EmptyCartView
+import com.example.shopguideagent.data.model.OrderFlowState
 import com.example.shopguideagent.ui.theme.AppBackground
 import com.example.shopguideagent.ui.theme.BrandPrimary
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
@@ -58,6 +60,7 @@ fun CartScreen(
     onOrdersClick: () -> Unit,
 ) {
     val state by cartViewModel.uiState.collectAsState()
+    val orderFlow by cartViewModel.orderFlow.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     var contentEntered by remember { mutableStateOf(false) }
 
@@ -174,12 +177,42 @@ fun CartScreen(
         }
     }
 
-    if (state.showCheckoutSheet) {
-        CheckoutBottomSheet(
-            state = state,
-            onDismiss = cartViewModel::hideCheckout,
-            onConfirm = cartViewModel::checkout,
-        )
+    if (state.showCheckoutSheet || orderFlow is OrderFlowState.AddressRequired) {
+        when (val flow = orderFlow) {
+            is OrderFlowState.AddressRequired -> {
+                AddressSelectionSheet(
+                    state = flow,
+                    onDismiss = cartViewModel::hideCheckout,
+                    onSelectAddress = cartViewModel::selectAddress,
+                )
+            }
+
+            is OrderFlowState.OrderPreview -> {
+                CheckoutBottomSheet(
+                    state = state,
+                    orderFlowState = flow,
+                    onDismiss = cartViewModel::hideCheckout,
+                    onConfirm = cartViewModel::confirmOrder,
+                )
+            }
+
+            is OrderFlowState.Creating -> {
+                CheckoutBottomSheet(
+                    state = state,
+                    orderFlowState = flow,
+                    onDismiss = cartViewModel::hideCheckout,
+                    onConfirm = {},
+                )
+            }
+
+            else -> {
+                CheckoutBottomSheet(
+                    state = state,
+                    onDismiss = cartViewModel::hideCheckout,
+                    onConfirm = cartViewModel::checkout,
+                )
+            }
+        }
     }
 }
 

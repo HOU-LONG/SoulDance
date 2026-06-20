@@ -1,11 +1,15 @@
 package com.example.shopguideagent.vm
 
 import com.example.shopguideagent.data.local.CartPersistenceStore
+import com.example.shopguideagent.data.model.AddressUiModel
 import com.example.shopguideagent.data.model.CartItemUiModel
 import com.example.shopguideagent.data.model.CheckoutResult
+import com.example.shopguideagent.data.model.OrderFlowState
 import com.example.shopguideagent.data.model.OrderUiModel
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.remote.CartApiClient
+import com.example.shopguideagent.data.remote.OrderApiClient
+import com.example.shopguideagent.data.remote.OrderResponse
 import com.example.shopguideagent.domain.event.CartOperationEvent
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.CoroutineStart
@@ -69,12 +73,12 @@ class CartViewModelTest {
 
     @Test
     fun checkoutRemovesSelectedItemsAndKeepsUnselectedItems() {
-        val viewModel = viewModel(checkoutResult = CheckoutResult("order_test", 200.0))
+        val viewModel = viewModel(orderApiClient = FakeOrderApiClient(totalAmount = 200.0))
         viewModel.addItem(cartItem("sku_001", "A", 100.0, 2))
         viewModel.addItem(cartItem("sku_002", "B", 50.0, 1))
         viewModel.toggleSelected("sku_002")
 
-        viewModel.checkout()
+        completeOrder(viewModel)
 
         assertEquals(1, viewModel.uiState.value.items.size)
         assertEquals("sku_002", viewModel.uiState.value.items[0].productId)
@@ -85,12 +89,12 @@ class CartViewModelTest {
 
     @Test
     fun checkoutCreatesOrderWithPurchasedItems() {
-        val viewModel = viewModel(checkoutResult = CheckoutResult("order_test", 200.0))
+        val viewModel = viewModel(orderApiClient = FakeOrderApiClient(totalAmount = 200.0))
         viewModel.addItem(cartItem("sku_001", "A", 100.0, 2))
         viewModel.addItem(cartItem("sku_002", "B", 50.0, 1))
         viewModel.toggleSelected("sku_002")
 
-        viewModel.checkout()
+        completeOrder(viewModel)
 
         assertEquals(1, viewModel.ordersState.value.orders.size)
         assertEquals(1, viewModel.ordersState.value.orders[0].items.size)
@@ -101,7 +105,9 @@ class CartViewModelTest {
     @Test
     fun checkoutFailureShowsBackendReason() {
         val viewModel = viewModel(
-            checkoutError = IllegalStateException("\u8d2d\u7269\u8f66\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u7ed3\u7b97\u3002"),
+            orderApiClient = FakeOrderApiClient(
+                initiateError = IllegalStateException("\u8d2d\u7269\u8f66\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u7ed3\u7b97\u3002"),
+            ),
         )
         viewModel.addItem(cartItem("sku_001", "A", 100.0, 1))
 
@@ -111,6 +117,25 @@ class CartViewModelTest {
             "\u7ed3\u7b97\u5931\u8d25\uff1a\u8d2d\u7269\u8f66\u4e3a\u7a7a\uff0c\u65e0\u6cd5\u7ed3\u7b97\u3002",
             viewModel.uiState.value.errorMessage,
         )
+    }
+
+    @Test
+    fun confirmOrderRetryReusesSameIdempotencyKey() {
+        val orderApi = FakeOrderApiClient(totalAmount = 100.0, confirmFailures = 1)
+        val viewModel = viewModel(orderApiClient = orderApi)
+        viewModel.addItem(cartItem("sku_001", "A", 100.0, 1))
+
+        viewModel.checkout()
+        viewModel.selectAddress("addr_1")
+        val preview = viewModel.orderFlow.value as OrderFlowState.OrderPreview
+
+        viewModel.confirmOrder()
+        val retryPreview = viewModel.orderFlow.value as OrderFlowState.OrderPreview
+        viewModel.confirmOrder()
+
+        assertEquals(preview.idempotencyKey, retryPreview.idempotencyKey)
+        assertEquals(2, orderApi.confirmRequests.size)
+        assertEquals(orderApi.confirmRequests[0].idempotencyKey, orderApi.confirmRequests[1].idempotencyKey)
     }
 
     @Test
@@ -159,10 +184,10 @@ class CartViewModelTest {
             userId = "user_a",
             sessionId = "demo_session_001",
             store = store,
-            checkoutResult = CheckoutResult("order_test", 200.0),
+            orderApiClient = FakeOrderApiClient(totalAmount = 200.0),
         )
         first.addItem(cartItem("sku_001", "A", 100.0, 2))
-        first.checkout()
+        completeOrder(first)
 
         val reloaded = viewModel(userId = "user_a", sessionId = "demo_session_001", store = store)
         val otherUser = viewModel(userId = "user_b", sessionId = "demo_session_002", store = store)
@@ -261,13 +286,21 @@ class CartViewModelTest {
         checkoutResult: CheckoutResult? = CheckoutResult("order_test", 200.0),
         checkoutError: RuntimeException? = null,
         addError: RuntimeException? = null,
+        orderApiClient: OrderApiClient = FakeOrderApiClient(),
     ): CartViewModel = CartViewModel(
         userId = userId,
         sessionId = sessionId,
         persistenceStore = store,
         cartApiClient = FakeCartApiClient(checkoutResult, checkoutError, addError),
+        orderApiClient = orderApiClient,
         operationDispatcher = Dispatchers.Unconfined,
     )
+
+    private fun completeOrder(viewModel: CartViewModel) {
+        viewModel.checkout()
+        viewModel.selectAddress("addr_1")
+        viewModel.confirmOrder()
+    }
 
     private fun product(productId: String): ProductUiModel = ProductUiModel(
         productId = productId,
@@ -339,6 +372,79 @@ class CartViewModelTest {
             return checkoutResult
         }
     }
+
+    private class FakeOrderApiClient(
+        private val orderId: String = "order_test",
+        private val totalAmount: Double = 100.0,
+        private val initiateError: RuntimeException? = null,
+        private var confirmFailures: Int = 0,
+    ) : OrderApiClient() {
+        val confirmRequests = mutableListOf<ConfirmRequest>()
+        private val addresses = listOf(
+            AddressUiModel(
+                addressId = "addr_1",
+                name = "张三",
+                phone = "138****1234",
+                province = "北京",
+                city = "北京市",
+                detail = "某某路100号",
+                isDefault = true,
+            ),
+        )
+
+        override suspend fun initiate(sessionId: String): Result<OrderResponse> {
+            initiateError?.let { return Result.failure(it) }
+            return Result.success(
+                OrderResponse(
+                    order_id = orderId,
+                    status = "address_required",
+                    total_amount = totalAmount,
+                    confirmation_token = null,
+                    message = null,
+                ),
+            )
+        }
+
+        override suspend fun getAddresses(): Result<List<AddressUiModel>> = Result.success(addresses)
+
+        override suspend fun selectAddress(orderId: String, addressId: String): Result<OrderResponse> =
+            Result.success(
+                OrderResponse(
+                    order_id = orderId,
+                    status = "awaiting_confirmation",
+                    total_amount = totalAmount,
+                    confirmation_token = "token_test",
+                    message = null,
+                ),
+            )
+
+        override suspend fun confirm(
+            orderId: String,
+            token: String,
+            idempotencyKey: String,
+        ): Result<OrderResponse> {
+            confirmRequests += ConfirmRequest(orderId, token, idempotencyKey)
+            if (confirmFailures > 0) {
+                confirmFailures -= 1
+                return Result.failure(IllegalStateException("temporary confirm failure"))
+            }
+            return Result.success(
+                OrderResponse(
+                    order_id = orderId,
+                    status = "completed",
+                    total_amount = totalAmount,
+                    confirmation_token = token,
+                    message = "结算成功。",
+                ),
+            )
+        }
+    }
+
+    private data class ConfirmRequest(
+        val orderId: String,
+        val token: String,
+        val idempotencyKey: String,
+    )
 
     private class FakeCartPersistenceStore : CartPersistenceStore {
         private val carts = mutableMapOf<String, List<CartItemUiModel>>()

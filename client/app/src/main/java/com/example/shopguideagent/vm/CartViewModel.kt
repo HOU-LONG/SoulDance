@@ -8,12 +8,14 @@ import com.example.shopguideagent.data.local.InMemoryCartPersistenceStore
 import com.example.shopguideagent.data.model.CartItemUiModel
 import com.example.shopguideagent.data.model.CartUiState
 import com.example.shopguideagent.data.model.CheckoutResult
+import com.example.shopguideagent.data.model.OrderFlowState
 import com.example.shopguideagent.data.model.OrderUiModel
 import com.example.shopguideagent.data.model.OrdersUiState
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.model.selectedItemCount
 import com.example.shopguideagent.data.model.selectedTotalPrice
 import com.example.shopguideagent.data.remote.CartApiClient
+import com.example.shopguideagent.data.remote.OrderApiClient
 import com.example.shopguideagent.domain.event.CartOperationEvent
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -25,12 +27,14 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class CartViewModel @JvmOverloads constructor(
     private val userId: String = UserSession.USER_ID,
     sessionId: String = UserSession.DEFAULT_SESSION_ID,
     private val persistenceStore: CartPersistenceStore = InMemoryCartPersistenceStore(),
     private val cartApiClient: CartApiClient = CartApiClient(),
+    private val orderApiClient: OrderApiClient = OrderApiClient(),
     private val operationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
 ) : ViewModel() {
     private var activeSessionId: String = sessionId
@@ -46,6 +50,9 @@ class CartViewModel @JvmOverloads constructor(
         OrdersUiState(orders = persistenceStore.loadOrders(userId)),
     )
     val ordersState: StateFlow<OrdersUiState> = _ordersState.asStateFlow()
+
+    private val _orderFlow = MutableStateFlow<OrderFlowState>(OrderFlowState.Idle)
+    val orderFlow: StateFlow<OrderFlowState> = _orderFlow.asStateFlow()
 
     private val _operationEvents = MutableSharedFlow<CartOperationEvent>(extraBufferCapacity = 64)
     val operationEvents: SharedFlow<CartOperationEvent> = _operationEvents.asSharedFlow()
@@ -224,48 +231,112 @@ class CartViewModel @JvmOverloads constructor(
     }
 
     fun showCheckout() {
+        _orderFlow.value = OrderFlowState.Idle
         _uiState.value = _uiState.value.copy(showCheckoutSheet = true)
     }
 
     fun hideCheckout() {
         _uiState.value = _uiState.value.copy(showCheckoutSheet = false)
+        _orderFlow.value = OrderFlowState.Idle
     }
 
     fun checkout() {
+        startOrderFlow()
+    }
+
+    fun startOrderFlow() {
         val state = _uiState.value
         if (state.selectedCount == 0) {
             _uiState.value = state.copy(errorMessage = "请先选择要结算的商品")
             return
         }
-        viewModelScope.launch {
-            try {
-                val result = cartApiClient.checkout(activeSessionId)
-                if (result != null) {
-                    val purchasedItems = state.items.filter { it.selected }
-                    val orderId = result.orderId
-                    val updatedOrders = listOf(
-                        OrderUiModel(
-                            orderId = orderId,
-                            items = purchasedItems,
-                            totalCount = selectedItemCount(purchasedItems),
-                            totalPrice = selectedTotalPrice(purchasedItems),
-                        ),
-                    ) + _ordersState.value.orders
-                    _ordersState.value = _ordersState.value.copy(orders = updatedOrders)
-                    persistenceStore.saveOrders(userId, updatedOrders)
-                    val remainingItems = state.items.filterNot { it.selected }
-                    _uiState.value = state.copy(
-                        items = remainingItems,
-                        showCheckoutSheet = false,
-                        checkoutResult = result,
-                    ).recalculate()
-                    persistenceStore.saveCartItems(userId, remainingItems)
-                } else {
-                    _uiState.value = state.copy(errorMessage = "结算失败").recalculate()
-                }
-            } catch (e: Exception) {
-                _uiState.value = state.copy(errorMessage = operationError("结算失败", e)).recalculate()
+        _uiState.value = state.copy(showCheckoutSheet = true, errorMessage = null).recalculate()
+        _orderFlow.value = OrderFlowState.Creating
+        viewModelScope.launch(operationDispatcher) {
+            val initiated = orderApiClient.initiate(activeSessionId)
+            val order = initiated.getOrElse {
+                failOrderFlow("结算失败", it)
+                return@launch
             }
+            val orderId = order.order_id
+            if (orderId.isNullOrBlank()) {
+                failOrderFlow("结算失败", IllegalStateException("服务端未返回订单号"))
+                return@launch
+            }
+            val addresses = orderApiClient.getAddresses().getOrElse {
+                failOrderFlow("地址加载失败", it)
+                return@launch
+            }
+            _orderFlow.value = OrderFlowState.AddressRequired(
+                orderId = orderId,
+                addresses = addresses,
+            )
+        }
+    }
+
+    fun selectAddress(addressId: String) {
+        val current = _orderFlow.value as? OrderFlowState.AddressRequired ?: return
+        val address = current.addresses.firstOrNull { it.addressId == addressId }
+        if (address == null) {
+            _orderFlow.value = current.copy(errorMessage = "请选择有效地址")
+            return
+        }
+        _orderFlow.value = current.copy(isLoading = true, errorMessage = null)
+        viewModelScope.launch(operationDispatcher) {
+            val selected = orderApiClient.selectAddress(current.orderId, addressId).getOrElse {
+                _orderFlow.value = current.copy(
+                    isLoading = false,
+                    errorMessage = operationError("地址选择失败", it),
+                )
+                return@launch
+            }
+            val token = selected.confirmation_token
+            if (token.isNullOrBlank()) {
+                _orderFlow.value = current.copy(
+                    isLoading = false,
+                    errorMessage = "服务端未返回确认令牌",
+                )
+                return@launch
+            }
+            _orderFlow.value = OrderFlowState.OrderPreview(
+                orderId = selected.order_id ?: current.orderId,
+                confirmationToken = token,
+                idempotencyKey = UUID.randomUUID().toString(),
+                selectedAddress = address,
+                totalAmount = selected.total_amount ?: _uiState.value.totalPrice,
+                itemCount = _uiState.value.selectedCount,
+            )
+        }
+    }
+
+    fun confirmOrder() {
+        val preview = _orderFlow.value as? OrderFlowState.OrderPreview ?: return
+        if (preview.isConfirming) return
+        _orderFlow.value = preview.copy(isConfirming = true)
+        viewModelScope.launch(operationDispatcher) {
+            val confirmed = orderApiClient.confirm(
+                orderId = preview.orderId,
+                token = preview.confirmationToken,
+                idempotencyKey = preview.idempotencyKey,
+            ).getOrElse {
+                _orderFlow.value = preview.copy(isConfirming = false)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = operationError("订单确认失败", it),
+                ).recalculate()
+                return@launch
+            }
+            if (confirmed.status != "completed") {
+                _orderFlow.value = preview.copy(isConfirming = false)
+                _uiState.value = _uiState.value.copy(
+                    errorMessage = confirmed.message?.takeIf { it.isNotBlank() } ?: "订单未完成",
+                ).recalculate()
+                return@launch
+            }
+            completeOrderLocally(
+                orderId = confirmed.order_id ?: preview.orderId,
+                paidAmount = confirmed.total_amount ?: preview.totalAmount,
+                successMessage = confirmed.message?.takeIf { it.isNotBlank() } ?: "结算成功。",
+            )
         }
     }
 
@@ -295,7 +366,37 @@ class CartViewModel @JvmOverloads constructor(
         stock = stock,
     )
 
-    private fun operationError(prefix: String, error: Exception): String =
+    private fun completeOrderLocally(orderId: String, paidAmount: Double, successMessage: String) {
+        val state = _uiState.value
+        val purchasedItems = state.items.filter { it.selected }
+        val updatedOrders = listOf(
+            OrderUiModel(
+                orderId = orderId,
+                items = purchasedItems,
+                totalCount = selectedItemCount(purchasedItems),
+                totalPrice = selectedTotalPrice(purchasedItems),
+            ),
+        ) + _ordersState.value.orders
+        _ordersState.value = _ordersState.value.copy(orders = updatedOrders)
+        persistenceStore.saveOrders(userId, updatedOrders)
+        val remainingItems = state.items.filterNot { it.selected }
+        _uiState.value = state.copy(
+            items = remainingItems,
+            showCheckoutSheet = false,
+            checkoutResult = CheckoutResult(orderId, paidAmount),
+            errorMessage = null,
+        ).recalculate()
+        persistenceStore.saveCartItems(userId, remainingItems)
+        _orderFlow.value = OrderFlowState.OrderSuccess(orderId, successMessage)
+    }
+
+    private fun failOrderFlow(prefix: String, error: Throwable) {
+        val message = operationError(prefix, error)
+        _orderFlow.value = OrderFlowState.OrderError(message)
+        _uiState.value = _uiState.value.copy(errorMessage = message).recalculate()
+    }
+
+    private fun operationError(prefix: String, error: Throwable): String =
         "$prefix：${error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName}"
 }
 

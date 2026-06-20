@@ -48,6 +48,10 @@ class Settings(BaseModel):
     feedback_path: str = ""
     user_profile_dir: str = ""
 
+    # Database
+    database_url: str = ""
+    embedding_dimension: int = 384
+
     # TTS. openai_audio posts to /v1/audio/speech; mimo posts to /chat/completions.
     # doubao_chunked_v3 posts to Volcengine HTTP Chunked V3.
     tts_enabled: bool = True
@@ -179,6 +183,8 @@ def get_settings() -> Settings:
         ark_api_key=os.getenv("ARK_API_KEY"),
         ark_base_url=os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3/"),
         ark_model=os.getenv("ARK_MODEL", "ep-20260514111645-lmgt2"),
+        database_url=os.getenv("SHOPGUIDE_DATABASE_URL", ""),
+        embedding_dimension=int(os.getenv("SHOPGUIDE_EMBEDDING_DIMENSION", "384")),
         embedding_model_dir=os.getenv("EMBEDDING_MODEL_DIR", "model/bge-small-zh-v1.5"),
         embedding_model_id=os.getenv("EMBEDDING_MODEL_ID", "AI-ModelScope/bge-small-zh-v1.5"),
         embedding_device=os.getenv("EMBEDDING_DEVICE", "cuda:0"),

@@ -17,15 +17,27 @@ MAX_CART_QUANTITY = 99
 
 
 class CartService:
-    def __init__(self, products: list[Product], persist_path: str | Path | None = None):
+    def __init__(
+        self,
+        products: list[Product],
+        persist_path: str | Path | None = None,
+        db_session=None,
+    ):
         self.products = {product.product_id: product for product in products}
         self._carts: dict[str, dict[str, int]] = {}
         self._audit_log: dict[str, list[dict]] = {}
         self._idempotency_results: dict[str, dict[str, dict]] = {}
         self.persist_path = Path(persist_path) if persist_path else None
-        if self.persist_path:
+        self.db_session = db_session
+        self._repo = None
+        if self.db_session is not None:
+            from .repositories.cart_repository import CartRepository
+            self._repo = CartRepository(self.db_session)
+        if self.persist_path and self._repo is None:
             self.persist_path.parent.mkdir(parents=True, exist_ok=True)
             self._load()
+
+    # ... 保留原有 _load/_save/文件逻辑不变 ...
 
     def add(
         self,
@@ -34,6 +46,103 @@ class CartService:
         quantity: int = 1,
         idempotency_key: str | None = None,
     ) -> dict:
+        if self._repo is not None:
+            return self._db_add(session_id, product_id, quantity, idempotency_key)
+        return self._file_add(session_id, product_id, quantity, idempotency_key)
+
+    def _db_add(self, session_id, product_id, quantity, idempotency_key):
+        existing = self._get_idempotency_result(session_id, idempotency_key)
+        if existing is not None:
+            return existing
+        self._validate_product(product_id)
+        self._validate_quantity(quantity, allow_zero=False)
+        self._repo.add(session_id, product_id, quantity)
+        snapshot = self._db_get(session_id)
+        self._remember_idempotency_result(session_id, idempotency_key, snapshot)
+        return snapshot
+
+    def _db_get(self, session_id):
+        raw = self._repo.get(session_id)
+        items = []
+        total = 0.0
+        for row in raw["items"]:
+            product_id = row["product_id"]
+            quantity = row["quantity"]
+            product = self.products.get(product_id)
+            if product is None:
+                continue
+            amount = product.price * quantity
+            total += amount
+            items.append({
+                "product_id": product_id,
+                "name": product.title,
+                "brand": product.brand,
+                "price": product.price,
+                "quantity": quantity,
+                "amount": amount,
+                "main_image_url": product_image_url(product.image_path),
+                "image_url": product_image_url(product.image_path),
+                "selected": True,
+            })
+        return {"session_id": session_id, "items": items, "total_amount": total}
+
+    def get(self, session_id: str) -> dict:
+        if self._repo is not None:
+            return self._db_get(session_id)
+        return self._file_get(session_id)
+
+    def update_quantity(self, session_id: str, product_id: str, quantity: int) -> dict:
+        if self._repo is not None:
+            return self._db_update_quantity(session_id, product_id, quantity)
+        return self._file_update_quantity(session_id, product_id, quantity)
+
+    def remove(self, session_id: str, product_id: str) -> dict:
+        if self._repo is not None:
+            return self._db_remove(session_id, product_id)
+        return self._file_remove(session_id, product_id)
+
+    def clear(self, session_id: str) -> dict:
+        if self._repo is not None:
+            return self._db_clear(session_id)
+        return self._file_clear(session_id)
+
+    def checkout(self, session_id: str, idempotency_key: str | None = None) -> dict:
+        if self._repo is not None:
+            return self._db_checkout(session_id, idempotency_key)
+        return self._file_checkout(session_id, idempotency_key)
+
+    def _db_update_quantity(self, session_id, product_id, quantity):
+        self._validate_product(product_id)
+        self._validate_quantity(quantity, allow_zero=True)
+        self._repo.update_quantity(session_id, product_id, quantity)
+        return self._db_get(session_id)
+
+    def _db_remove(self, session_id, product_id):
+        self._validate_product(product_id)
+        self._repo.remove(session_id, product_id)
+        return self._db_get(session_id)
+
+    def _db_clear(self, session_id):
+        self._repo.clear(session_id)
+        return self._db_get(session_id)
+
+    def _db_checkout(self, session_id, idempotency_key):
+        existing = self._get_idempotency_result(session_id, idempotency_key)
+        if existing is not None:
+            return existing
+        snapshot = self._db_get(session_id)
+        self._repo.checkout(session_id)
+        result = {
+            "status": "ok",
+            "session_id": session_id,
+            "order_id": f"demo_order_{session_id}_{uuid.uuid4().hex[:8]}",
+            "paid_amount": snapshot["total_amount"],
+            "items": snapshot["items"],
+        }
+        self._remember_idempotency_result(session_id, idempotency_key, result)
+        return result
+
+    def _file_add(self, session_id, product_id, quantity, idempotency_key):
         existing = self._get_idempotency_result(session_id, idempotency_key)
         if existing is not None:
             return existing
@@ -47,33 +156,7 @@ class CartService:
         self._save()
         return snapshot
 
-    def update_quantity(self, session_id: str, product_id: str, quantity: int) -> dict:
-        self._validate_product(product_id)
-        self._validate_quantity(quantity, allow_zero=True)
-        cart = self._carts.setdefault(session_id, {})
-        if quantity == 0:
-            cart.pop(product_id, None)
-            self._log_action(session_id, "remove", product_id, 0)
-        else:
-            cart[product_id] = quantity
-            self._log_action(session_id, "update", product_id, quantity)
-        self._save()
-        return self.get(session_id)
-
-    def remove(self, session_id: str, product_id: str) -> dict:
-        self._validate_product(product_id)
-        self._carts.setdefault(session_id, {}).pop(product_id, None)
-        self._log_action(session_id, "remove", product_id, 0)
-        self._save()
-        return self.get(session_id)
-
-    def clear(self, session_id: str) -> dict:
-        self._carts[session_id] = {}
-        self._log_action(session_id, "clear", None, 0)
-        self._save()
-        return self.get(session_id)
-
-    def get(self, session_id: str) -> dict:
+    def _file_get(self, session_id):
         cart = self._carts.setdefault(session_id, {})
         items = []
         total = 0.0
@@ -96,13 +179,39 @@ class CartService:
             )
         return {"session_id": session_id, "items": items, "total_amount": total}
 
-    def checkout(self, session_id: str, idempotency_key: str | None = None) -> dict:
+    def _file_update_quantity(self, session_id, product_id, quantity):
+        self._validate_product(product_id)
+        self._validate_quantity(quantity, allow_zero=True)
+        cart = self._carts.setdefault(session_id, {})
+        if quantity == 0:
+            cart.pop(product_id, None)
+            self._log_action(session_id, "remove", product_id, 0)
+        else:
+            cart[product_id] = quantity
+            self._log_action(session_id, "update", product_id, quantity)
+        self._save()
+        return self.get(session_id)
+
+    def _file_remove(self, session_id, product_id):
+        self._validate_product(product_id)
+        self._carts.setdefault(session_id, {}).pop(product_id, None)
+        self._log_action(session_id, "remove", product_id, 0)
+        self._save()
+        return self.get(session_id)
+
+    def _file_clear(self, session_id):
+        self._carts[session_id] = {}
+        self._log_action(session_id, "clear", None, 0)
+        self._save()
+        return self.get(session_id)
+
+    def _file_checkout(self, session_id, idempotency_key):
         existing = self._get_idempotency_result(session_id, idempotency_key)
         if existing is not None:
             return existing
-        snapshot = self.get(session_id)
+        snapshot = self._file_get(session_id)
         self._log_action(session_id, "checkout", None, 0)
-        self.clear(session_id)
+        self._file_clear(session_id)
         result = {
             "status": "ok",
             "session_id": session_id,

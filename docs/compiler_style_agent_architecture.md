@@ -25,13 +25,13 @@ The important boundary is simple:
 ## Core Modules
 
 ```text
-backend/app/intent_compiler.py      Single semantic parse boundary.
-backend/app/state_reducer.py        Applies constraint edits to SessionState.
-backend/app/query_builder.py        Builds RetrievalPlan from IR + SessionState.
-backend/app/reference_resolver.py   Binds "刚才/第二款/最便宜" to real product_id.
-backend/app/agent.py                Orchestrates streaming execution.
-backend/app/ranker.py               Hard filter + deterministic scoring.
-backend/app/cart.py                 Cart state machine.
+server/backend/app/intent_compiler.py      Single semantic parse boundary.
+server/backend/app/state_reducer.py        Applies constraint edits to SessionState.
+server/backend/app/query_builder.py        Builds RetrievalPlan from IR + SessionState.
+server/backend/app/reference_resolver.py   Binds "刚才/第二款/最便宜" to real product_id.
+server/backend/app/agent.py                Orchestrates streaming execution.
+server/backend/app/ranker.py               Hard filter + deterministic scoring.
+server/backend/app/cart.py                 Cart state machine.
 ```
 
 The legacy LLM planner has been removed. `planner_agent.py` remains only for compatibility rule helpers used by guards and debug planning; it does not call the LLM.

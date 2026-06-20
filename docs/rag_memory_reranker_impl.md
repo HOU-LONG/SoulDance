@@ -34,7 +34,7 @@ The implementation is demo-first: no Redis or external service, no final-answer 
 New module:
 
 ```text
-backend/app/memory_cache.py
+server/backend/app/memory_cache.py
 ```
 
 The cache stores structured recommendation results, not final generated replies. Each cache row contains:
@@ -103,7 +103,7 @@ The first semantic version is intentionally conservative and dependency-free: it
 Changed module:
 
 ```text
-backend/app/knowledge_base.py
+server/backend/app/knowledge_base.py
 ```
 
 Product evidence is now split into `EvidenceChunk` objects with:
@@ -157,7 +157,7 @@ Two observed behavior issues were added to tests and fixed:
 New tests in:
 
 ```text
-tests/test_agent_core.py
+server/tests/test_agent_core.py
 ```
 
 Coverage includes:
@@ -172,7 +172,7 @@ Coverage includes:
 Verification on `mix_A100`:
 
 ```text
-env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -q
+cd server && ../env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -q
 33 passed, 1 warning in 8.94s
 ```
 

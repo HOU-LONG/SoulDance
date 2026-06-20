@@ -18,7 +18,7 @@ Do not install ShopGuide backend dependencies into `env/venv_vllm_cu128`; that e
 
 ```bash
 cd /home/huadabioa/houlong/SoulDance
-bash scripts/setup_backend_env.sh
+bash server/scripts/setup_backend_env.sh
 ```
 
 The script creates:
@@ -27,7 +27,7 @@ The script creates:
 env/venv_shopguide_backend
 ```
 
-using Python 3.12 from `env/venv_vllm_cu128`, then installs `requirements-backend.txt`.
+using Python 3.12 from `env/venv_vllm_cu128`, then installs `server/requirements.txt`.
 
 ## Runtime Config
 
@@ -63,17 +63,17 @@ If these variables are unset, the backend falls back to the previous in-memory b
 ## Commands
 
 ```bash
-env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -v
-env/venv_shopguide_backend/bin/python scripts/check_embedding.py
-ARK_API_KEY="$ARK_API_KEY" bash scripts/start_backend.sh
-SHOPGUIDE_BASE_URL=http://127.0.0.1:18080 env/venv_shopguide_backend/bin/python scripts/smoke_demo.py
+cd server && ../env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -v
+env/venv_shopguide_backend/bin/python server/scripts/check_embedding.py
+ARK_API_KEY="$ARK_API_KEY" bash server/scripts/start_backend.sh
+SHOPGUIDE_BASE_URL=http://127.0.0.1:18080 env/venv_shopguide_backend/bin/python server/scripts/smoke_demo.py
 ```
 
-`scripts/start_backend.sh` defaults to:
+`server/scripts/start_backend.sh` defaults to:
 
 ```text
 HOST=0.0.0.0
-PORT=18080
+PORT=8000
 BACKEND_VENV=env/venv_shopguide_backend
 ```
 
@@ -112,7 +112,7 @@ docs/stt_deployment.md
 Quick start:
 
 ```bash
-PORT=18090 bash scripts/start_stt.sh
+PORT=18090 bash server/scripts/start_stt.sh
 curl -fsS http://127.0.0.1:18090/health
 ```
 
@@ -124,7 +124,7 @@ GPU=2 PORT=18880 nohup ./start_qwen.sh > logs/qwen3_tts.log 2>&1 &
 curl -fsS http://127.0.0.1:18880/health
 
 # 2. STT
-PORT=18090 nohup bash scripts/start_stt.sh > logs/stt.log 2>&1 &
+PORT=18090 nohup bash server/scripts/start_stt.sh > logs/stt.log 2>&1 &
 curl -fsS http://127.0.0.1:18090/health
 
 # 3. Backend

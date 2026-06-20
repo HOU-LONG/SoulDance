@@ -24,12 +24,12 @@
 
 Backend files on `mix_A100:/home/huadabioa/houlong/SoulDance`:
 
-- Modify `backend/app/semantic_layer.py`: expand quantity parsing and keep cart command intent deterministic.
-- Modify `backend/app/agent.py`: resolve explicit product mentions for cart operations before falling back to focus product; enrich product cards with dynamic tag fields.
-- Modify `backend/app/models.py`: add optional dynamic metadata fields to `ProductCard`.
-- Modify `backend/app/data_loader.py`: if needed, expose reusable product tag candidates from title, brand, sub-category, extracted terms, reviews, and generated derived data.
-- Test `tests/test_api.py`: WebSocket-level cart command tests.
-- Test `tests/test_agent_core.py`: agent-level product resolution and dynamic tag tests.
+- Modify `server/backend/app/semantic_layer.py`: expand quantity parsing and keep cart command intent deterministic.
+- Modify `server/backend/app/agent.py`: resolve explicit product mentions for cart operations before falling back to focus product; enrich product cards with dynamic tag fields.
+- Modify `server/backend/app/models.py`: add optional dynamic metadata fields to `ProductCard`.
+- Modify `server/backend/app/data_loader.py`: if needed, expose reusable product tag candidates from title, brand, sub-category, extracted terms, reviews, and generated derived data.
+- Test `server/tests/test_api.py`: WebSocket-level cart command tests.
+- Test `server/tests/test_agent_core.py`: agent-level product resolution and dynamic tag tests.
 
 Android files in `D:\项目\SoulDance`:
 
@@ -77,8 +77,8 @@ const val BASE_WS_URL = "wss://nsw-lasting-asked-issued.trycloudflare.com"
 ### Task 2: Add Failing Backend Tests For Named-Product Cart Commands
 
 **Files:**
-- Modify: `/home/huadabioa/houlong/SoulDance/tests/test_api.py`
-- Modify: `/home/huadabioa/houlong/SoulDance/tests/test_agent_core.py`
+- Modify: `/home/huadabioa/houlong/SoulDance/server/tests/test_api.py`
+- Modify: `/home/huadabioa/houlong/SoulDance/server/tests/test_agent_core.py`
 
 - [ ] **Step 1: Add WebSocket test for direct named-product add**
 
@@ -122,8 +122,8 @@ Run:
 cd /home/huadabioa/houlong/SoulDance
 SERVER_BASE_URL= USE_EMBEDDING=0 SHOPGUIDE_CART_PATH= SHOPGUIDE_SESSION_DIR= \
   env/venv_shopguide_backend/bin/python -m pytest \
-  tests/test_api.py::test_websocket_named_product_cart_command_adds_nestle_coffee \
-  tests/test_agent_core.py::test_named_product_cart_command_resolves_catalog_product -q
+  server/tests/test_api.py::test_websocket_named_product_cart_command_adds_nestle_coffee \
+  server/tests/test_agent_core.py::test_named_product_cart_command_resolves_catalog_product -q
 ```
 
 Expected before implementation: failure because current code resolves `focus_product`, `product_id=None`, `quantity=1`.
@@ -133,8 +133,8 @@ Expected before implementation: failure because current code resolves `focus_pro
 ### Task 3: Implement Backend Product Mention Resolution For Cart
 
 **Files:**
-- Modify: `/home/huadabioa/houlong/SoulDance/backend/app/semantic_layer.py`
-- Modify: `/home/huadabioa/houlong/SoulDance/backend/app/agent.py`
+- Modify: `/home/huadabioa/houlong/SoulDance/server/backend/app/semantic_layer.py`
+- Modify: `/home/huadabioa/houlong/SoulDance/server/backend/app/agent.py`
 
 - [ ] **Step 1: Expand quantity parsing**
 
@@ -185,7 +185,7 @@ Run:
 ```bash
 cd /home/huadabioa/houlong/SoulDance
 SERVER_BASE_URL= USE_EMBEDDING=0 SHOPGUIDE_CART_PATH= SHOPGUIDE_SESSION_DIR= \
-  env/venv_shopguide_backend/bin/python -m pytest tests/test_api.py tests/test_agent_core.py -q
+  cd server && ../env/venv_shopguide_backend/bin/python -m pytest tests/test_api.py tests/test_agent_core.py -q
 ```
 
 Expected: named-product cart tests pass; existing context-cart tests still pass.
@@ -250,10 +250,10 @@ Expected: compile passes; any remaining unrelated legacy Chat/Cart tests should 
 ### Task 5: Add Dynamic Product Tags To Backend Cards
 
 **Files:**
-- Modify: `/home/huadabioa/houlong/SoulDance/backend/app/models.py`
-- Modify: `/home/huadabioa/houlong/SoulDance/backend/app/agent.py`
-- Optional modify: `/home/huadabioa/houlong/SoulDance/backend/app/data_loader.py`
-- Test: `/home/huadabioa/houlong/SoulDance/tests/test_agent_core.py`
+- Modify: `/home/huadabioa/houlong/SoulDance/server/backend/app/models.py`
+- Modify: `/home/huadabioa/houlong/SoulDance/server/backend/app/agent.py`
+- Optional modify: `/home/huadabioa/houlong/SoulDance/server/backend/app/data_loader.py`
+- Test: `/home/huadabioa/houlong/SoulDance/server/tests/test_agent_core.py`
 - Verify Android display: `D:\项目\SoulDance\app\src\main\java\com\example\shopguideagent\ui\component\HeroProductCard.kt`
 
 - [ ] **Step 1: Define backend card dynamic tag contract**

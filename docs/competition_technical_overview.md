@@ -465,7 +465,7 @@ API key 通过运行时环境变量注入，源码、文档、缓存和日志均
 ## 附录 B：目录结构
 
 ```text
-backend/app/
+server/backend/app/
   main.py                 FastAPI 入口，REST/WebSocket API
   agent.py                ShopGuide Agent 编排主链路
   intent_compiler.py      Flash 结构化语义理解入口
@@ -532,7 +532,7 @@ done
 核心测试命令：
 
 ```bash
-env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -q
+cd server && ../env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -q
 ```
 
 覆盖范围：

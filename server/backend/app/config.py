@@ -7,12 +7,18 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-_env_path = Path(__file__).resolve().parents[2] / ".env"
-load_dotenv(_env_path)
+_SERVER_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = _SERVER_ROOT.parent
+
+# Keep the existing remote root .env working after moving backend code under server/.
+# A server-local .env can override it for cleaner future deployments.
+load_dotenv(_REPO_ROOT / ".env")
+load_dotenv(_SERVER_ROOT / ".env", override=True)
 
 
 class Settings(BaseModel):
-    project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[2])
+    server_root: Path = Field(default_factory=lambda: _SERVER_ROOT)
+    project_root: Path = Field(default_factory=lambda: _REPO_ROOT)
     dataset_dir: str = "ecommerce_agent_dataset"
 
     # LLM provider: "doubao" | "deepseek" | "custom"
@@ -151,6 +157,15 @@ class Settings(BaseModel):
         return self.project_root / path
 
 
+def _repo_relative_path(value: str) -> str:
+    if not value:
+        return ""
+    path = Path(value)
+    if path.is_absolute():
+        return str(path)
+    return str(_REPO_ROOT / path)
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings(
@@ -169,13 +184,13 @@ def get_settings() -> Settings:
         embedding_device=os.getenv("EMBEDDING_DEVICE", "cuda:0"),
         use_embedding=os.getenv("USE_EMBEDDING", "1") not in {"0", "false", "False"},
         request_timeout_seconds=float(os.getenv("ARK_TIMEOUT_SECONDS", "45")),
-        memory_cache_path=os.getenv("SHOPGUIDE_MEMORY_CACHE_PATH", ""),
-        session_dir=os.getenv("SHOPGUIDE_SESSION_DIR", ""),
-        cart_path=os.getenv("SHOPGUIDE_CART_PATH", ""),
+        memory_cache_path=_repo_relative_path(os.getenv("SHOPGUIDE_MEMORY_CACHE_PATH", "")),
+        session_dir=_repo_relative_path(os.getenv("SHOPGUIDE_SESSION_DIR", "")),
+        cart_path=_repo_relative_path(os.getenv("SHOPGUIDE_CART_PATH", "")),
         session_ttl_days=int(os.getenv("SHOPGUIDE_SESSION_TTL_DAYS", "7")),
         server_base_url=os.getenv("SERVER_BASE_URL", ""),
-        feedback_path=os.getenv("SHOPGUIDE_FEEDBACK_PATH", ""),
-        user_profile_dir=os.getenv("SHOPGUIDE_USER_PROFILE_DIR", ""),
+        feedback_path=_repo_relative_path(os.getenv("SHOPGUIDE_FEEDBACK_PATH", "")),
+        user_profile_dir=_repo_relative_path(os.getenv("SHOPGUIDE_USER_PROFILE_DIR", "")),
         tts_enabled=os.getenv("TTS_ENABLED", "true").lower() not in {"0", "false"},
         tts_provider=os.getenv("TTS_PROVIDER", "openai_audio"),
         tts_base_url=os.getenv("TTS_BASE_URL", "http://127.0.0.1:18880"),

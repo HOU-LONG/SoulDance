@@ -38,7 +38,7 @@ env/venv_shopguide_backend
 Recommended quick-check mode:
 
 ```bash
-USE_EMBEDDING=0 HOST=127.0.0.1 PORT=18080 bash scripts/start_backend.sh
+USE_EMBEDDING=0 HOST=127.0.0.1 PORT=18080 bash server/scripts/start_backend.sh
 ```
 
 Real LLM mode needs runtime environment variables:
@@ -85,7 +85,7 @@ Run from remote project root:
 
 ```bash
 cd /home/huadabioa/houlong/SoulDance
-env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -q
+cd server && ../env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -q
 ```
 
 Expected result:
@@ -108,7 +108,7 @@ Start backend:
 
 ```bash
 cd /home/huadabioa/houlong/SoulDance
-USE_EMBEDDING=0 HOST=127.0.0.1 PORT=18080 ARK_API_KEY="$ARK_API_KEY" bash scripts/start_backend.sh
+USE_EMBEDDING=0 HOST=127.0.0.1 PORT=18080 ARK_API_KEY="$ARK_API_KEY" bash server/scripts/start_backend.sh
 ```
 
 In another terminal:
@@ -722,7 +722,7 @@ Start backend with optional persistent cache:
 
 ```bash
 export SHOPGUIDE_MEMORY_CACHE_PATH="cache/verify_memory.jsonl"
-USE_EMBEDDING=0 HOST=127.0.0.1 PORT=18080 ARK_API_KEY="$ARK_API_KEY" bash scripts/start_backend.sh
+USE_EMBEDDING=0 HOST=127.0.0.1 PORT=18080 ARK_API_KEY="$ARK_API_KEY" bash server/scripts/start_backend.sh
 ```
 
 Send the same request twice with different session IDs:
@@ -761,7 +761,7 @@ Acceptance:
 Automated tests cover this directly:
 
 ```bash
-env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py::test_noise_review_is_filtered_from_product_evidence tests/test_agent_core.py::test_sensitive_skin_conflict_review_is_kept_as_risk_evidence -q
+cd server && ../env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py::test_noise_review_is_filtered_from_product_evidence tests/test_agent_core.py::test_sensitive_skin_conflict_review_is_kept_as_risk_evidence -q
 ```
 
 Expected:

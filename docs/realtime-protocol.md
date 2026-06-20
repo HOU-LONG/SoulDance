@@ -1,0 +1,81 @@
+# Realtime Protocol
+
+The Android client uses OkHttp WebSocket to send typed requests and render streaming backend events.
+
+## Endpoint
+
+```text
+/ws/chat
+```
+
+## Client Requests
+
+### user_message
+
+General user turn.
+
+Required fields:
+
+- `type`: `user_message`
+- `session_id`
+- `message`
+
+Optional fields:
+
+- `input_type`: `text` or `voice`; defaults to `text`
+- `tts_enabled`
+- `voice`
+
+### product_followup
+
+A follow-up bound to the currently focused product.
+
+Required fields:
+
+- `type`: `product_followup`
+- `session_id`
+- `message`
+- `focus_product_id`
+
+The client must not send a product follow-up without `focus_product_id`; otherwise the backend cannot keep product context isolated.
+
+### cart_action
+
+Deterministic cart mutation.
+
+Required fields:
+
+- `type`: `cart_action`
+- `session_id`
+- `action`
+- `product_id` when the action targets a product
+- `quantity` when relevant
+
+## Server Events
+
+The current client handles these event families:
+
+```text
+text_delta              incremental assistant text
+product_item            product card payload
+recommendations_ready   recommendation set is complete
+cart_update             cart mutation/result state
+audio_delta             streaming TTS audio chunk
+audio_done              TTS stream finished
+done                    turn finished
+error                   recoverable backend error
+```
+
+## Rendering Rules
+
+- Text deltas render as assistant Markdown text.
+- Product cards render only from structured product events.
+- Product detail follow-up input binds to the card product ID.
+- Cart count and cart contents update only from backend cart events or cart REST responses.
+- WebSocket disconnects must surface as recoverable UI errors and must not crash the app.
+
+## Non-Goals For Stage 0/01
+
+- No binary image or audio payloads over WebSocket.
+- No database-backed order state machine.
+- No Android-side fallback recommendation logic.

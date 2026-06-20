@@ -6,8 +6,9 @@ set -euo pipefail
 #   PORT=18090 bash scripts/start_stt.sh
 #   PORT=18090 STT_MODEL=sensevoice-small bash scripts/start_stt.sh
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VENV_PYTHON="$ROOT/env/venv_shopguide_backend/bin/python"
+SERVER_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$SERVER_DIR/.." && pwd)"
+VENV_PYTHON="$REPO_ROOT/env/venv_shopguide_backend/bin/python"
 PYTHON_BIN="${PYTHON_BIN:-}"
 if [ -z "$PYTHON_BIN" ]; then
     if [ -x "$VENV_PYTHON" ]; then

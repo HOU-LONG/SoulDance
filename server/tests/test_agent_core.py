@@ -140,7 +140,7 @@ def test_hard_filter_excludes_brand_aliases_and_explains_reason():
 
 
 def test_response_prompt_requires_short_paragraphs_or_bullets():
-    prompt = Path("backend/app/prompts/v1/response.txt").read_text(encoding="utf-8")
+    prompt = Path("server/backend/app/prompts/v1/response.txt").read_text(encoding="utf-8")
 
     assert "2-4" in prompt
     assert "短段落" in prompt
@@ -2641,8 +2641,8 @@ def test_compare_above_products_uses_recent_recommendation_set_and_structured_fi
 
 
 def test_test_client_renders_structured_comparison_result_fields():
-    html = Path("test_client/index.html").read_text(encoding="utf-8")
-    package_json = Path("test_client/package.json").read_text(encoding="utf-8")
+    html = Path("server/test_client/index.html").read_text(encoding="utf-8")
+    package_json = Path("server/test_client/package.json").read_text(encoding="utf-8")
 
     assert 'event.type === "comparison_result"' in html
     assert "renderComparison" in html

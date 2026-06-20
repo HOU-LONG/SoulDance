@@ -23,6 +23,17 @@ def evaluate_events(scenario: EvalScenario, events: list[dict]) -> EvalScenarioR
     for forbidden_product_id in scenario.expect.forbidden_product_ids:
         if forbidden_product_id in product_ids:
             failures.append(f"forbidden product returned: {forbidden_product_id}")
+    for product_event in product_events:
+        product = product_event.get("product", {})
+        if not isinstance(product, dict):
+            continue
+        product_name = product.get("name", "")
+        product_description = product.get("description", "")
+        product_text = f"{product_name} {product_description}".lower()
+        for term in scenario.expect.forbid_terms:
+            if term.lower() in product_text:
+                failures.append(f"forbidden term '{term}' found in product: {product_name}")
+                break
     return EvalScenarioResult(
         id=scenario.id,
         passed=not failures,

@@ -52,7 +52,12 @@ from .semantic_layer import SemanticParser, rule_semantic_frame
 from .session_store import SessionStore
 from .state_reducer import StateReducer, seed_constraint_state_from_plan
 from .taxonomy import TaxonomyResolver
+from .timeout_policy import TimeoutBudget, run_with_timeout
+from .degradation import fallback_text_for_failure
 from .tts_adapter import TTSAdapter
+
+
+DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS = 12.0
 
 
 class ShopGuideAgent:
@@ -622,6 +627,20 @@ class ShopGuideAgent:
             return
         try:
             chunks: list[str] = []
+            first_chunk = await run_with_timeout(
+                self._first_chunk_from_stream(
+                    self.llm_client.stream_response(request.message, plan, ranked, focus_product)
+                ),
+                timeout_seconds=DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS,
+                fallback=None,
+            )
+            if first_chunk is None:
+                # timeout before first chunk
+                fallback = fallback_text_for_failure("llm_timeout", plan)
+                for event in _text_delta_events(message_id, fallback):
+                    yield event
+                return
+            chunks.append(first_chunk)
             async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product):
                 if chunk:
                     chunks.append(chunk)
@@ -646,6 +665,12 @@ class ShopGuideAgent:
             text = await FakeLLMClient().generate_response(request.message, plan, ranked, focus_product)
         for event in _text_delta_events(message_id, text):
             yield event
+
+    async def _first_chunk_from_stream(self, stream):
+        async for chunk in stream:
+            if chunk:
+                return chunk
+        return ""
 
     def _build_clarification_events(
         self, context: SessionContext, plan: RetrievalPlan, context_action: str = "same_task"

@@ -62,6 +62,7 @@ class AdaptiveRetriever:
                 if hybrid_results:
                     return hybrid_results
             except Exception:
+                # retrieval_error: preserve fallback to base rank_products below
                 pass
 
         merged: dict[str, tuple[Product, float]] = {}

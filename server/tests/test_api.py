@@ -130,10 +130,11 @@ def test_websocket_recommendation_event_order_and_quick_actions():
                 break
 
     event_types = [event["type"] for event in events]
-    assert event_types[0] == "assistant_state"
-    assert events[0]["intent"] == "recommend_product"
-    assert events[0]["retrieval_mode"] == "single"
-    assert events[0]["llm_mode"] == "fake"
+    assert event_types[0] == "ack"
+    assert event_types[1] == "assistant_state"
+    assert events[1]["intent"] == "recommend_product"
+    assert events[1]["retrieval_mode"] == "single"
+    assert events[1]["llm_mode"] == "fake"
     selection_index = next(
         index
         for index, event in enumerate(events)
@@ -169,9 +170,11 @@ def test_websocket_chat_uses_agent_stream_message(monkeypatch):
             }
         )
         first_event = websocket.receive_json()
+        second_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
-    assert first_event["type"] == "assistant_state"
+    assert first_event["type"] == "ack"
+    assert second_event["type"] == "assistant_state"
     assert done_event["type"] == "done"
 
 
@@ -225,9 +228,11 @@ def test_websocket_natural_language_cart_action_uses_agent_context():
                 "message": "把刚才那款加到购物车",
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "add_to_cart"
     assert cart_event["cart"]["items"][0]["product_id"] == primary_product_id
@@ -249,10 +254,12 @@ def test_websocket_explicit_cart_action_updates_agent_cart_memory():
                 "quantity": 1,
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
     context = app.state.agent.sessions.get("demo_ws_explicit_cart")
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["product_id"] == product_id
     assert context.state.cart_memory.recent_product_id == product_id
@@ -290,9 +297,11 @@ def test_websocket_cart_operation_can_be_detected_by_semantic_frame_without_keyw
                 "message": "就这个来两件",
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "add_to_cart"
     assert cart_event["product_id"] == primary_product_id
@@ -328,9 +337,11 @@ def test_websocket_oral_cart_followup_is_rule_guarded_after_recommendation():
                 "message": "要这个",
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "add_to_cart"
     assert cart_event["product_id"] == primary_product_id
@@ -350,9 +361,11 @@ def test_websocket_oral_cart_followup_without_recommendation_does_not_add_random
                 "message": "就这个来两件",
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "get_cart"
     assert cart_event["product_id"] is None
@@ -374,9 +387,11 @@ def test_websocket_named_product_cart_command_adds_nestle_coffee():
                 "message": "将两份雀巢咖啡加入购物车",
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "add_to_cart"
     assert cart_event["product_id"] == "p_food_002"
@@ -404,9 +419,11 @@ def test_websocket_rule_cart_command_skips_semantic_llm_parse():
                 "message": "把雀巢咖啡加入购物车",
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "add_to_cart"
     assert cart_event["product_id"] == "p_food_002"
@@ -432,9 +449,11 @@ def test_websocket_natural_language_clear_cart_empties_same_session_cart():
                 "message": "清空购物车",
             }
         )
+        ack_event = websocket.receive_json()
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
+    assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["action"] == "clear_cart"
     assert cart_event["product_id"] is None

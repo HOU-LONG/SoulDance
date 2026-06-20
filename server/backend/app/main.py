@@ -23,6 +23,7 @@ from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
 from .order_service import OrderError, OrderService
 from .semantic_layer import rule_semantic_frame
+from .realtime_envelope import RealtimeEnvelope
 from .session_store import SessionStore
 from .stt_adapter import STTAdapter
 from .tts_adapter import TTSAdapter
@@ -174,11 +175,14 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         await websocket.accept()
         guard.connection_enter()
         active_sessions: set[str] = set()
+        envelope: RealtimeEnvelope | None = None
         try:
             while True:
                 payload = await websocket.receive_json()
                 request = ChatRequest.model_validate(payload)
                 active_sessions.add(request.session_id)
+                envelope = RealtimeEnvelope(session_id=request.session_id)
+                await websocket.send_json(envelope.ack())
                 if request.type == "cart_action":
                     event = agent.execute_cart_action(
                         request.session_id,
@@ -187,8 +191,8 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                         request.quantity,
                         cart,
                     )
-                    await websocket.send_json({"type": "cart_update", **event})
-                    await websocket.send_json({"type": "done"})
+                    await websocket.send_json(envelope.wrap({"type": "cart_update", **event}))
+                    await websocket.send_json(envelope.wrap({"type": "done"}))
                     session_store.save(request.session_id)
                     continue
                 cart_event = None
@@ -201,20 +205,24 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                         compiled_ir = await agent.compile_intent(request)
                         cart_event = await agent.try_handle_cart_message(request, cart, compiled_ir)
                 if cart_event is not None:
-                    await websocket.send_json({"type": "cart_update", **cart_event})
-                    await websocket.send_json({"type": "done"})
+                    await websocket.send_json(envelope.wrap({"type": "cart_update", **cart_event}))
+                    await websocket.send_json(envelope.wrap({"type": "done"}))
                     session_store.save(request.session_id)
                     continue
                 async for event in agent.stream_message(request, compiled_ir):
-                    await websocket.send_json(event)
+                    await websocket.send_json(envelope.wrap(event))
                 session_store.save(request.session_id)
         except WebSocketDisconnect:
             for sid in active_sessions:
                 session_store.save(sid)
             return
         except Exception as exc:
-            await websocket.send_json({"type": "error", "message": str(exc)})
-            await websocket.send_json({"type": "done"})
+            if envelope is not None:
+                await websocket.send_json(envelope.wrap({"type": "error", "message": str(exc)}))
+                await websocket.send_json(envelope.wrap({"type": "done"}))
+            else:
+                await websocket.send_json({"type": "error", "message": str(exc)})
+                await websocket.send_json({"type": "done"})
         finally:
             guard.connection_exit()
 

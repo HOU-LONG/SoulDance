@@ -34,6 +34,32 @@ def evaluate_events(scenario: EvalScenario, events: list[dict]) -> EvalScenarioR
             if term.lower() in product_text:
                 failures.append(f"forbidden term '{term}' found in product: {product_name}")
                 break
+        price = product.get("price")
+        if scenario.expect.price_max is not None and price is not None:
+            if price > scenario.expect.price_max:
+                failures.append(
+                    f"product {product_name} price {price} exceeds max {scenario.expect.price_max}"
+                )
+    if scenario.expect.require_cart_success:
+        cart_events = [event for event in events if event.get("type") == "cart_update"]
+        if not cart_events:
+            failures.append("missing cart_update event for require_cart_success")
+        else:
+            for cart_event in cart_events:
+                success = cart_event.get("success", False)
+                if not success:
+                    failures.append("cart_update event reported failure")
+                    break
+    if scenario.expect.require_order_completed:
+        order_events = [event for event in events if event.get("type") == "order_completed"]
+        if not order_events:
+            failures.append("missing order_completed event for require_order_completed")
+        else:
+            for order_event in order_events:
+                completed = order_event.get("completed", False)
+                if not completed:
+                    failures.append("order_completed event reported incomplete")
+                    break
     return EvalScenarioResult(
         id=scenario.id,
         passed=not failures,

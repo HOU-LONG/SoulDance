@@ -6,6 +6,14 @@ import com.example.shopguideagent.data.model.CheckoutResult
 import com.example.shopguideagent.data.model.OrderUiModel
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.remote.CartApiClient
+import com.example.shopguideagent.domain.event.CartOperationEvent
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import com.example.shopguideagent.test.CoroutineTestHelper
 import org.junit.AfterClass
 import org.junit.Assert.assertEquals
@@ -13,27 +21,38 @@ import org.junit.Assert.assertNull
 import org.junit.BeforeClass
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class CartViewModelTest {
     @Test
     fun addProductUpdatesCountAndTotal() {
         val viewModel = viewModel()
-        val product = ProductUiModel(
-            productId = "sku_001",
-            name = "Oil control cleanser",
-            price = 79.0,
-            imageUrl = null,
-            tags = listOf("oil skin"),
-            reason = "Fits oily skin and budget",
-            rating = null,
-            stock = null,
-            isPrimary = true,
-        )
+        val product = product("sku_001")
 
         viewModel.addProduct(product)
         viewModel.increaseQuantity("sku_001")
 
         assertEquals(2, viewModel.uiState.value.totalCount)
         assertEquals(158.0, viewModel.uiState.value.totalPrice, 0.001)
+    }
+
+    @Test
+    fun addProductEmitsSuccessEventAfterBackendSyncSucceeds() = runBlocking {
+        val viewModel = viewModel()
+        val event = async(start = CoroutineStart.UNDISPATCHED) { withTimeout(1_000) { viewModel.operationEvents.first() } }
+
+        viewModel.addProduct(product("sku_001"))
+
+        assertEquals(CartOperationEvent.AddToCartSucceeded("sku_001", 1), event.await())
+    }
+
+    @Test
+    fun addProductEmitsFailureEventWhenBackendSyncFails() = runBlocking {
+        val viewModel = viewModel(addError = IllegalStateException("stock empty"))
+        val event = async(start = CoroutineStart.UNDISPATCHED) { withTimeout(1_000) { viewModel.operationEvents.first() } }
+
+        viewModel.addProduct(product("sku_001"))
+
+        assertEquals(CartOperationEvent.AddToCartFailed("sku_001", "stock empty"), event.await())
     }
 
     @Test
@@ -241,11 +260,25 @@ class CartViewModelTest {
         store: CartPersistenceStore = FakeCartPersistenceStore(),
         checkoutResult: CheckoutResult? = CheckoutResult("order_test", 200.0),
         checkoutError: RuntimeException? = null,
+        addError: RuntimeException? = null,
     ): CartViewModel = CartViewModel(
         userId = userId,
         sessionId = sessionId,
         persistenceStore = store,
-        cartApiClient = FakeCartApiClient(checkoutResult, checkoutError),
+        cartApiClient = FakeCartApiClient(checkoutResult, checkoutError, addError),
+        operationDispatcher = Dispatchers.Unconfined,
+    )
+
+    private fun product(productId: String): ProductUiModel = ProductUiModel(
+        productId = productId,
+        name = "Oil control cleanser",
+        price = 79.0,
+        imageUrl = null,
+        tags = listOf("oil skin"),
+        reason = "Fits oily skin and budget",
+        rating = null,
+        stock = null,
+        isPrimary = true,
     )
 
     private fun cartItem(
@@ -269,6 +302,7 @@ class CartViewModelTest {
     private class FakeCartApiClient(
         private val checkoutResult: CheckoutResult?,
         private val checkoutError: RuntimeException?,
+        private val addError: RuntimeException?,
     ) : CartApiClient() {
         override suspend fun getCart(sessionId: String): List<CartItemUiModel> {
             throw IllegalStateException("offline test cart sync")
@@ -278,7 +312,9 @@ class CartViewModelTest {
             sessionId: String,
             product: ProductUiModel,
             quantity: Int,
-        ): CartItemUiModel = CartItemUiModel(
+        ): CartItemUiModel {
+            addError?.let { throw it }
+            return CartItemUiModel(
             productId = product.productId,
             name = product.name,
             price = product.price,
@@ -288,6 +324,7 @@ class CartViewModelTest {
             stock = product.stock,
             reason = product.reason,
         )
+        }
 
         override suspend fun updateQuantity(sessionId: String, productId: String, quantity: Int): Boolean = true
 

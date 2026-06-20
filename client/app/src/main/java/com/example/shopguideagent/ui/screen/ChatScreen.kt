@@ -104,7 +104,6 @@ fun ChatScreen(
     onAddToCart: (ProductUiModel) -> Unit,
     onVoiceRecordingStarted: () -> Unit = {},
     onMessageSubmitted: () -> Unit = {},
-    onAddToCartSuccess: () -> Unit = {},
 ) {
     val state by chatViewModel.uiState.collectAsState()
     val historyState by chatViewModel.historyState.collectAsState()

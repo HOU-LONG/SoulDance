@@ -14,8 +14,14 @@ import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.model.selectedItemCount
 import com.example.shopguideagent.data.model.selectedTotalPrice
 import com.example.shopguideagent.data.remote.CartApiClient
+import com.example.shopguideagent.domain.event.CartOperationEvent
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -25,6 +31,7 @@ class CartViewModel @JvmOverloads constructor(
     sessionId: String = UserSession.DEFAULT_SESSION_ID,
     private val persistenceStore: CartPersistenceStore = InMemoryCartPersistenceStore(),
     private val cartApiClient: CartApiClient = CartApiClient(),
+    private val operationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
 ) : ViewModel() {
     private var activeSessionId: String = sessionId
     private var cartSyncJob: Job? = null
@@ -39,6 +46,9 @@ class CartViewModel @JvmOverloads constructor(
         OrdersUiState(orders = persistenceStore.loadOrders(userId)),
     )
     val ordersState: StateFlow<OrdersUiState> = _ordersState.asStateFlow()
+
+    private val _operationEvents = MutableSharedFlow<CartOperationEvent>(extraBufferCapacity = 64)
+    val operationEvents: SharedFlow<CartOperationEvent> = _operationEvents.asSharedFlow()
 
     init {
         loadCartFromServer()
@@ -90,11 +100,14 @@ class CartViewModel @JvmOverloads constructor(
             stock = product.stock,
         )
         addItem(item)
-        viewModelScope.launch {
+        viewModelScope.launch(operationDispatcher) {
             try {
                 cartApiClient.addToCart(activeSessionId, product)
+                _operationEvents.tryEmit(CartOperationEvent.AddToCartSucceeded(product.productId, 1))
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(errorMessage = operationError("同步失败", e)).recalculate()
+                val message = operationError("????", e)
+                _uiState.value = _uiState.value.copy(errorMessage = message).recalculate()
+                _operationEvents.tryEmit(CartOperationEvent.AddToCartFailed(product.productId, e.message ?: message))
             }
         }
     }

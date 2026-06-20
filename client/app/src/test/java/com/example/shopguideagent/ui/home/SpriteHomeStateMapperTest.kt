@@ -13,7 +13,7 @@ class SpriteHomeStateMapperTest {
     fun assistantThinkingMapsToSearching() {
         val state = ChatUiState(phase = ChatExperiencePhase.AssistantThinking, isSending = true)
 
-        assertEquals(AvatarState.SEARCHING, SpriteHomeStateMapper.avatarStateFromChatState(state))
+        assertEquals(AvatarState.SEARCHING, SpriteHomeStateMapper.baseAvatarStateFromChatState(state))
     }
 
     @Test
@@ -29,15 +29,15 @@ class SpriteHomeStateMapperTest {
             ),
         )
 
-        assertEquals(AvatarState.PRESENTING, SpriteHomeStateMapper.avatarStateFromChatState(state))
+        assertEquals(AvatarState.PRESENTING, SpriteHomeStateMapper.baseAvatarStateFromChatState(state))
         assertEquals(sampleProduct(), SpriteHomeStateMapper.latestProduct(state))
     }
 
     @Test
-    fun errorPhaseMapsToError() {
+    fun errorPhaseMapsToTransientError() {
         val state = ChatUiState(phase = ChatExperiencePhase.Error, errorMessage = "bad network")
 
-        assertEquals(AvatarState.ERROR, SpriteHomeStateMapper.avatarStateFromChatState(state))
+        assertEquals(AvatarState.ERROR, SpriteHomeStateMapper.transientAvatarStateFromChatState(state))
     }
 
     private fun sampleProduct(): ProductUiModel = ProductUiModel(

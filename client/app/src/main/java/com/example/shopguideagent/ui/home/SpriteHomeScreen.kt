@@ -1,13 +1,11 @@
 package com.example.shopguideagent.ui.home
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,43 +19,34 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.MoreHoriz
-import androidx.compose.material.icons.outlined.ShoppingCart
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.shopguideagent.ui.component.clickableWithScale
-import com.example.shopguideagent.ui.theme.PriceColor
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
-import com.example.shopguideagent.ui.theme.TextOnBrand
-import com.example.shopguideagent.ui.theme.TextPrimary
 
 @Composable
 fun SpriteHomeScreen(
     state: SpriteHomeUiState,
-    onDressClick: () -> Unit,
-    onEarnFireClick: () -> Unit,
-    onGuideClick: () -> Unit,
-    onDailyTaskClick: () -> Unit,
-    onMenuClick: () -> Unit,
-    onCloseClick: () -> Unit,
-    onNewOutfitClick: () -> Unit,
+    onAction: (SpriteHomeAction) -> Unit,
     modifier: Modifier = Modifier,
+    avatarStage: AvatarStageRenderer = { stageState, stageModifier ->
+        SpriteStage(state = stageState, modifier = stageModifier)
+    },
 ) {
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
+            .testTag("sprite_home")
             .background(RoomBackgroundBrush),
     ) {
         RoomBackgroundDecorations()
@@ -75,16 +64,24 @@ fun SpriteHomeScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 UserProfileCard(
-                    fireValue = state.fireValue,
-                    identity = state.identity,
-                    identityBadge = state.identityBadge,
-                    userAvatarUri = state.userAvatarUri,
-                    partnerAvatarUri = state.partnerAvatarUri,
+                    fireValue = state.userProfile.firePoints,
+                    identity = state.userProfile.identityTitle,
+                    identityBadge = state.userProfile.identityLevel,
+                    userAvatarUri = state.userProfile.avatarUrl,
+                    partnerAvatarUri = state.userProfile.partnerAvatarUrl,
                     modifier = Modifier.weight(1f, fill = false),
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    RoundIconButton(icon = Icons.Outlined.MoreHoriz, contentDescription = "\u66f4\u591a", onClick = onMenuClick)
-                    RoundIconButton(icon = Icons.Outlined.Close, contentDescription = "\u5173\u95ed", onClick = onCloseClick)
+                    RoundIconButton(
+                        icon = Icons.Outlined.MoreHoriz,
+                        contentDescription = "更多",
+                        onClick = { onAction(SpriteHomeAction.MenuClicked) },
+                    )
+                    RoundIconButton(
+                        icon = Icons.Outlined.Close,
+                        contentDescription = "关闭",
+                        onClick = { onAction(SpriteHomeAction.CloseClicked) },
+                    )
                 }
             }
 
@@ -93,23 +90,22 @@ fun SpriteHomeScreen(
                     .fillMaxWidth()
                     .weight(1f),
             ) {
-                SpriteStage(
-                    avatarState = state.avatarState,
-                    layers = state.spriteLayers,
-                    speechText = state.speechText,
-                    modifier = Modifier
+                avatarStage(
+                    state.toAvatarStageUiState(),
+                    Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
                         .height(if (compact) 380.dp else 460.dp),
                 )
-                NewOutfitCard(
-                    title = state.newOutfitTitle,
-                    badge = state.newOutfitBadge,
-                    onClick = onNewOutfitClick,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(top = if (compact) 18.dp else 34.dp),
-                )
+                state.newOutfitHint?.let { hint ->
+                    NewOutfitHintCard(
+                        state = hint,
+                        onAction = onAction,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(top = if (compact) 18.dp else 34.dp),
+                    )
+                }
             }
 
             Column(
@@ -118,29 +114,24 @@ fun SpriteHomeScreen(
                 verticalArrangement = Arrangement.spacedBy(if (compact) 10.dp else 14.dp),
             ) {
                 IntimacyPanel(
-                    spriteName = state.spriteName,
-                    level = state.level,
-                    intimacy = state.intimacy,
-                    intimacyMax = state.intimacyMax,
-                    subtitle = state.subtitle,
-                    intimacyLabel = state.intimacyLabel,
+                    spriteName = state.spiritProgress.spiritName,
+                    level = state.spiritProgress.level,
+                    intimacy = state.spiritProgress.currentIntimacy,
+                    intimacyMax = state.spiritProgress.requiredIntimacy,
+                    subtitle = state.spiritProgress.subtitle,
+                    intimacyLabel = state.spiritProgress.intimacyLabel,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 BottomActionBar(
                     earnedStars = state.earnedStars,
-                    onDressClick = onDressClick,
-                    onEarnFireClick = onEarnFireClick,
-                    onGuideClick = onGuideClick,
+                    onAction = onAction,
                     modifier = Modifier
                         .widthIn(max = 520.dp)
                         .fillMaxWidth(),
                 )
                 DailyTaskBar(
-                    title = state.dailyTaskTitle,
-                    description = state.dailyTaskDescription,
-                    progress = state.dailyTaskProgress,
-                    target = state.dailyTaskTarget,
-                    onClick = onDailyTaskClick,
+                    state = state.dailyTask,
+                    onAction = onAction,
                     modifier = Modifier.widthIn(max = 560.dp),
                 )
             }
@@ -149,7 +140,7 @@ fun SpriteHomeScreen(
 }
 
 private val RoomBackgroundBrush = Brush.verticalGradient(
-    colors = listOf(Color(0xFFB87942), Color(0xFFF4C282), Color(0xFFFFE3B5), Color(0xFFE0A86C)),
+    colors = listOf(SpriteHomeTokens.RoomTop, SpriteHomeTokens.RoomMiddle, SpriteHomeTokens.RoomLight, SpriteHomeTokens.RoomBottom),
 )
 
 @Composable
@@ -192,14 +183,14 @@ private fun RoomBackgroundDecorations() {
 
 @Composable
 private fun RoundIconButton(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     contentDescription: String,
     onClick: () -> Unit,
 ) {
     Surface(
         modifier = Modifier.size(56.dp),
         shape = CircleShape,
-        color = Color.White.copy(alpha = 0.72f),
+        color = SpriteHomeTokens.Panel,
         shadowElevation = 6.dp,
     ) {
         IconButton(onClick = onClick) {
@@ -208,73 +199,27 @@ private fun RoundIconButton(
     }
 }
 
+@Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
-private fun NewOutfitCard(
-    title: String,
-    badge: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier.clickableWithScale(onClick),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Box(contentAlignment = Alignment.TopEnd) {
-            Surface(
-                modifier = Modifier.size(82.dp),
-                shape = RoundedCornerShape(24.dp),
-                color = Color(0xFF8FD1FF),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.85f)),
-                shadowElevation = 9.dp,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.ShoppingCart, contentDescription = null, tint = Color.White, modifier = Modifier.size(42.dp))
-                }
-            }
-            Text(
-                text = badge,
-                modifier = Modifier
-                    .offset(x = 10.dp, y = (-8).dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFFFF4B45))
-                    .padding(horizontal = 8.dp, vertical = 5.dp),
-                color = TextOnBrand,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-        Surface(
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFFFFF1AF),
-            shadowElevation = 4.dp,
-            modifier = Modifier.padding(top = 6.dp),
-        ) {
-            Text(
-                text = title,
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                color = TextPrimary,
-                style = MaterialTheme.typography.labelLarge,
-                textAlign = TextAlign.Center,
-                fontWeight = FontWeight.SemiBold,
-            )
-        }
+private fun SpriteHomeScreenIdlePreview() {
+    ShopGuideAgentTheme {
+        SpriteHomeScreen(state = SpriteHomePreviewData.idle, onAction = {})
     }
 }
 
 @Preview(showBackground = true, widthDp = 390, heightDp = 844)
 @Composable
-private fun SpriteHomeScreenPreview() {
+private fun SpriteHomeScreenSearchingPreview() {
     ShopGuideAgentTheme {
-        SpriteHomeScreen(
-            state = SpriteHomeUiState(),
-            onDressClick = {},
-            onEarnFireClick = {},
-            onGuideClick = {},
-            onDailyTaskClick = {},
-            onMenuClick = {},
-            onCloseClick = {},
-            onNewOutfitClick = {},
-        )
+        SpriteHomeScreen(state = SpriteHomePreviewData.searching, onAction = {})
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 844)
+@Composable
+private fun SpriteHomeScreenPresentingPreview() {
+    ShopGuideAgentTheme {
+        SpriteHomeScreen(state = SpriteHomePreviewData.presenting, onAction = {})
     }
 }
 
@@ -282,15 +227,6 @@ private fun SpriteHomeScreenPreview() {
 @Composable
 private fun SpriteHomeScreenCompactPreview() {
     ShopGuideAgentTheme {
-        SpriteHomeScreen(
-            state = SpriteHomeUiState(avatarState = AvatarState.CELEBRATING, speechText = "\u52a0\u8d2d\u6210\u529f\uff0c\u4eb2\u5bc6\u5ea6\u63d0\u5347"),
-            onDressClick = {},
-            onEarnFireClick = {},
-            onGuideClick = {},
-            onDailyTaskClick = {},
-            onMenuClick = {},
-            onCloseClick = {},
-            onNewOutfitClick = {},
-        )
+        SpriteHomeScreen(state = SpriteHomePreviewData.celebrating, onAction = {})
     }
 }

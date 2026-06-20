@@ -11,6 +11,8 @@ public class AppRouteBackStackTest {
         assertEquals(AppRoute.Cart, AppRouteBackStack.previousRoute(AppRoute.Orders));
         assertEquals(AppRoute.Chat, AppRouteBackStack.previousRoute(AppRoute.Cart));
         assertEquals(AppRoute.Home, AppRouteBackStack.previousRoute(AppRoute.Chat));
+        assertEquals(AppRoute.Home, AppRouteBackStack.previousRoute(AppRoute.Wardrobe));
+        assertEquals(AppRoute.Home, AppRouteBackStack.previousRoute(AppRoute.Tasks));
         assertNull(AppRouteBackStack.previousRoute(AppRoute.Home));
     }
 }

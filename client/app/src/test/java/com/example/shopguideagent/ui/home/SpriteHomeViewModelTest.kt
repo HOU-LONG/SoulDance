@@ -2,13 +2,21 @@ package com.example.shopguideagent.ui.home
 
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.model.RealtimeEvent
+import com.example.shopguideagent.domain.event.CartOperationEvent
 import com.example.shopguideagent.test.CoroutineTestHelper
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Before
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SpriteHomeViewModelTest {
     @Before
     fun setUp() {
@@ -21,77 +29,126 @@ class SpriteHomeViewModelTest {
     }
 
     @Test
-    fun productEventsMoveAvatarFromSearchingToPresentingAndStoreLatestProduct() {
+    fun productEventsUpdateBaseStateAndStoreLatestProduct() {
         val viewModel = SpriteHomeViewModel()
 
         viewModel.onRealtimeEvent(RealtimeEvent.ProductsStart("m1", expectedCount = 2, title = null))
-        assertEquals(AvatarState.SEARCHING, viewModel.uiState.value.avatarState)
+        assertEquals(AvatarState.SEARCHING, viewModel.uiState.value.baseAvatarState)
+        assertEquals(AvatarState.SEARCHING, viewModel.uiState.value.displayedAvatarState)
+        assertEquals(2, viewModel.uiState.value.productPresentation.expectedCount)
 
         viewModel.onRealtimeEvent(RealtimeEvent.ProductItem("m1", 0, sampleProduct()))
-        assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.avatarState)
-        assertEquals("p1", viewModel.uiState.value.latestProduct?.productId)
+        assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.baseAvatarState)
+        assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.displayedAvatarState)
+        assertEquals("p1", viewModel.uiState.value.presentingProduct?.productId)
+        assertEquals("p1", viewModel.uiState.value.productPresentation.primaryProduct?.productId)
 
         viewModel.onRealtimeEvent(RealtimeEvent.ProductsDone("m1"))
-        assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.avatarState)
+        assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.baseAvatarState)
+        assertEquals(true, viewModel.uiState.value.productPresentation.completed)
     }
 
     @Test
-    fun successfulCartUpdateCelebratesAndIncreasesRewards() {
+    fun successfulCartUpdateUsesTransientCelebrationAndIncreasesRewardsOnce() {
+        val viewModel = SpriteHomeViewModel()
+        val before = viewModel.uiState.value
+        val event = cartUpdate("m1", success = true)
+
+        viewModel.onRealtimeEvent(event)
+        viewModel.onRealtimeEvent(event)
+
+        val after = viewModel.uiState.value
+        assertEquals(AvatarState.CELEBRATING, after.transientAvatarState)
+        assertEquals(AvatarState.CELEBRATING, after.displayedAvatarState)
+        assertEquals(before.userProfile.firePoints + SpriteHomeRewards.ADD_TO_CART_FIRE, after.userProfile.firePoints)
+        assertEquals(before.spiritProgress.currentIntimacy + SpriteHomeRewards.ADD_TO_CART_INTIMACY, after.spiritProgress.currentIntimacy)
+    }
+
+    @Test
+    fun failedCartUpdateDoesNotCelebrateOrIncreaseRewards() {
         val viewModel = SpriteHomeViewModel()
         val before = viewModel.uiState.value
 
-        viewModel.onRealtimeEvent(
-            RealtimeEvent.CartUpdate(
-                messageId = "m1",
-                badgeCount = 1,
-                message = "added",
-                action = "add_to_cart",
-                productId = "p1",
-                success = true,
+        viewModel.onRealtimeEvent(cartUpdate("m1", success = false))
+
+        assertNull(viewModel.uiState.value.transientAvatarState)
+        assertEquals(before.userProfile.firePoints, viewModel.uiState.value.userProfile.firePoints)
+        assertEquals(before.spiritProgress.currentIntimacy, viewModel.uiState.value.spiritProgress.currentIntimacy)
+    }
+
+    @Test
+    fun intimacyCrossingThresholdTriggersLevelUpTransientState() {
+        val viewModel = SpriteHomeViewModel(
+            initialState = SpriteHomeUiState(
+                spiritProgress = SpiritProgressUiState(level = 1, currentIntimacy = 95, requiredIntimacy = 100),
             ),
         )
 
-        val after = viewModel.uiState.value
-        assertEquals(AvatarState.CELEBRATING, after.avatarState)
-        assertEquals(before.fireValue + SpriteHomeRewards.ADD_TO_CART_FIRE, after.fireValue)
-        assertEquals(before.intimacy + SpriteHomeRewards.ADD_TO_CART_INTIMACY, after.intimacy)
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartSucceeded("p1", 1))
+
+        assertEquals(AvatarState.LEVEL_UP, viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.LEVEL_UP, viewModel.uiState.value.displayedAvatarState)
+        assertEquals(2, viewModel.uiState.value.spiritProgress.level)
+        assertEquals(0, viewModel.uiState.value.spiritProgress.currentIntimacy)
     }
 
     @Test
-    fun intimacyCrossingThresholdTriggersLevelUp() {
+    fun productStartDuringCelebrationUpdatesBaseButKeepsTransientUntilAnimationFinishes() {
         val viewModel = SpriteHomeViewModel(
-            initialState = SpriteHomeUiState(level = 1, intimacy = 95, intimacyMax = 100),
+            initialState = SpriteHomeUiState(baseAvatarState = AvatarState.PRESENTING, presentingProduct = sampleProduct()),
         )
 
-        viewModel.onLocalAddToCartSuccess()
+        viewModel.onRealtimeEvent(cartUpdate("m1", success = true))
+        viewModel.onRealtimeEvent(RealtimeEvent.ProductsStart("m2", expectedCount = 1, title = null))
 
-        assertEquals(AvatarState.LEVEL_UP, viewModel.uiState.value.avatarState)
-        assertEquals(2, viewModel.uiState.value.level)
-        assertEquals(0, viewModel.uiState.value.intimacy)
-    }
-
-    @Test
-    fun stageAnimationFinishedReturnsTransientStatesToStableState() {
-        val viewModel = SpriteHomeViewModel()
-
-        viewModel.onRealtimeEvent(RealtimeEvent.Error("bad network"))
-        assertEquals(AvatarState.ERROR, viewModel.uiState.value.avatarState)
+        assertEquals(AvatarState.SEARCHING, viewModel.uiState.value.baseAvatarState)
+        assertEquals(AvatarState.CELEBRATING, viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.CELEBRATING, viewModel.uiState.value.displayedAvatarState)
 
         viewModel.onStageAnimationFinished()
-        assertEquals(AvatarState.IDLE, viewModel.uiState.value.avatarState)
+        assertNull(viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.SEARCHING, viewModel.uiState.value.displayedAvatarState)
     }
 
     @Test
-    fun voiceAndRequestCallbacksSetListeningAndSearching() {
+    fun voiceAndRequestCallbacksSetBaseListeningAndSearching() {
         val viewModel = SpriteHomeViewModel()
 
         viewModel.onVoiceRecordingStarted()
-        assertEquals(AvatarState.LISTENING, viewModel.uiState.value.avatarState)
+        assertEquals(AvatarState.LISTENING, viewModel.uiState.value.baseAvatarState)
 
         viewModel.onRequestSent()
-        assertEquals(AvatarState.SEARCHING, viewModel.uiState.value.avatarState)
-        assertNotNull(viewModel.uiState.value.speechText)
+        assertEquals(AvatarState.SEARCHING, viewModel.uiState.value.baseAvatarState)
+        assertNotNull(viewModel.uiState.value.speechBubble.text)
     }
+
+    @Test
+    fun actionsEmitEffectsWithoutNavigatingInComposable() = runTest {
+        val viewModel = SpriteHomeViewModel()
+        val effects = mutableListOf<SpriteHomeEffect>()
+        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.effects.take(3).collect { effects.add(it) }
+        }
+
+        viewModel.onAction(SpriteHomeAction.GuideClicked)
+        viewModel.onAction(SpriteHomeAction.DressUpClicked)
+        viewModel.onAction(SpriteHomeAction.DailyTaskClicked)
+
+        assertEquals(
+            listOf(SpriteHomeEffect.NavigateToGuide, SpriteHomeEffect.NavigateToWardrobe, SpriteHomeEffect.NavigateToTasks),
+            effects,
+        )
+        job.cancel()
+    }
+
+    private fun cartUpdate(messageId: String, success: Boolean): RealtimeEvent.CartUpdate = RealtimeEvent.CartUpdate(
+        messageId = messageId,
+        badgeCount = 1,
+        message = "added",
+        action = "add_to_cart",
+        productId = "p1",
+        success = success,
+    )
 
     private fun sampleProduct(): ProductUiModel = ProductUiModel(
         productId = "p1",

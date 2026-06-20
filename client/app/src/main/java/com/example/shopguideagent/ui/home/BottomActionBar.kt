@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -38,9 +39,7 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 @Composable
 fun BottomActionBar(
     earnedStars: Int,
-    onDressClick: () -> Unit,
-    onEarnFireClick: () -> Unit,
-    onGuideClick: () -> Unit,
+    onAction: (SpriteHomeAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -49,20 +48,22 @@ fun BottomActionBar(
         verticalAlignment = Alignment.Bottom,
     ) {
         ActionButton(
-            label = "\u88c5\u626e",
+            label = "装扮",
             icon = Icons.Outlined.Checkroom,
-            onClick = onDressClick,
+            testTag = "action_dress_up",
+            onClick = { onAction(SpriteHomeAction.DressUpClicked) },
             modifier = Modifier.weight(1f),
         )
         EarnFireButton(
             earnedStars = earnedStars,
-            onClick = onEarnFireClick,
+            onClick = { onAction(SpriteHomeAction.EarnFireClicked) },
             modifier = Modifier.weight(1.45f),
         )
         ActionButton(
-            label = "\u5bfc\u8d2d",
+            label = "导购",
             icon = Icons.Outlined.ShoppingCart,
-            onClick = onGuideClick,
+            testTag = "action_guide",
+            onClick = { onAction(SpriteHomeAction.GuideClicked) },
             modifier = Modifier.weight(1f),
         )
     }
@@ -72,12 +73,14 @@ fun BottomActionBar(
 private fun ActionButton(
     label: String,
     icon: ImageVector,
+    testTag: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
         modifier = modifier
             .height(112.dp)
+            .testTag(testTag)
             .clickableWithScale(onClick),
         shape = RoundedCornerShape(34.dp),
         color = Color.White.copy(alpha = 0.58f),
@@ -105,6 +108,7 @@ private fun EarnFireButton(
     Surface(
         modifier = modifier
             .height(126.dp)
+            .testTag("action_earn_fire")
             .clickableWithScale(onClick),
         shape = RoundedCornerShape(36.dp),
         color = Color(0xFFFFF0BB),
@@ -126,9 +130,9 @@ private fun EarnFireButton(
                     tint = Color(0xFFFFD12F),
                     modifier = Modifier.size(48.dp),
                 )
-                Text("\u8d5a\u706b\u661f", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("赚火星", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TextPrimary)
                 Text(
-                    text = "\u2605 $earnedStars",
+                    text = "★ $earnedStars",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = TextSecondary,
@@ -142,6 +146,6 @@ private fun EarnFireButton(
 @Composable
 private fun BottomActionBarPreview() {
     ShopGuideAgentTheme {
-        BottomActionBar(886, {}, {}, {})
+        BottomActionBar(886, onAction = {})
     }
 }

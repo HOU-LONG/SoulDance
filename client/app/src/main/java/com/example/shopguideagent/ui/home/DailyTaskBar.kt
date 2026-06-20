@@ -26,26 +26,28 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.example.shopguideagent.ui.component.clickableWithScale
 import com.example.shopguideagent.ui.theme.PriceColor
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
+import com.example.shopguideagent.ui.theme.TextOnBrand
 import com.example.shopguideagent.ui.theme.TextPrimary
 import com.example.shopguideagent.ui.theme.TextSecondary
-import com.example.shopguideagent.ui.theme.TextOnBrand
 
 @Composable
 fun DailyTaskBar(
-    title: String,
-    description: String,
-    progress: Int,
-    target: Int,
-    onClick: () -> Unit,
+    state: DailyTaskUiState,
+    onAction: (SpriteHomeAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("daily_task_bar")
+            .clickableWithScale { onAction(SpriteHomeAction.DailyTaskClicked) },
         shape = RoundedCornerShape(34.dp),
         color = Color.White.copy(alpha = 0.72f),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.78f)),
@@ -65,11 +67,11 @@ fun DailyTaskBar(
             }
             Spacer(Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(title, style = MaterialTheme.typography.labelMedium, color = TextSecondary)
-                Text(description, style = MaterialTheme.typography.titleSmall, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                Text(state.title, style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+                Text(state.description, style = MaterialTheme.typography.titleSmall, color = TextPrimary, fontWeight = FontWeight.SemiBold)
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("$progress / $target", style = MaterialTheme.typography.titleSmall, color = TextPrimary, fontWeight = FontWeight.SemiBold)
+                Text("${state.currentCount} / ${state.targetCount}", style = MaterialTheme.typography.titleSmall, color = TextPrimary, fontWeight = FontWeight.SemiBold)
                 Box(
                     modifier = Modifier
                         .padding(top = 5.dp)
@@ -80,7 +82,7 @@ fun DailyTaskBar(
                 ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth((if (target <= 0) 0f else progress.toFloat() / target).coerceIn(0f, 1f))
+                            .fillMaxWidth(state.progressFraction)
                             .height(6.dp)
                             .background(PriceColor),
                     )
@@ -88,11 +90,12 @@ fun DailyTaskBar(
             }
             Spacer(Modifier.width(12.dp))
             Button(
-                onClick = onClick,
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC94D), contentColor = TextOnBrand),
+                enabled = !state.claimed,
+                onClick = { onAction(SpriteHomeAction.DailyTaskClicked) },
+                colors = ButtonDefaults.buttonColors(containerColor = SpriteHomeTokens.PrimaryButton, contentColor = TextOnBrand),
                 shape = RoundedCornerShape(999.dp),
             ) {
-                Text("\u53bb\u5b8c\u6210", fontWeight = FontWeight.Bold)
+                Text(state.buttonText, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -102,6 +105,14 @@ fun DailyTaskBar(
 @Composable
 private fun DailyTaskBarPreview() {
     ShopGuideAgentTheme {
-        DailyTaskBar("\u6bcf\u65e5\u4efb\u52a1", "\u5b8c\u62101\u6b21\u667a\u80fd\u5bfc\u8d2d\u5bf9\u8bdd", 0, 1, {})
+        DailyTaskBar(DailyTaskUiState(), onAction = {})
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun DailyTaskBarCompletedPreview() {
+    ShopGuideAgentTheme {
+        DailyTaskBar(DailyTaskUiState(currentCount = 1, completed = true), onAction = {})
     }
 }

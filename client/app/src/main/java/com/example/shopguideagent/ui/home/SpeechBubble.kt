@@ -24,24 +24,29 @@ import com.example.shopguideagent.ui.theme.TextPrimary
 
 @Composable
 fun SpeechBubble(
-    text: String?,
+    state: SpeechBubbleUiState,
     modifier: Modifier = Modifier,
 ) {
     AnimatedVisibility(
-        visible = !text.isNullOrBlank(),
+        visible = state.visible && state.text.isNotBlank(),
         enter = fadeIn(),
         exit = fadeOut(),
         modifier = modifier,
     ) {
+        val bubbleColor = when (state.style) {
+            SpeechBubbleStyle.ERROR -> Color(0xFFFFF1F0)
+            SpeechBubbleStyle.SUCCESS -> Color(0xFFFFFAE8)
+            else -> Color.White.copy(alpha = 0.94f)
+        }
         Box(contentAlignment = Alignment.BottomCenter) {
             Surface(
                 shape = RoundedCornerShape(28.dp),
-                color = Color.White.copy(alpha = 0.94f),
+                color = bubbleColor,
                 shadowElevation = 8.dp,
                 tonalElevation = 2.dp,
             ) {
                 Text(
-                    text = text.orEmpty(),
+                    text = state.text,
                     modifier = Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
                     style = MaterialTheme.typography.titleMedium,
                     color = TextPrimary,
@@ -54,7 +59,7 @@ fun SpeechBubble(
                     .padding(bottom = 1.dp)
                     .size(18.dp)
                     .rotate(45f),
-                color = Color.White.copy(alpha = 0.94f),
+                color = bubbleColor,
                 shadowElevation = 0.dp,
             ) {}
         }
@@ -65,6 +70,14 @@ fun SpeechBubble(
 @Composable
 private fun SpeechBubblePreview() {
     ShopGuideAgentTheme {
-        SpeechBubble(text = "\u60f3\u6362\u65b0\u88c5\u626e")
+        SpeechBubble(state = SpeechBubbleUiState("想换新装扮"))
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun SpeechBubbleErrorPreview() {
+    ShopGuideAgentTheme {
+        SpeechBubble(state = SpeechBubbleUiState("刚才没听清", style = SpeechBubbleStyle.ERROR))
     }
 }

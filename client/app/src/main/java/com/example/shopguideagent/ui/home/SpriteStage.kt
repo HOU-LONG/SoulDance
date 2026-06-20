@@ -37,22 +37,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.example.shopguideagent.R
 import com.example.shopguideagent.ui.theme.PriceColor
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
-import com.example.shopguideagent.ui.theme.TextPrimary
 
 @Composable
 fun SpriteStage(
-    avatarState: AvatarState,
-    layers: SpriteLayerSet,
-    speechText: String?,
+    state: AvatarStageUiState,
     modifier: Modifier = Modifier,
 ) {
+    val avatarState = state.avatarState
+    val layers = SpriteAssetRegistry.layersFor(state.appearance, avatarState)
     val infinite = rememberInfiniteTransition(label = "spriteStageLoop")
     val idleFloat by infinite.animateFloat(
         initialValue = -5f,
@@ -72,11 +71,11 @@ fun SpriteStage(
         label = "celebrateScale",
     )
 
-    BoxWithConstraints(modifier = modifier, contentAlignment = Alignment.Center) {
+    BoxWithConstraints(modifier = modifier.testTag("sprite_stage"), contentAlignment = Alignment.Center) {
         val stageSize = (maxWidth * 0.74f).coerceAtMost(330.dp)
         StageProps(modifier = Modifier.matchParentSize())
         SpeechBubble(
-            text = speechText,
+            state = state.speechBubble,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .offset(y = 2.dp),
@@ -97,10 +96,10 @@ fun SpriteStage(
                     .background(Color(0x2A6A4325)),
             )
             SearchGlow(visible = avatarState == AvatarState.SEARCHING, alpha = glow)
-            Crossfade(targetState = avatarState, label = "spriteBase") { state ->
+            Crossfade(targetState = avatarState, label = "spriteBase") { target ->
                 Image(
-                    painter = painterResource(layers.baseResId ?: R.drawable.shopping),
-                    contentDescription = "2D \u7cbe\u7075 $state",
+                    painter = painterResource(layers.baseResId),
+                    contentDescription = "2D 精灵 $target",
                     modifier = Modifier
                         .size(stageSize * 0.68f)
                         .align(Alignment.Center),
@@ -108,9 +107,9 @@ fun SpriteStage(
                 )
             }
             OutfitLayer(visible = true, modifier = Modifier.align(Alignment.Center))
-            AccessoryLayer(visible = true, modifier = Modifier.align(Alignment.Center))
+            AccessoryLayer(visible = state.appearance.accessoryId != null, modifier = Modifier.align(Alignment.Center))
             PropLayer(
-                visible = true,
+                visible = state.appearance.propId != null,
                 glowing = avatarState == AvatarState.SEARCHING,
                 modifier = Modifier.align(Alignment.BottomEnd),
             )
@@ -256,7 +255,7 @@ private fun PresentingCard(visible: Boolean, modifier: Modifier = Modifier) {
             shadowElevation = 8.dp,
         ) {
             Text(
-                text = "\u597d\u7269\u53d1\u73b0",
+                text = "好物发现",
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.labelLarge,
                 color = PriceColor,
@@ -270,10 +269,14 @@ private fun PresentingCard(visible: Boolean, modifier: Modifier = Modifier) {
 @Composable
 private fun SpriteStagePreview() {
     ShopGuideAgentTheme {
-        SpriteStage(
-            avatarState = AvatarState.SEARCHING,
-            layers = SpriteLayerSet(),
-            speechText = "\u6b63\u5728\u627e\u597d\u7269",
-        )
+        SpriteStage(state = SpriteHomePreviewData.searching.toAvatarStageUiState())
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390, heightDp = 520)
+@Composable
+private fun SpriteStageLevelUpPreview() {
+    ShopGuideAgentTheme {
+        SpriteStage(state = SpriteHomePreviewData.levelUp.toAvatarStageUiState())
     }
 }

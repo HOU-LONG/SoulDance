@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..data_loader import load_products
 from ..embedding_retriever import EmbeddingRetriever
 from ..models import Product
+from ..rag.chunking import chunk_product
 from .base import Base
 from .engine import get_engine
 from .models import Product as ProductOrm, ProductChunk, SKU as SkuOrm
@@ -39,18 +40,27 @@ def seed_products(products: list[Product], session: Session, embedder: Embedding
             embedding=embedding,
         )
         session.add(orm)
-        session.add(ProductChunk(
-            chunk_id=f"chunk_{p.product_id}",
-            product_id=p.product_id,
-            category_id=p.category,
-            sub_category=p.sub_category,
-            chunk_type="description",
-            source_type="fixture",
-            trust_level="official",
-            document_version=1,
-            content=chunk_text,
-            embedding=embedding,
-        ))
+        for index, chunk in enumerate(chunk_product(p), start=1):
+            chunk_embedding = None
+            if embedder and embedder.model is not None:
+                chunk_embedding = embedder.model.encode(
+                    [chunk.content],
+                    normalize_embeddings=True,
+                ).tolist()[0]
+            session.add(ProductChunk(
+                chunk_id=f"chunk_{p.product_id}_{index:03d}",
+                product_id=chunk.product_id,
+                sku_id=chunk.sku_id,
+                category_id=chunk.category_id,
+                sub_category=chunk.sub_category,
+                chunk_type=chunk.chunk_type,
+                source_type=chunk.source_type,
+                trust_level=chunk.trust_level,
+                document_version=chunk.document_version,
+                content=chunk.content,
+                embedding=chunk_embedding,
+                metadata_json=chunk.metadata,
+            ))
         for sku in p.skus:
             session.add(SkuOrm(
                 sku_id=sku.sku_id,

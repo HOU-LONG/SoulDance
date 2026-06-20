@@ -23,7 +23,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
@@ -56,6 +59,9 @@ class ChatViewModel @JvmOverloads constructor(
         ),
     )
     val uiState: StateFlow<ChatUiState> = _uiState
+
+    private val _realtimeEvents = MutableSharedFlow<RealtimeEvent>(extraBufferCapacity = 64)
+    val realtimeEvents: SharedFlow<RealtimeEvent> = _realtimeEvents.asSharedFlow()
     val historyState: StateFlow<com.example.shopguideagent.data.history.ChatHistoryUiState> =
         historyRepository?.state
             ?: kotlinx.coroutines.flow.MutableStateFlow(
@@ -380,6 +386,7 @@ class ChatViewModel @JvmOverloads constructor(
     }
 
     private fun handleRealtimeEvent(event: RealtimeEvent) {
+        _realtimeEvents.tryEmit(event)
         when (event) {
             is RealtimeEvent.TextDelta -> {
                 val followUpAssistantId = activeFollowUpAssistantId

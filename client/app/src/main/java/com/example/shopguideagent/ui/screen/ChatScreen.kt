@@ -102,6 +102,9 @@ fun ChatScreen(
     cartBadgeCount: Int,
     onCartClick: () -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
+    onVoiceRecordingStarted: () -> Unit = {},
+    onMessageSubmitted: () -> Unit = {},
+    onAddToCartSuccess: () -> Unit = {},
 ) {
     val state by chatViewModel.uiState.collectAsState()
     val historyState by chatViewModel.historyState.collectAsState()
@@ -141,6 +144,7 @@ fun ChatScreen(
     }
 
     fun beginVoiceRecording() {
+        onVoiceRecordingStarted()
         voiceState = voiceStateMachine.onPress()
         voiceManager.startRecording()
     }
@@ -252,7 +256,10 @@ fun ChatScreen(
             bottomBar = {
                 ChatInputBar(
                     enabled = !state.isSending,
-                    onSend = chatViewModel::sendMessageStreaming,
+                    onSend = { text ->
+                        onMessageSubmitted()
+                        chatViewModel.sendMessageStreaming(text)
+                    },
                     voiceState = voiceState,
                     voiceTranscript = voiceTranscript,
                     recognitionState = state.voiceRecognitionState,
@@ -338,6 +345,7 @@ fun ChatScreen(
                                                 onQuickAction = { action ->
                                                     val focus = message.products.firstOrNull { it.isPrimary }
                                                         ?: message.products.firstOrNull()
+                                                    onMessageSubmitted()
                                                     if (focus != null) {
                                                         chatViewModel.sendProductFollowUp(focus, action)
                                                     } else {
@@ -357,6 +365,7 @@ fun ChatScreen(
                                             ) {
                                                 RetryInlineAction(
                                                     onRetry = {
+                                                        onMessageSubmitted()
                                                         chatViewModel.sendMessageStreaming(state.retryMessageText.orEmpty())
                                                     },
                                                 )
@@ -420,6 +429,7 @@ fun ChatScreen(
             onDismiss = { selectedProduct = null },
             onAddToCart = ::addToCartWithFeedback,
             onFollowUp = { followUp ->
+                onMessageSubmitted()
                 chatViewModel.sendProductFollowUp(product, followUp)
                 selectedProduct = null
             },

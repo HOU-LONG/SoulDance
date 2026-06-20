@@ -10,6 +10,7 @@ public class AppRouteBackStackTest {
     public void systemBackMovesOneRouteAtATime() {
         assertEquals(AppRoute.Cart, AppRouteBackStack.previousRoute(AppRoute.Orders));
         assertEquals(AppRoute.Chat, AppRouteBackStack.previousRoute(AppRoute.Cart));
-        assertNull(AppRouteBackStack.previousRoute(AppRoute.Chat));
+        assertEquals(AppRoute.Home, AppRouteBackStack.previousRoute(AppRoute.Chat));
+        assertNull(AppRouteBackStack.previousRoute(AppRoute.Home));
     }
 }

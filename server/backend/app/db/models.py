@@ -4,7 +4,6 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
     DateTime,
@@ -15,7 +14,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -42,7 +40,7 @@ class Product(Base):
     brand_region: Mapped[str] = mapped_column(String(64), nullable=False, default="未知")
     extracted_terms: Mapped[list[str]] = mapped_column(JSON, default=list)
     review_rating: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(384), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(

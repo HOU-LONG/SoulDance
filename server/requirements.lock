@@ -74,16 +74,12 @@ openai==2.38.0
 orjson==3.11.9
 oss2==2.19.1
 packaging==26.2
-pgvector==0.4.2
 pillow==12.2.0
 pip-tools==7.5.3
 platformdirs==4.10.0
 pluggy==1.6.0
 pooch==1.9.0
 protobuf==7.35.0
-psycopg==3.3.4
-psycopg-binary==3.3.4
-psycopg-pool==3.3.1
 pycparser==3.0
 pycryptodome==3.23.0
 pydantic==2.13.4

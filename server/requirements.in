@@ -17,10 +17,8 @@ sentence-transformers==5.1.2
 # LLM / ASR / TTS adapters
 openai==2.38.0
 
-# Database
+# Database (SQLite by default; PostgreSQL optional)
 sqlalchemy[asyncio]==2.0.51
-psycopg[binary,pool]==3.3.4
-pgvector==0.4.2
 alembic==1.18.4
 
 # Cache (optional, used by memory_cache)

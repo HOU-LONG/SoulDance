@@ -30,6 +30,9 @@ from .tts_adapter import TTSAdapter
 from .user_profile_store import UserProfileStore
 
 
+from .observability import InMemoryMetrics
+
+
 def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, concurrency_guard: ConcurrencyGuard | None = None) -> FastAPI:
     settings = get_settings()
     products = load_products(settings.dataset_path)
@@ -85,6 +88,8 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     )
 
     app = FastAPI(title="SoulDance ShopGuide Agent Backend", version="0.1.0")
+    metrics = InMemoryMetrics()
+    app.state.metrics = metrics
 
     @app.on_event("shutdown")
     async def _close_db_session():
@@ -135,6 +140,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
             "recommendation_memory": recommendation_memory.stats(),
             "structured_rank_cache": memory_cache.stats(),
             "persisted_sessions": len(agent.sessions._sessions),
+            "observability": metrics.snapshot(),
         }
 
     @app.get("/api/products")
@@ -179,10 +185,12 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         try:
             while True:
                 payload = await websocket.receive_json()
+                metrics.increment("ws.messages.received")
                 request = ChatRequest.model_validate(payload)
                 active_sessions.add(request.session_id)
                 envelope = RealtimeEnvelope(session_id=request.session_id)
                 await websocket.send_json(envelope.ack())
+                metrics.increment("ws.events.sent")
                 if request.type == "cart_action":
                     event = agent.execute_cart_action(
                         request.session_id,
@@ -192,7 +200,9 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                         cart,
                     )
                     await websocket.send_json(envelope.wrap({"type": "cart_update", **event}))
+                    metrics.increment("ws.events.sent")
                     await websocket.send_json(envelope.wrap({"type": "done"}))
+                    metrics.increment("ws.events.sent")
                     session_store.save(request.session_id)
                     continue
                 cart_event = None
@@ -206,11 +216,14 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                         cart_event = await agent.try_handle_cart_message(request, cart, compiled_ir)
                 if cart_event is not None:
                     await websocket.send_json(envelope.wrap({"type": "cart_update", **cart_event}))
+                    metrics.increment("ws.events.sent")
                     await websocket.send_json(envelope.wrap({"type": "done"}))
+                    metrics.increment("ws.events.sent")
                     session_store.save(request.session_id)
                     continue
                 async for event in agent.stream_message(request, compiled_ir):
                     await websocket.send_json(envelope.wrap(event))
+                    metrics.increment("ws.events.sent")
                 session_store.save(request.session_id)
         except WebSocketDisconnect:
             for sid in active_sessions:
@@ -219,10 +232,14 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         except Exception as exc:
             if envelope is not None:
                 await websocket.send_json(envelope.wrap({"type": "error", "message": str(exc)}))
+                metrics.increment("ws.events.sent")
                 await websocket.send_json(envelope.wrap({"type": "done"}))
+                metrics.increment("ws.events.sent")
             else:
                 await websocket.send_json({"type": "error", "message": str(exc)})
+                metrics.increment("ws.events.sent")
                 await websocket.send_json({"type": "done"})
+                metrics.increment("ws.events.sent")
         finally:
             guard.connection_exit()
 

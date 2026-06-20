@@ -39,9 +39,11 @@ class AdaptiveRetriever:
         self,
         retriever,
         policy: RelaxationPolicy | None = None,
+        metrics=None,
     ):
         self.retriever = retriever
         self.policy = policy or RelaxationPolicy()
+        self.metrics = metrics
 
     def search(self, plan: RetrievalPlan, top_k: int = 30) -> list[tuple[Product, float]]:
         """执行多轮自适应检索，返回合并后的候选商品及其分数。
@@ -60,8 +62,14 @@ class AdaptiveRetriever:
 
                 hybrid_results = HybridRetriever(self.retriever).search(plan, top_k=top_k)
                 if hybrid_results:
+                    if self.metrics is not None:
+                        self.metrics.increment("retrieval.hybrid.success")
                     return hybrid_results
+                if self.metrics is not None:
+                    self.metrics.increment("retrieval.fallback.used")
             except Exception:
+                if self.metrics is not None:
+                    self.metrics.increment("retrieval.fallback.used")
                 # retrieval_error: preserve fallback to base rank_products below
                 pass
 

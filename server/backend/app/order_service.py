@@ -51,14 +51,24 @@ class OrderConflictError(OrderError):
 
 
 class OrderService:
-    def __init__(self, cart_service, persist_dir: str | Path | None = None):
+    def __init__(
+        self,
+        cart_service,
+        persist_dir: str | Path | None = None,
+        db_session=None,
+    ):
         from .cart import CartService
 
         self._cart: CartService = cart_service
         self._orders: dict[str, list[Order]] = {}
         self._confirm_results: dict[str, dict[str, Order]] = {}
         self.persist_dir = Path(persist_dir) if persist_dir else None
-        if self.persist_dir:
+        self.db_session = db_session
+        self._repo = None
+        if self.db_session is not None:
+            from .repositories.order_repository import OrderRepository
+            self._repo = OrderRepository(self.db_session)
+        if self.persist_dir and self._repo is None:
             self.persist_dir.mkdir(parents=True, exist_ok=True)
             self._load()
 
@@ -137,6 +147,32 @@ class OrderService:
         return order
 
     def _get_order(self, order_id: str) -> Order | None:
+        if self._repo is not None:
+            row = self._repo.get(order_id)
+            if row is None:
+                return None
+            # 将 ORM 行转换为 Pydantic Order 模型
+            return Order(
+                order_id=row.order_id,
+                session_id=row.session_id,
+                status=row.status,
+                items=[
+                    OrderItem(
+                        product_id=item.product_id,
+                        title=item.title,
+                        price=item.price,
+                        quantity=item.quantity,
+                        amount=item.amount,
+                    )
+                    for item in row.items
+                ],
+                total_amount=row.total_amount,
+                address=Address.model_validate(row.address) if row.address else None,
+                confirmation_token=row.confirmation_token,
+                idempotency_key=row.idempotency_key,
+                created_at=row.created_at.isoformat() if row.created_at else "",
+                updated_at=row.updated_at.isoformat() if row.updated_at else "",
+            )
         for orders in self._orders.values():
             for order in orders:
                 if order.order_id == order_id:
@@ -154,6 +190,54 @@ class OrderService:
         self._confirm_results.setdefault(order.order_id, {})[key] = order.model_copy(deep=True)
 
     def _save_order(self, order: Order) -> None:
+        if self._repo is not None:
+            from backend.app.db.models import Order as OrderOrm, OrderItem as OrderItemOrm
+            existing = self._repo.get(order.order_id)
+            if existing is None:
+                orm_order = OrderOrm(
+                    order_id=order.order_id,
+                    session_id=order.session_id,
+                    status=order.status,
+                    total_amount=order.total_amount,
+                    confirmation_token=order.confirmation_token,
+                    idempotency_key=order.idempotency_key,
+                    address=order.address.model_dump(mode="json") if order.address else None,
+                    created_at=datetime.fromisoformat(order.created_at) if order.created_at else datetime.now(timezone.utc),
+                    updated_at=datetime.fromisoformat(order.updated_at) if order.updated_at else datetime.now(timezone.utc),
+                )
+                for item in order.items:
+                    orm_item = OrderItemOrm(
+                        order_id=order.order_id,
+                        product_id=item.product_id,
+                        title=item.title,
+                        price=item.price,
+                        quantity=item.quantity,
+                        amount=item.amount,
+                    )
+                    orm_order.items.append(orm_item)
+                self._repo.save(orm_order)
+            else:
+                existing.status = order.status
+                existing.total_amount = order.total_amount
+                existing.confirmation_token = order.confirmation_token
+                existing.idempotency_key = order.idempotency_key
+                existing.address = order.address.model_dump(mode="json") if order.address else None
+                existing.updated_at = datetime.fromisoformat(order.updated_at) if order.updated_at else datetime.now(timezone.utc)
+                # 简单处理：删除旧 items 再重建
+                for item in list(existing.items):
+                    self.db_session.delete(item)
+                for item in order.items:
+                    orm_item = OrderItemOrm(
+                        order_id=order.order_id,
+                        product_id=item.product_id,
+                        title=item.title,
+                        price=item.price,
+                        quantity=item.quantity,
+                        amount=item.amount,
+                    )
+                    existing.items.append(orm_item)
+                self.db_session.flush()
+            return
         sid = order.session_id
         if sid not in self._orders:
             self._orders[sid] = []

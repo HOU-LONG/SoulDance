@@ -19,15 +19,25 @@ class UserProfileStore:
     session 关闭时将当轮反馈合并进长期画像。
     """
 
-    def __init__(self, persist_dir: str | Path | None = None):
+    def __init__(self, persist_dir: str | Path | None = None, db_session=None):
         self._profiles: dict[str, UserFeedbackProfile] = {}
         self.persist_dir = Path(persist_dir) if persist_dir else None
-        if self.persist_dir:
+        self.db_session = db_session
+        self._repo = None
+        if self.db_session is not None:
+            from .repositories.profile_repository import ProfileRepository
+            self._repo = ProfileRepository(self.db_session)
+        if self.persist_dir and self._repo is None:
             self.persist_dir.mkdir(parents=True, exist_ok=True)
             self._load()
 
     def get(self, user_id: str) -> UserFeedbackProfile:
         """获取或创建用户画像。"""
+        if self._repo is not None:
+            profile = self._repo.get(user_id)
+            if profile is None:
+                profile = UserFeedbackProfile(user_id=user_id)
+            return profile
         if user_id not in self._profiles:
             loaded = self._load_one(user_id)
             self._profiles[user_id] = loaded or UserFeedbackProfile(user_id=user_id)
@@ -35,6 +45,9 @@ class UserProfileStore:
 
     def save(self, profile: UserFeedbackProfile) -> None:
         """保存单个用户画像。"""
+        if self._repo is not None:
+            self._repo.save(profile)
+            return
         profile.updated_at = datetime.now(timezone.utc).isoformat()
         self._profiles[profile.user_id] = profile
         if self.persist_dir:

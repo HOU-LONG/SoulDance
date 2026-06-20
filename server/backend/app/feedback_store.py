@@ -16,10 +16,15 @@ class FeedbackStore:
     按 session_id 组织事件，支持内存缓存 + 磁盘持久化。
     """
 
-    def __init__(self, persist_path: str | Path | None = None):
+    def __init__(self, persist_path: str | Path | None = None, db_session=None):
         self._events: dict[str, list[FeedbackEvent]] = {}
         self.persist_path = Path(persist_path) if persist_path else None
-        if self.persist_path:
+        self.db_session = db_session
+        self._repo = None
+        if self.db_session is not None:
+            from .repositories.feedback_repository import FeedbackRepository
+            self._repo = FeedbackRepository(self.db_session)
+        if self.persist_path and self._repo is None:
             self.persist_path.parent.mkdir(parents=True, exist_ok=True)
             self._load()
 
@@ -29,6 +34,9 @@ class FeedbackStore:
         """记录一条反馈事件。自动填充 timestamp。"""
         if not event.timestamp:
             event.timestamp = datetime.now(timezone.utc).isoformat()
+        if self._repo is not None:
+            self._repo.record(event)
+            return
         sid = event.session_id
         if sid not in self._events:
             self._events[sid] = []
@@ -42,16 +50,23 @@ class FeedbackStore:
 
     def get_all_events(self, session_id: str) -> list[FeedbackEvent]:
         """获取 session 全部反馈事件。"""
+        if self._repo is not None:
+            return self._repo.get_all_events(session_id)
         return list(self._events.get(session_id, []))
 
     def get_events_by_type(self, session_id: str, signal_types: list[str]) -> list[FeedbackEvent]:
         """按信号类型过滤。"""
+        if self._repo is not None:
+            events = self._repo.get_all_events(session_id)
+            return [e for e in events if e.signal_type in signal_types]
         return [
             e for e in self._events.get(session_id, [])
             if e.signal_type in signal_types
         ]
 
     def count(self, session_id: str) -> int:
+        if self._repo is not None:
+            return self._repo.count(session_id)
         return len(self._events.get(session_id, []))
 
     # ---- 持久化 ----

@@ -14,16 +14,36 @@ class SessionStore:
     DEFAULT_TTL_DAYS = 7
     CURRENT_SCHEMA_VERSION = 1
 
-    def __init__(self, persist_dir: str | Path | None = None, ttl_days: int = DEFAULT_TTL_DAYS):
+    def __init__(
+        self,
+        persist_dir: str | Path | None = None,
+        ttl_days: int = DEFAULT_TTL_DAYS,
+        db_session=None,
+    ):
         self._sessions: dict[str, SessionContext] = {}
         self.persist_dir = Path(persist_dir) if persist_dir else None
         self.ttl_days = ttl_days
-        if self.persist_dir:
+        self.db_session = db_session
+        self._repo = None
+        if self.db_session is not None:
+            from .repositories.session_repository import SessionRepository
+            self._repo = SessionRepository(self.db_session)
+        if self.persist_dir and self._repo is None:
             self.persist_dir.mkdir(parents=True, exist_ok=True)
             self._cleanup_expired()
             self._load_all()
 
     def get(self, session_id: str) -> SessionContext:
+        if self._repo is not None:
+            ctx = self._repo.get(session_id)
+            if ctx is None:
+                ctx = SessionContext(session_id=session_id)
+                self._repo.save(ctx)
+            else:
+                ctx.last_activity_at = datetime.now(timezone.utc).isoformat()
+                self._repo.save(ctx)
+            self._sessions[session_id] = ctx
+            return ctx
         if session_id not in self._sessions:
             loaded = self._load_one(session_id)
             self._sessions[session_id] = loaded if loaded else SessionContext(session_id=session_id)
@@ -32,6 +52,15 @@ class SessionStore:
         return ctx
 
     def save(self, session_id: str) -> None:
+        if self._repo is not None:
+            ctx = self._sessions.get(session_id)
+            if ctx is None:
+                ctx = self._repo.get(session_id)
+            if ctx is not None:
+                ctx.schema_version = self.CURRENT_SCHEMA_VERSION
+                ctx.last_activity_at = datetime.now(timezone.utc).isoformat()
+                self._repo.save(ctx)
+            return
         if not self.persist_dir:
             return
         context = self._sessions.get(session_id)
@@ -45,6 +74,10 @@ class SessionStore:
         tmp_path.rename(path)
 
     def save_all(self) -> None:
+        if self._repo is not None:
+            for session_id in list(self._sessions):
+                self.save(session_id)
+            return
         if not self.persist_dir:
             return
         for session_id in list(self._sessions):
@@ -82,6 +115,9 @@ class SessionStore:
                 self._sessions[session_id] = loaded
 
     def _cleanup_expired(self) -> None:
+        if self._repo is not None:
+            self._repo.cleanup_expired(self.ttl_days)
+            return
         if not self.persist_dir:
             return
         now = time.time()

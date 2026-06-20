@@ -12,15 +12,17 @@ from .cart import CartService
 from .config import Settings, get_settings
 from .concurrency import ConcurrencyGuard
 from .data_loader import load_products
+from .db import get_session, init_db
 from .embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
-from .image_assets import product_image_url_auto as product_image_url
 from .feedback_aggregator import FeedbackAggregator
 from .feedback_ranker import FeedbackAwareRanker
 from .feedback_store import FeedbackStore
+from .image_assets import product_image_url_auto as product_image_url
 from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
 from .order_service import OrderError, OrderService
+from .repositories import CartRepository, OrderRepository, SessionRepository, FeedbackRepository, ProfileRepository
 from .semantic_layer import rule_semantic_frame
 from .session_store import SessionStore
 from .stt_adapter import STTAdapter
@@ -46,13 +48,20 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     )
     memory_cache = StructuredMemoryCache(settings.memory_cache_path or None)
     recommendation_memory = RecommendationMemoryCache(_recommendation_memory_path(settings.memory_cache_path))
-    session_store = SessionStore(settings.session_dir or None, ttl_days=settings.session_ttl_days)
+
+    # 数据库 session：当 database_url 存在时初始化并创建全局 session（单 worker 演示方案）
+    db_session = None
+    if settings.database_url:
+        init_db()
+        db_session = get_session()
+
+    session_store = SessionStore(settings.session_dir or None, ttl_days=settings.session_ttl_days, db_session=db_session)
 
     # 反馈闭环
-    feedback_store = FeedbackStore(settings.feedback_path or None)
+    feedback_store = FeedbackStore(settings.feedback_path or None, db_session=db_session)
     feedback_aggregator = FeedbackAggregator(feedback_store)
     feedback_ranker = FeedbackAwareRanker(feedback_aggregator)
-    user_profile_store = UserProfileStore(settings.user_profile_dir or None)
+    user_profile_store = UserProfileStore(settings.user_profile_dir or None, db_session=db_session)
 
     tts = TTSAdapter(settings)
     stt_adapter = STTAdapter(settings)
@@ -68,7 +77,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         feedback_store=feedback_store,
         user_profile_store=user_profile_store,
     )
-    cart = CartService(products, settings.cart_path or None)
+    cart = CartService(products, settings.cart_path or None, db_session=db_session)
     product_map = {product.product_id: product for product in products}
     guard = concurrency_guard or ConcurrencyGuard(
         max_llm_calls=10,
@@ -76,6 +85,11 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     )
 
     app = FastAPI(title="SoulDance ShopGuide Agent Backend", version="0.1.0")
+
+    @app.on_event("shutdown")
+    async def _close_db_session():
+        if db_session is not None:
+            db_session.close()
 
     @app.on_event("startup")
     async def _warmup_llm_connection():
@@ -307,7 +321,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         ctx = user_profile_store.to_preference_context(user_id)
         return {"profile": profile.model_dump(mode="json"), "preference_context": ctx}
 
-    order_service = OrderService(cart, settings.session_dir or None)
+    order_service = OrderService(cart, settings.session_dir or None, db_session=db_session)
 
     @app.post("/api/order/initiate")
     def order_initiate(request: CartActionRequest):

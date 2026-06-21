@@ -60,3 +60,4 @@ data/
 
 # Eval datasets (tracked)
 !data/eval/
+!data/eval/**

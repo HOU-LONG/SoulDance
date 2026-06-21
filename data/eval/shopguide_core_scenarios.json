@@ -6,14 +6,14 @@
     "expect": {"min_product_items": 1, "event_types": ["ack", "products_start", "product_item", "done"]}
   },
   {
-    "id": "budget_under_100",
-    "message": "推荐100元以内的防晒霜",
-    "session_id": "eval_budget_under_100",
-    "expect": {"min_product_items": 1, "price_max": 100}
+    "id": "budget_under_300",
+    "message": "推荐300元以内的防晒霜",
+    "session_id": "eval_budget_under_300",
+    "expect": {"min_product_items": 1, "price_max": 300}
   },
   {
     "id": "exclude_alcohol",
-    "message": "推荐敏感肌可以用的护肤品，不要含酒精",
+    "message": "推荐一款防晒霜，不要含酒精",
     "session_id": "eval_exclude_alcohol",
     "expect": {"min_product_items": 1, "forbid_terms": ["酒精", "alcohol"]}
   },

@@ -51,14 +51,13 @@ def evaluate_events(scenario: EvalScenario, events: list[dict]) -> EvalScenarioR
                     failures.append("cart_update event reported failure")
                     break
     if scenario.expect.require_order_completed:
-        order_events = [event for event in events if event.get("type") == "order_completed"]
+        order_events = [event for event in events if event.get("type") == "order_flow"]
         if not order_events:
-            failures.append("missing order_completed event for require_order_completed")
+            failures.append("missing order_flow event for require_order_completed")
         else:
             for order_event in order_events:
-                completed = order_event.get("completed", False)
-                if not completed:
-                    failures.append("order_completed event reported incomplete")
+                if order_event.get("status") != "completed":
+                    failures.append("order_flow event reported incomplete")
                     break
     return EvalScenarioResult(
         id=scenario.id,

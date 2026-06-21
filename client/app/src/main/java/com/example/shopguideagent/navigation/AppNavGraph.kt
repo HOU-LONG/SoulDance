@@ -56,7 +56,7 @@ object AppRouteBackStack {
             AppRoute.Chat -> AppRoute.Home
             AppRoute.Wardrobe -> AppRoute.Home
             AppRoute.Tasks -> AppRoute.Home
-            AppRoute.Cart -> AppRoute.Chat
+            AppRoute.Cart -> AppRoute.Home
             AppRoute.Orders -> AppRoute.Cart
         }
 }
@@ -121,12 +121,20 @@ fun AppNavGraph() {
     when (route) {
         AppRoute.Home -> SpriteHomeRoute(
             viewModel = spriteHomeViewModel,
+            chatUiState = chatState,
             onEffect = { effect ->
                 when (effect) {
-                    SpriteHomeEffect.NavigateToGuide -> route = AppRoute.Chat
+                    SpriteHomeEffect.NavigateToGuide,
+                    SpriteHomeEffect.NavigateToChat -> route = AppRoute.Chat
                     SpriteHomeEffect.NavigateToWardrobe -> route = AppRoute.Wardrobe
                     SpriteHomeEffect.NavigateToTasks -> route = AppRoute.Tasks
+                    SpriteHomeEffect.NavigateToCart -> route = AppRoute.Cart
                     is SpriteHomeEffect.OpenProduct -> route = AppRoute.Chat
+                    is SpriteHomeEffect.ShowProductDetail -> route = AppRoute.Chat
+                    is SpriteHomeEffect.SendTextMessage -> chatViewModel.sendMessageStreaming(effect.text)
+                    is SpriteHomeEffect.SendVoiceMessage -> chatViewModel.sendVoiceMessage(effect.file)
+                    SpriteHomeEffect.ToggleSpeaker -> chatViewModel.setSpeakerEnabled(!chatState.isSpeakerEnabled)
+                    is SpriteHomeEffect.AddToCart -> cartViewModel.addProduct(effect.product)
                     is SpriteHomeEffect.ShowMessage -> Unit
                     is SpriteHomeEffect.ShowLevelUpReward -> Unit
                 }
@@ -139,6 +147,7 @@ fun AppNavGraph() {
             onAddToCart = cartViewModel::addProduct,
             onVoiceRecordingStarted = spriteHomeViewModel::onVoiceRecordingStarted,
             onMessageSubmitted = spriteHomeViewModel::onRequestSent,
+            onBackToSprite = { route = AppRoute.Home },
         )
         AppRoute.Wardrobe -> PlaceholderRoute(
             title = "装扮衣橱",
@@ -152,7 +161,7 @@ fun AppNavGraph() {
         )
         AppRoute.Cart -> CartScreen(
             cartViewModel = cartViewModel,
-            onBackClick = { route = AppRoute.Chat },
+            onBackClick = { route = AppRoute.Home },
             onOrdersClick = { route = AppRoute.Orders },
         )
         AppRoute.Orders -> OrdersScreen(

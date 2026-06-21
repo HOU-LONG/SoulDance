@@ -73,6 +73,17 @@ class SpriteHomeViewModel(
                 uiState.value.presentingProduct?.productId?.let { emitEffect(SpriteHomeEffect.OpenProduct(it)) }
             }
             SpriteHomeAction.RetryClicked -> setBaseState(AvatarState.SEARCHING)
+            is SpriteHomeAction.TextSubmitted -> emitEffect(SpriteHomeEffect.SendTextMessage(action.text))
+            SpriteHomeAction.VoiceRecordingStarted -> onVoiceRecordingStarted()
+            is SpriteHomeAction.VoiceFileReady -> emitEffect(SpriteHomeEffect.SendVoiceMessage(action.file))
+            SpriteHomeAction.VoiceRecordingCancelled -> setBaseState(AvatarState.IDLE)
+            SpriteHomeAction.SpeakerToggled -> emitEffect(SpriteHomeEffect.ToggleSpeaker)
+            SpriteHomeAction.ChatModeClicked -> emitEffect(SpriteHomeEffect.NavigateToChat)
+            SpriteHomeAction.CartClicked -> emitEffect(SpriteHomeEffect.NavigateToCart)
+            SpriteHomeAction.SettingsClicked -> emitEffect(SpriteHomeEffect.ShowMessage("设置暂未开放"))
+            is SpriteHomeAction.AddToCartClicked -> emitEffect(SpriteHomeEffect.AddToCart(action.product))
+            is SpriteHomeAction.ProductDetailClicked -> emitEffect(SpriteHomeEffect.ShowProductDetail(action.product))
+            is SpriteHomeAction.QuickActionClicked -> emitEffect(SpriteHomeEffect.SendTextMessage(action.message))
         }
     }
 

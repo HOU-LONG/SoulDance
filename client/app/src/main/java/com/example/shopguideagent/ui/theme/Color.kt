@@ -67,6 +67,20 @@ val GradientSurfaceStart = Color(0xFFFFFFFF)
 val GradientSurfaceEnd = Color(0xFFF0FDF4)
 
 // ============================================================
+// Sprite Room Warm Palette — unified with app theme
+// ============================================================
+
+val SpriteRoomTop = Color(0xFFB87942)
+val SpriteRoomMiddle = Color(0xFFF4C282)
+val SpriteRoomLight = Color(0xFFFFE3B5)
+val SpriteRoomBottom = Color(0xFFE0A86C)
+val SpritePanel = Color.White.copy(alpha = 0.72f)
+val SpritePanelBorder = Color.White.copy(alpha = 0.7f)
+val SpritePrimaryButton = Color(0xFFFFC94D)
+val SpriteVoiceBarBackground = Color(0xFF4A3524)
+val SpriteVoiceBarTint = Color(0xFFFFF8E1)
+
+// ============================================================
 // Legacy aliases (deprecated but kept for compat)
 // ============================================================
 

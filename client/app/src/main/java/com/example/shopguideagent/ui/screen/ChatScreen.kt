@@ -104,6 +104,7 @@ fun ChatScreen(
     onAddToCart: (ProductUiModel) -> Unit,
     onVoiceRecordingStarted: () -> Unit = {},
     onMessageSubmitted: () -> Unit = {},
+    onBackToSprite: () -> Unit = {},
 ) {
     val state by chatViewModel.uiState.collectAsState()
     val historyState by chatViewModel.historyState.collectAsState()
@@ -249,6 +250,7 @@ fun ChatScreen(
                     cartCount = state.cartBadgeCount,
                     onCartClick = onCartClick,
                     onHistoryClick = { scope.launch { drawerState.open() } },
+                    onBackClick = onBackToSprite.takeIf { true },
                 )
             },
             snackbarHost = { SnackbarHost(snackbarHostState) },

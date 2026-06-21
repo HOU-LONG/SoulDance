@@ -5,10 +5,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import com.example.shopguideagent.data.model.ChatUiState
 
 @Composable
 fun SpriteHomeRoute(
     viewModel: SpriteHomeViewModel,
+    chatUiState: ChatUiState,
     onEffect: (SpriteHomeEffect) -> Unit,
     modifier: Modifier = Modifier,
     avatarStage: AvatarStageRenderer = { stageState, stageModifier ->
@@ -23,6 +25,7 @@ fun SpriteHomeRoute(
 
     SpriteHomeScreen(
         state = state,
+        chatState = chatUiState,
         onAction = viewModel::onAction,
         modifier = modifier,
         avatarStage = avatarStage,

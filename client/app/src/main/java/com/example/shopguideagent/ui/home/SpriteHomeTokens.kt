@@ -3,13 +3,25 @@ package com.example.shopguideagent.ui.home
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
+import com.example.shopguideagent.ui.theme.SpriteRoomTop
+import com.example.shopguideagent.ui.theme.SpriteRoomMiddle
+import com.example.shopguideagent.ui.theme.SpriteRoomLight
+import com.example.shopguideagent.ui.theme.SpriteRoomBottom
+import com.example.shopguideagent.ui.theme.SpritePanel
+import com.example.shopguideagent.ui.theme.SpritePanelBorder
+import com.example.shopguideagent.ui.theme.SpritePrimaryButton
+import com.example.shopguideagent.ui.theme.SpriteVoiceBarBackground
+import com.example.shopguideagent.ui.theme.SpriteVoiceBarTint
+
 object SpriteHomeTokens {
-    val RoomTop = Color(0xFFB87942)
-    val RoomMiddle = Color(0xFFF4C282)
-    val RoomLight = Color(0xFFFFE3B5)
-    val RoomBottom = Color(0xFFE0A86C)
-    val Panel = Color.White.copy(alpha = 0.72f)
-    val PanelBorder = Color.White.copy(alpha = 0.7f)
-    val PrimaryButton = Color(0xFFFFC94D)
+    val RoomTop = SpriteRoomTop
+    val RoomMiddle = SpriteRoomMiddle
+    val RoomLight = SpriteRoomLight
+    val RoomBottom = SpriteRoomBottom
+    val Panel = SpritePanel
+    val PanelBorder = SpritePanelBorder
+    val PrimaryButton = SpritePrimaryButton
     val CardRadius = 34.dp
+    val VoiceBarBackground = SpriteVoiceBarBackground
+    val VoiceBarTint = SpriteVoiceBarTint
 }

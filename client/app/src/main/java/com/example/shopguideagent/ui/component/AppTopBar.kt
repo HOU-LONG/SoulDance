@@ -3,6 +3,7 @@ package com.example.shopguideagent.ui.component
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -17,9 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.ui.theme.AppBackground
-import com.example.shopguideagent.ui.theme.BorderColor
 import com.example.shopguideagent.ui.theme.BrandPrimary
-import com.example.shopguideagent.ui.theme.ShadowColor
 import com.example.shopguideagent.ui.theme.TextPrimary
 import com.example.shopguideagent.ui.theme.TextTertiary
 
@@ -29,6 +28,7 @@ fun AppTopBar(
     cartCount: Int,
     onCartClick: () -> Unit,
     onHistoryClick: () -> Unit,
+    onBackClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     CenterAlignedTopAppBar(
@@ -38,12 +38,22 @@ fun AppTopBar(
             titleContentColor = TextPrimary,
         ),
         navigationIcon = {
-            IconButton(onClick = onHistoryClick) {
-                Icon(
-                    Icons.Outlined.Menu,
-                    contentDescription = "历史会话",
-                    tint = BrandPrimary,
-                )
+            if (onBackClick != null) {
+                IconButton(onClick = onBackClick) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Outlined.ArrowBack,
+                        contentDescription = "返回精灵空间",
+                        tint = BrandPrimary,
+                    )
+                }
+            } else {
+                IconButton(onClick = onHistoryClick) {
+                    Icon(
+                        imageVector = Icons.Outlined.Menu,
+                        contentDescription = "历史会话",
+                        tint = BrandPrimary,
+                    )
+                }
             }
         },
         title = {

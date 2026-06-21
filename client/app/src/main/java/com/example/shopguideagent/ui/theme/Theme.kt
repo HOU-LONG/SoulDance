@@ -7,6 +7,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.foundation.shape.RoundedCornerShape
 
 private val LightColorScheme = lightColorScheme(
+    // NOTE: When changing AppBackground, also update values/styles.xml android:windowBackground
+    // and values/colors.xml app_background to match.
     primary = BrandPrimary,
     onPrimary = TextOnBrand,
     primaryContainer = BrandSoft,

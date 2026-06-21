@@ -57,11 +57,44 @@ Optional fields:
 
 Natural-language cart operations are allowed only when the backend can resolve a concrete cart target from session context, current cart contents, or a unique product name. Checkout/order creation remains protected by the REST order confirmation state machine; Agent text must not claim an order was completed unless the confirmation API/tool succeeded.
 
+## Envelope Metadata
+
+Every server event produced in response to one client message carries an envelope with the following additive fields:
+
+- `seq`: monotonically increasing integer starting at `0` for the `ack` event.
+- `trace_id`: stable UUID-like identifier shared by the `ack` and all subsequent events from the same client message.
+- `timestamp`: ISO 8601 UTC timestamp.
+- `session_id`: the session id from the client request.
+- `message_id`: grouping id for UI messages; preserved from the client when present.
+
+The first event the backend sends after receiving a valid client message is:
+
+```json
+{
+  "type": "ack",
+  "session_id": "demo",
+  "message_id": "msg_xxx",
+  "trace_id": "trace_xxx",
+  "seq": 0,
+  "timestamp": "2026-06-20T14:00:00Z",
+  "payload": {"state": "received"}
+}
+```
+
+Existing outgoing event types keep their current top-level fields and additionally receive the envelope metadata. Old clients that ignore unknown fields continue to work unchanged. New clients may use `ack` for connection bookkeeping and `trace_id` for end-to-end tracing.
+
+## Compatibility Rules
+
+- Existing event types (`text_delta`, `product_item`, `products_start`, `products_done`, `cart_update`, `quick_actions`, `done`, `error`, audio/focus/bundle events) remain unchanged except for additive envelope fields.
+- The `ack` event is additive and must not block old clients.
+- Android tolerates unknown metadata fields and does not treat `ack` as assistant text.
+
 ## Server Events
 
 The current client handles these event families:
 
 ```text
+ack                     receipt confirmation with envelope metadata
 text_delta              incremental assistant text
 product_item            product card payload
 recommendations_ready   recommendation set is complete

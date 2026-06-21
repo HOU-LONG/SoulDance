@@ -75,12 +75,13 @@ curl -fsS http://127.0.0.1:18083/health
 
 ## Android
 
-Build on `mix_A100`:
+Build on `mix_A100`. The remote default Java is 11, which is too old for the current Gradle plugin; use the Android Studio bundled JBR and set the SDK roots explicitly:
 
 ```bash
 cd /home/huadabioa/houlong/SoulDance/client
 export JAVA_HOME=/home/huadabioa/houlong/android-studio/jbr
 export ANDROID_HOME=/home/huadabioa/houlong/android-sdk
+export ANDROID_SDK_ROOT=/home/huadabioa/houlong/android-sdk
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon
 ```
@@ -90,6 +91,19 @@ APK output:
 ```text
 /home/huadabioa/houlong/SoulDance/client/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+## Eval Runner
+
+Run the fixed scenario set against the in-process backend:
+
+```bash
+cd /home/huadabioa/houlong/SoulDance/server
+../env/venv_shopguide_backend/bin/python scripts/run_eval.py --scenarios ../data/eval/shopguide_core_scenarios.json
+```
+
+Expected output: JSON report with `"failed": 0`.
+
+The scenario file is tracked at `data/eval/shopguide_core_scenarios.json`. Update expectations there when product facts change; do not weaken production constraints to make a scenario pass.
 
 ## Cloudflare Device Debugging
 

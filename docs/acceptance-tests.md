@@ -22,10 +22,24 @@ cd server
 
 Expected: all backend tests pass.
 
+## Eval Runner
+
+```bash
+cd server
+../env/venv_shopguide_backend/bin/python -m pytest -q
+../env/venv_shopguide_backend/bin/python scripts/run_eval.py --scenarios ../data/eval/shopguide_core_scenarios.json
+```
+
+Expected: all pytest tests pass and the eval report shows `"failed": 0`.
+
 ## Android
 
 ```bash
 cd client
+export JAVA_HOME=/home/huadabioa/houlong/android-studio/jbr
+export ANDROID_HOME=/home/huadabioa/houlong/android-sdk
+export ANDROID_SDK_ROOT=/home/huadabioa/houlong/android-sdk
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 ./gradlew :app:testDebugUnitTest :app:assembleDebug --no-daemon
 ```
 

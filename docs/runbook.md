@@ -105,6 +105,19 @@ Expected output: JSON report with `"failed": 0`.
 
 The scenario file is tracked at `data/eval/shopguide_core_scenarios.json`. Update expectations there when product facts change; do not weaken production constraints to make a scenario pass.
 
+
+## Release and Demo Readiness
+
+Use this gate after implementing the gap-fill A/B/C plans and before a handoff or live demo:
+
+```bash
+cd /home/huadabioa/houlong/SoulDance
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py --list-checks
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py
+```
+
+The demo checklist is tracked in `docs/demo-readiness.md`. Cloudflare tunnel remains the preferred real-device path; use `adb reverse` only as an explicitly noted fallback.
+
 ## Cloudflare Device Debugging
 
 The preferred real-device path is Cloudflare tunnel access, not `adb reverse`.

@@ -2,6 +2,27 @@
 
 Run these checks before considering the monorepo baseline complete.
 
+## Release Acceptance CLI
+
+Run the full post-gap-fill release matrix from the remote source-of-truth checkout:
+
+```bash
+cd /home/huadabioa/houlong/SoulDance
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py --list-checks
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py
+```
+
+For targeted verification while iterating:
+
+```bash
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py --dry-run
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py --check backend-tests --check eval-runner --check script-syntax
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py --check android-build
+env/venv_shopguide_backend/bin/python server/scripts/run_release_acceptance.py --check host-health-smoke
+```
+
+Expected: selected checks exit `0`. The full matrix stops at the first failing check.
+
 ## Structure
 
 ```bash
@@ -54,7 +75,9 @@ client/app/build/outputs/apk/debug/app-debug.apk
 ## Scripts
 
 ```bash
-bash -n start_backend.sh server/scripts/setup_backend_env.sh server/scripts/start_backend.sh server/scripts/start_stt.sh client/gradlew
+for script in start_backend.sh server/scripts/setup_backend_env.sh server/scripts/start_backend.sh server/scripts/start_stt.sh client/gradlew; do
+  bash -n "$script"
+done
 ```
 
 Expected: syntax checks pass.

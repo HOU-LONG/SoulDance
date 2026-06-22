@@ -132,10 +132,10 @@ class SpriteHomeViewModelTest {
 
         viewModel.onAction(SpriteHomeAction.ChatModeClicked)
         viewModel.onAction(SpriteHomeAction.DressUpClicked)
-        viewModel.onAction(SpriteHomeAction.DailyTaskClicked)
+        viewModel.onAction(SpriteHomeAction.EarnFireClicked)
 
         assertEquals(
-            listOf(SpriteHomeEffect.NavigateToChat, SpriteHomeEffect.NavigateToWardrobe, SpriteHomeEffect.NavigateToTasks),
+            listOf(SpriteHomeEffect.NavigateToChat, SpriteHomeEffect.NavigateToWardrobe, SpriteHomeEffect.ShowTaskCenter),
             effects,
         )
         job.cancel()

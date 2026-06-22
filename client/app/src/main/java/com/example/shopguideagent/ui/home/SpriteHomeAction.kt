@@ -7,6 +7,7 @@ sealed interface SpriteHomeAction {
     object DressUpClicked : SpriteHomeAction
     object EarnFireClicked : SpriteHomeAction
     data class TaskClaimed(val taskId: String) : SpriteHomeAction
+    object TaskCenterOpened : SpriteHomeAction
     object TaskCenterClosed : SpriteHomeAction
     object ProductViewedForTask : SpriteHomeAction
     object ProductShared : SpriteHomeAction

@@ -12,7 +12,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.ui.home.FireRewardCalculator
 import com.example.shopguideagent.ui.theme.PriceColor
-import com.example.shopguideagent.ui.theme.TextOnBrand
 
 @Composable
 fun FireDiscountLabel(

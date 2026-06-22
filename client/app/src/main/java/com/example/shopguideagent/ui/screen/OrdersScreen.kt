@@ -1,5 +1,6 @@
 package com.example.shopguideagent.ui.screen
 
+import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -249,6 +250,7 @@ private fun OrderCard(order: OrderUiModel) {
     }
 }
 
+@SuppressLint("ViewModelConstructorInComposable")
 @Preview(showBackground = true)
 @Composable
 private fun OrdersScreenPreview() {

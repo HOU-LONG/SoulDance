@@ -1,5 +1,6 @@
 package com.example.shopguideagent.ui.screen
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -499,6 +500,7 @@ private fun ChatEmptyState(modifier: Modifier = Modifier) {
     }
 }
 
+@SuppressLint("ViewModelConstructorInComposable")
 @Preview(showBackground = true)
 @Composable
 private fun ChatScreenPreview() {

@@ -1,0 +1,34 @@
+# Core framework
+fastapi==0.137.2
+uvicorn[standard]==0.49.0
+pydantic==2.13.4
+python-multipart>=0.0.12
+
+# HTTP / WebSocket clients
+httpx==0.28.1
+websockets==16.0
+
+# Data & ML
+numpy==2.3.5
+jieba==0.42.1
+rank-bm25==0.2.2
+sentence-transformers==5.1.2
+
+# LLM / ASR / TTS adapters
+openai==2.38.0
+
+# Database (SQLite by default; PostgreSQL optional)
+sqlalchemy[asyncio]==2.0.51
+alembic==1.18.4
+
+# Cache (optional, used by memory_cache)
+redis[hiredis]==7.2.2
+
+# JSON / env
+orjson==3.11.9
+python-dotenv>=1.0.0
+
+# Testing
+pytest==9.0.3
+pytest-asyncio==1.3.0
+respx>=0.22.0

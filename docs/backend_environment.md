@@ -16,7 +16,7 @@ env/conda_gcc12             vLLM-Omni 运行时 libstdc++ / libgcc
 
 ```bash
 cd /home/huadabioa/houlong/SoulDance
-bash scripts/setup_backend_env.sh
+bash server/scripts/setup_backend_env.sh
 ```
 
 默认会使用：
@@ -29,7 +29,7 @@ BACKEND_VENV=env/venv_shopguide_backend
 可以按需覆盖：
 
 ```bash
-SEED_PYTHON=/path/to/python3.12 BACKEND_VENV=env/venv_shopguide_backend bash scripts/setup_backend_env.sh
+SEED_PYTHON=/path/to/python3.12 BACKEND_VENV=env/venv_shopguide_backend bash server/scripts/setup_backend_env.sh
 ```
 
 ## 后端命令
@@ -37,26 +37,26 @@ SEED_PYTHON=/path/to/python3.12 BACKEND_VENV=env/venv_shopguide_backend bash scr
 测试：
 
 ```bash
-env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -v
+cd server && ../env/venv_shopguide_backend/bin/python -m pytest tests/test_agent_core.py tests/test_api.py -v
 ```
 
 检查 embedding：
 
 ```bash
-env/venv_shopguide_backend/bin/python scripts/check_embedding.py
+env/venv_shopguide_backend/bin/python server/scripts/check_embedding.py
 ```
 
 启动后端：
 
 ```bash
 export ARK_API_KEY="your-runtime-key"
-bash scripts/start_backend.sh
+bash server/scripts/start_backend.sh
 ```
 
 如果只想快速验证 API，不加载 dense embedding：
 
 ```bash
-USE_EMBEDDING=0 ARK_API_KEY="$ARK_API_KEY" bash scripts/start_backend.sh
+USE_EMBEDDING=0 ARK_API_KEY="$ARK_API_KEY" bash server/scripts/start_backend.sh
 ```
 
 ## TTS 服务

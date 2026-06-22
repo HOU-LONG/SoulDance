@@ -58,6 +58,9 @@ data/
 # Claude Code worktrees (temporary)
 .claude/worktrees/
 
+# Superpowers brainstorming mockups
+.superpowers/
+
 # Eval datasets (tracked)
 !data/eval/
 !data/eval/**

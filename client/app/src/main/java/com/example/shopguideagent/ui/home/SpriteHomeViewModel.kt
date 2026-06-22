@@ -210,7 +210,9 @@ class SpriteHomeViewModel(
             current.copy(
                 baseAvatarState = nextBase,
                 productPresentation = current.productPresentation.copy(completed = true),
-                dailyTask = current.dailyTask.incrementProgress(),
+                tasks = current.tasks.map { task ->
+                    if (task.taskId == "daily_guide_chat") task.increment() else task
+                },
                 speechBubble = SpriteHomeStateMapper.speechFor(current.transientAvatarState ?: nextBase, current.presentingProduct),
                 isLoading = false,
                 animationSequence = current.animationSequence + 1,
@@ -266,12 +268,14 @@ class SpriteHomeViewModel(
     }
 
     private fun handleDailyTaskClicked() {
-        val task = uiState.value.dailyTask
-        if (task.completed && !task.claimed) {
+        val task = uiState.value.tasks.firstOrNull { it.taskId == "daily_guide_chat" }
+        if (task != null && task.completed && !task.claimed) {
             _uiState.update { current ->
                 current.copy(
-                    dailyTask = current.dailyTask.copy(claimed = true),
-                    userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + current.dailyTask.rewardFirePoints),
+                    tasks = current.tasks.map { t ->
+                        if (t.taskId == "daily_guide_chat") t.copy(claimed = true) else t
+                    },
+                    userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + task.baseFireReward),
                     speechBubble = SpeechBubbleUiState("任务奖励已领取", style = SpeechBubbleStyle.SUCCESS),
                     animationSequence = current.animationSequence + 1,
                 )
@@ -289,12 +293,6 @@ class SpriteHomeViewModel(
 
     private fun emitEffect(effect: SpriteHomeEffect) {
         _effects.tryEmit(effect)
-    }
-
-    private fun DailyTaskUiState.incrementProgress(): DailyTaskUiState {
-        if (claimed) return this
-        val nextCount = (currentCount + 1).coerceAtMost(targetCount)
-        return copy(currentCount = nextCount, completed = targetCount > 0 && nextCount >= targetCount)
     }
 
     private fun cartEventKey(event: RealtimeEvent.CartUpdate): String =

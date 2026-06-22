@@ -101,7 +101,7 @@ data class SpriteHomeUiState(
     val baseAvatarState: AvatarState = AvatarState.IDLE,
     val transientAvatarState: AvatarState? = null,
     val speechBubble: SpeechBubbleUiState = SpeechBubbleUiState(),
-    val dailyTask: DailyTaskUiState = DailyTaskUiState(),
+    val tasks: List<TaskUiState> = DefaultTasks.all(),
     val presentingProduct: ProductUiModel? = null,
     val productPresentation: ProductPresentationUiState = ProductPresentationUiState(),
     val cartCount: Int = 0,

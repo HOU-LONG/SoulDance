@@ -2,6 +2,7 @@ package com.example.shopguideagent.ui.component
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -18,6 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.CartUiState
+import com.example.shopguideagent.ui.home.FireRewardCalculator
 import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.BorderColor
 import com.example.shopguideagent.ui.theme.BrandPrimary
@@ -54,13 +56,25 @@ fun CartSummaryBar(
         ) {
             Checkbox(checked = allSelected, onCheckedChange = onToggleAll)
             Text("全选", color = TextPrimary, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                "合计 ¥${"%.2f".format(state.totalPrice)}",
+            Column(
                 modifier = Modifier.weight(1f),
-                color = PriceColor,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.titleMedium,
-            )
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    "合计 ¥${"%.2f".format(state.totalPrice)}",
+                    color = PriceColor,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                val discount = FireRewardCalculator.discountAmount(886, state.totalPrice)
+                if (discount > 0) {
+                    Text(
+                        "可用 ⭐ 抵扣 ¥${"%.2f".format(discount)}",
+                        color = PriceColor.copy(alpha = 0.8f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
             Button(
                 onClick = onCheckout,
                 enabled = state.selectedCount > 0,

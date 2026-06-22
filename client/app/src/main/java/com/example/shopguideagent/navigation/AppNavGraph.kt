@@ -128,8 +128,11 @@ fun AppNavGraph() {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { _ ->
-        when (route) {
+    ) { paddingValues ->
+        Surface(modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues)) {
+            when (route) {
             AppRoute.Home -> SpriteHomeRoute(
                 viewModel = spriteHomeViewModel,
                 chatUiState = chatState,
@@ -183,6 +186,7 @@ fun AppNavGraph() {
                 cartViewModel = cartViewModel,
                 onBackClick = { route = AppRoute.Cart },
             )
+        }
         }
 
         BackHandler(enabled = AppRouteBackStack.previousRoute(route) != null) {

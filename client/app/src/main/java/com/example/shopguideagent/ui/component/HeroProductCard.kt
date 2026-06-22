@@ -140,6 +140,10 @@ fun HeroProductCard(
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                 )
+                FireDiscountLabel(
+                    firePoints = 886, // TODO: replace with actual firePoints when state is wired
+                    price = product.price,
+                )
                 Text(
                     text = renderMarkdownText(
                         product.reason.orEmpty(),

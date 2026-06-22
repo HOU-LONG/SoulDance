@@ -155,6 +155,13 @@ class SpriteHomeArchitectureTest {
         assertEquals(7L, stage.animationSequence)
     }
 
+    @Test
+    fun spriteHomeUiStateUsesTaskListNotDailyTask() {
+        val state = SpriteHomeUiState()
+        assertFalse(state.tasks.isEmpty())
+        assertNull(SpriteHomeUiState::class.java.declaredFields.find { it.name == "dailyTask" })
+    }
+
     private fun sampleProduct() = com.example.shopguideagent.data.model.ProductUiModel(
         productId = "p1",
         name = "Smart headphones",

@@ -11,8 +11,10 @@ import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -53,6 +55,7 @@ class SpriteHomeViewModelTest {
         val viewModel = SpriteHomeViewModel()
         val before = viewModel.uiState.value
         val event = cartUpdate("m1", success = true)
+        val expectedReward = FireRewardCalculator.reward(SpriteHomeRewards.ADD_TO_CART_FIRE, before.spiritProgress.level)
 
         viewModel.onRealtimeEvent(event)
         viewModel.onRealtimeEvent(event)
@@ -60,7 +63,7 @@ class SpriteHomeViewModelTest {
         val after = viewModel.uiState.value
         assertEquals(AvatarState.CELEBRATING, after.transientAvatarState)
         assertEquals(AvatarState.CELEBRATING, after.displayedAvatarState)
-        assertEquals(before.userProfile.firePoints + SpriteHomeRewards.ADD_TO_CART_FIRE, after.userProfile.firePoints)
+        assertEquals(before.userProfile.firePoints + expectedReward, after.userProfile.firePoints)
         assertEquals(before.spiritProgress.currentIntimacy + SpriteHomeRewards.ADD_TO_CART_INTIMACY, after.spiritProgress.currentIntimacy)
     }
 
@@ -138,6 +141,181 @@ class SpriteHomeViewModelTest {
             listOf(SpriteHomeEffect.NavigateToChat, SpriteHomeEffect.NavigateToWardrobe, SpriteHomeEffect.ShowTaskCenter),
             effects,
         )
+        job.cancel()
+    }
+
+    // --- Task logic tests ---
+
+    @Test
+    fun dailyLoginTaskIsClaimableOnInit() {
+        val viewModel = SpriteHomeViewModel()
+        val loginTask = viewModel.uiState.value.tasks.find { it.taskId == "daily_login" }
+        assertNotNull(loginTask)
+        assertTrue(loginTask!!.completed)
+        assertFalse(loginTask.claimed)
+        assertTrue(loginTask.claimable)
+    }
+
+    @Test
+    fun claimingDailyLoginTaskMarksClaimedAndAddsReward() = runTest {
+        val viewModel = SpriteHomeViewModel()
+        val before = viewModel.uiState.value
+        val loginTask = before.tasks.find { it.taskId == "daily_login" }!!
+        val expectedReward = FireRewardCalculator.reward(loginTask.baseFireReward, before.spiritProgress.level)
+
+        val effects = mutableListOf<SpriteHomeEffect>()
+        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.effects.take(1).collect { effects.add(it) }
+        }
+
+        viewModel.onAction(SpriteHomeAction.TaskClaimed("daily_login"))
+
+        val after = viewModel.uiState.value
+        val claimedTask = after.tasks.find { it.taskId == "daily_login" }!!
+        assertTrue(claimedTask.claimed)
+        assertFalse(claimedTask.claimable)
+        assertEquals(before.userProfile.firePoints + expectedReward, after.userProfile.firePoints)
+        assertEquals("任务奖励已领取", after.speechBubble.text)
+        assertEquals(SpeechBubbleStyle.SUCCESS, after.speechBubble.style)
+
+        val effect = effects.first() as SpriteHomeEffect.ShowClaimedReward
+        assertEquals("daily_login", effect.taskId)
+        job.cancel()
+    }
+
+    @Test
+    fun claimingNonExistentTaskDoesNothing() {
+        val viewModel = SpriteHomeViewModel()
+        val before = viewModel.uiState.value
+
+        viewModel.onAction(SpriteHomeAction.TaskClaimed("nonexistent"))
+
+        assertEquals(before, viewModel.uiState.value)
+    }
+
+    @Test
+    fun claimingAlreadyClaimedTaskDoesNothing() {
+        val viewModel = SpriteHomeViewModel()
+        viewModel.onAction(SpriteHomeAction.TaskClaimed("daily_login"))
+        val afterFirstClaim = viewModel.uiState.value
+
+        viewModel.onAction(SpriteHomeAction.TaskClaimed("daily_login"))
+
+        assertEquals(afterFirstClaim.userProfile.firePoints, viewModel.uiState.value.userProfile.firePoints)
+    }
+
+    @Test
+    fun productsDoneIncrementsDailyGuideChatTask() {
+        val viewModel = SpriteHomeViewModel()
+        val before = viewModel.uiState.value.tasks.find { it.taskId == "daily_guide_chat" }!!
+        assertEquals(0, before.currentCount)
+        assertFalse(before.completed)
+
+        viewModel.onRealtimeEvent(RealtimeEvent.ProductsStart("m1", expectedCount = 1, title = null))
+        viewModel.onRealtimeEvent(RealtimeEvent.ProductItem("m1", 0, sampleProduct()))
+        viewModel.onRealtimeEvent(RealtimeEvent.ProductsDone("m1"))
+
+        val after = viewModel.uiState.value.tasks.find { it.taskId == "daily_guide_chat" }!!
+        assertEquals(1, after.currentCount)
+        assertTrue(after.completed)
+        assertTrue(after.claimable)
+    }
+
+    @Test
+    fun productViewedForTaskIncrementsBrowseRecommendations() {
+        val viewModel = SpriteHomeViewModel()
+        val before = viewModel.uiState.value.tasks.find { it.taskId == "browse_recommendations" }!!
+        assertEquals(0, before.currentCount)
+
+        viewModel.onAction(SpriteHomeAction.ProductViewedForTask)
+        viewModel.onAction(SpriteHomeAction.ProductViewedForTask)
+
+        val after = viewModel.uiState.value.tasks.find { it.taskId == "browse_recommendations" }!!
+        assertEquals(2, after.currentCount)
+        assertFalse(after.completed) // target is 3
+    }
+
+    @Test
+    fun productSharedIncrementsShareGoodProductTask() {
+        val viewModel = SpriteHomeViewModel()
+        val before = viewModel.uiState.value.tasks.find { it.taskId == "share_good_product" }!!
+        assertEquals(0, before.currentCount)
+        assertFalse(before.completed)
+
+        viewModel.onAction(SpriteHomeAction.ProductShared)
+
+        val after = viewModel.uiState.value.tasks.find { it.taskId == "share_good_product" }!!
+        assertEquals(1, after.currentCount)
+        assertTrue(after.completed)
+        assertTrue(after.claimable)
+    }
+
+    @Test
+    fun addToCartIncrementsAddToCartTask() {
+        val viewModel = SpriteHomeViewModel()
+        val before = viewModel.uiState.value.tasks.find { it.taskId == "add_to_cart" }!!
+        assertEquals(0, before.currentCount)
+        assertFalse(before.completed)
+
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartSucceeded("p1", 1))
+
+        val after = viewModel.uiState.value.tasks.find { it.taskId == "add_to_cart" }!!
+        assertEquals(1, after.currentCount)
+        assertTrue(after.completed)
+        assertTrue(after.claimable)
+    }
+
+    @Test
+    fun addToCartAppliesIntimacyBonusBasedOnLevel() {
+        val viewModel = SpriteHomeViewModel(
+            initialState = SpriteHomeUiState(
+                spiritProgress = SpiritProgressUiState(level = 15, currentIntimacy = 0, requiredIntimacy = 100),
+            ),
+        )
+        val before = viewModel.uiState.value
+        // Level 15 bonus rate is 10%
+        val expectedReward = FireRewardCalculator.reward(SpriteHomeRewards.ADD_TO_CART_FIRE, 15)
+
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartSucceeded("p1", 1))
+
+        val after = viewModel.uiState.value
+        assertEquals(before.userProfile.firePoints + expectedReward, after.userProfile.firePoints)
+    }
+
+    @Test
+    fun taskIncrementDoesNotExceedTarget() {
+        val viewModel = SpriteHomeViewModel()
+        val browseTask = viewModel.uiState.value.tasks.find { it.taskId == "browse_recommendations" }!!
+        assertEquals(3, browseTask.targetCount)
+
+        // Increment 5 times
+        repeat(5) { viewModel.onAction(SpriteHomeAction.ProductViewedForTask) }
+
+        val after = viewModel.uiState.value.tasks.find { it.taskId == "browse_recommendations" }!!
+        assertEquals(3, after.currentCount)
+        assertTrue(after.completed)
+    }
+
+    @Test
+    fun claimingTaskAfterCompletionUsesCorrectReward() = runTest {
+        val viewModel = SpriteHomeViewModel(
+            initialState = SpriteHomeUiState(
+                spiritProgress = SpiritProgressUiState(level = 25, currentIntimacy = 0, requiredIntimacy = 100),
+            ),
+        )
+        // Level 25 bonus rate is 20%
+        val loginTask = viewModel.uiState.value.tasks.find { it.taskId == "daily_login" }!!
+        val expectedReward = FireRewardCalculator.reward(loginTask.baseFireReward, 25)
+
+        val effects = mutableListOf<SpriteHomeEffect>()
+        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.effects.take(1).collect { effects.add(it) }
+        }
+
+        viewModel.onAction(SpriteHomeAction.TaskClaimed("daily_login"))
+
+        val after = viewModel.uiState.value
+        assertEquals(700 + expectedReward, after.userProfile.firePoints)
         job.cancel()
     }
 

@@ -6,7 +6,10 @@ import java.io.File
 sealed interface SpriteHomeAction {
     object DressUpClicked : SpriteHomeAction
     object EarnFireClicked : SpriteHomeAction
-    object DailyTaskClicked : SpriteHomeAction
+    data class TaskClaimed(val taskId: String) : SpriteHomeAction
+    object TaskCenterClosed : SpriteHomeAction
+    object ProductViewedForTask : SpriteHomeAction
+    object ProductShared : SpriteHomeAction
     object ProfileClicked : SpriteHomeAction
     object SpeechBubbleClicked : SpriteHomeAction
     object ProductClicked : SpriteHomeAction

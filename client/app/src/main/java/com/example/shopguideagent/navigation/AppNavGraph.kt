@@ -129,6 +129,9 @@ fun AppNavGraph() {
                     SpriteHomeEffect.NavigateToWardrobe -> route = AppRoute.Wardrobe
                     SpriteHomeEffect.NavigateToTasks -> route = AppRoute.Tasks
                     SpriteHomeEffect.NavigateToCart -> route = AppRoute.Cart
+                    SpriteHomeEffect.NavigateToShare -> Unit
+                    SpriteHomeEffect.ShowTaskCenter -> Unit
+                    SpriteHomeEffect.HideTaskCenter -> Unit
                     is SpriteHomeEffect.OpenProduct -> route = AppRoute.Chat
                     is SpriteHomeEffect.ShowProductDetail -> route = AppRoute.Chat
                     is SpriteHomeEffect.SendTextMessage -> chatViewModel.sendMessageStreaming(effect.text)
@@ -137,6 +140,7 @@ fun AppNavGraph() {
                     is SpriteHomeEffect.AddToCart -> cartViewModel.addProduct(effect.product)
                     is SpriteHomeEffect.ShowMessage -> Unit
                     is SpriteHomeEffect.ShowLevelUpReward -> Unit
+                    is SpriteHomeEffect.ShowClaimedReward -> Unit
                 }
             },
         )

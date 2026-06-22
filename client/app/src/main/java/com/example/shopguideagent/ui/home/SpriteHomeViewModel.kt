@@ -62,7 +62,10 @@ class SpriteHomeViewModel(
                 setSpeech("完成导购任务就能赚火星")
                 emitEffect(SpriteHomeEffect.NavigateToTasks)
             }
-            SpriteHomeAction.DailyTaskClicked -> handleDailyTaskClicked()
+            is SpriteHomeAction.TaskClaimed -> handleTaskClaimed(action.taskId)
+            SpriteHomeAction.TaskCenterClosed -> Unit
+            SpriteHomeAction.ProductViewedForTask -> Unit
+            SpriteHomeAction.ProductShared -> emitEffect(SpriteHomeEffect.NavigateToShare)
             SpriteHomeAction.ProfileClicked -> emitEffect(SpriteHomeEffect.ShowMessage("用户资料暂未开放"))
             SpriteHomeAction.SpeechBubbleClicked -> Unit
             SpriteHomeAction.ProductClicked -> {
@@ -142,17 +145,43 @@ class SpriteHomeViewModel(
     }
 
     fun onDailyTaskClicked() {
-        onAction(SpriteHomeAction.DailyTaskClicked)
+        onAction(SpriteHomeAction.EarnFireClicked)
     }
 
-    fun onStageAnimationFinished() {
-        _uiState.update { current ->
-            val stable = current.baseAvatarState
-            current.copy(
-                transientAvatarState = null,
-                speechBubble = SpriteHomeStateMapper.speechFor(stable, current.presentingProduct),
-                animationSequence = current.animationSequence + 1,
-            )
+    private fun handleTaskClaimed(taskId: String) {
+        val task = uiState.value.tasks.firstOrNull { it.taskId == taskId }
+        if (task != null && task.claimable) {
+            _uiState.update { current ->
+                current.copy(
+                    tasks = current.tasks.map { t ->
+                        if (t.taskId == taskId) t.copy(claimed = true) else t
+                    },
+                    userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + task.baseFireReward),
+                    speechBubble = SpeechBubbleUiState("任务奖励已领取", style = SpeechBubbleStyle.SUCCESS),
+                    animationSequence = current.animationSequence + 1,
+                )
+            }
+            emitEffect(SpriteHomeEffect.ShowClaimedReward(taskId, task.baseFireReward))
+        }
+    }
+
+    private fun handleDailyTaskClicked() {
+        val task = uiState.value.tasks.firstOrNull { it.taskId == "daily_guide_chat" }
+        if (task != null && task.completed && !task.claimed) {
+            _uiState.update { current ->
+                current.copy(
+                    tasks = current.tasks.map { t ->
+                        if (t.taskId == "daily_guide_chat") t.copy(claimed = true) else t
+                    },
+                    userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + task.baseFireReward),
+                    speechBubble = SpeechBubbleUiState("任务奖励已领取", style = SpeechBubbleStyle.SUCCESS),
+                    animationSequence = current.animationSequence + 1,
+                )
+            }
+            emitEffect(SpriteHomeEffect.ShowMessage("任务奖励已领取"))
+        } else {
+            setSpeech("去聊天页完成一次导购吧")
+            emitEffect(SpriteHomeEffect.NavigateToTasks)
         }
     }
 
@@ -264,26 +293,6 @@ class SpriteHomeViewModel(
         progressToSave?.let(progressRepository::saveProgress)
         if (_uiState.value.transientAvatarState == AvatarState.LEVEL_UP) {
             emitEffect(SpriteHomeEffect.ShowLevelUpReward(_uiState.value.spiritProgress.level))
-        }
-    }
-
-    private fun handleDailyTaskClicked() {
-        val task = uiState.value.tasks.firstOrNull { it.taskId == "daily_guide_chat" }
-        if (task != null && task.completed && !task.claimed) {
-            _uiState.update { current ->
-                current.copy(
-                    tasks = current.tasks.map { t ->
-                        if (t.taskId == "daily_guide_chat") t.copy(claimed = true) else t
-                    },
-                    userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + task.baseFireReward),
-                    speechBubble = SpeechBubbleUiState("任务奖励已领取", style = SpeechBubbleStyle.SUCCESS),
-                    animationSequence = current.animationSequence + 1,
-                )
-            }
-            emitEffect(SpriteHomeEffect.ShowMessage("任务奖励已领取"))
-        } else {
-            setSpeech("去聊天页完成一次导购吧")
-            emitEffect(SpriteHomeEffect.NavigateToTasks)
         }
     }
 

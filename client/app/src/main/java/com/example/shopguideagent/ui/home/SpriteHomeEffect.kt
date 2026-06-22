@@ -4,6 +4,10 @@ import com.example.shopguideagent.data.model.ProductUiModel
 import java.io.File
 
 sealed interface SpriteHomeEffect {
+    object ShowTaskCenter : SpriteHomeEffect
+    object HideTaskCenter : SpriteHomeEffect
+    data class ShowClaimedReward(val taskId: String, val firePoints: Int) : SpriteHomeEffect
+    object NavigateToShare : SpriteHomeEffect
     object NavigateToGuide : SpriteHomeEffect
     object NavigateToWardrobe : SpriteHomeEffect
     object NavigateToTasks : SpriteHomeEffect

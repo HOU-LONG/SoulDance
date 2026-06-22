@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Checkroom
@@ -26,7 +25,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -50,10 +48,10 @@ fun BottomActionBar(
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
-        ActionButton(
+        HomeActionButton(
             label = "装扮",
             icon = Icons.Outlined.Checkroom,
             testTag = "action_dress_up",
@@ -74,31 +72,33 @@ fun BottomActionBar(
 }
 
 @Composable
-private fun ActionButton(
+private fun HomeActionButton(
     label: String,
     icon: ImageVector,
     testTag: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    content: @Composable (() -> Unit)? = null,
 ) {
     Surface(
         modifier = modifier
-            .height(112.dp)
+            .height(96.dp)
             .testTag(testTag)
             .clickableWithScale(onClick),
-        shape = RoundedCornerShape(34.dp),
-        color = Color.White.copy(alpha = 0.58f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)),
-        shadowElevation = 8.dp,
+        shape = RoundedCornerShape(28.dp),
+        color = Color.White.copy(alpha = 0.72f),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.78f)),
+        shadowElevation = 4.dp,
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            Icon(icon, contentDescription = null, tint = Color(0xFF5B422A), modifier = Modifier.size(36.dp))
-            Spacer(Modifier.height(10.dp))
+            Icon(icon, contentDescription = null, tint = Color(0xFF5B422A), modifier = Modifier.size(32.dp))
+            Spacer(Modifier.height(8.dp))
             Text(label, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextPrimary)
+            content?.invoke()
         }
     }
 }
@@ -109,46 +109,33 @@ private fun CartActionButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Surface(
-        modifier = modifier
-            .height(112.dp)
-            .testTag("action_cart")
-            .clickableWithScale(onClick),
-        shape = RoundedCornerShape(34.dp),
-        color = Color.White.copy(alpha = 0.58f),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)),
-        shadowElevation = 8.dp,
+    HomeActionButton(
+        label = "购物车",
+        icon = Icons.Outlined.ShoppingCart,
+        testTag = "action_cart",
+        onClick = onClick,
+        modifier = modifier,
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            BadgedBox(
-                badge = {
-                    if (count > 0) {
-                        Badge(
-                            containerColor = ErrorColor,
-                            contentColor = TextOnDark,
-                        ) {
-                            Text(
-                                count.coerceAtMost(99).toString(),
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
+        BadgedBox(
+            badge = {
+                if (count > 0) {
+                    Badge(containerColor = ErrorColor, contentColor = TextOnDark) {
+                        Text(
+                            count.coerceAtMost(99).toString(),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
-                },
-            ) {
-                Icon(
-                    Icons.Outlined.ShoppingCart,
-                    contentDescription = null,
-                    tint = Color(0xFF5B422A),
-                    modifier = Modifier.size(36.dp),
-                )
-            }
-            Spacer(Modifier.height(10.dp))
-            Text("购物车", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextPrimary)
+                }
+            },
+            modifier = Modifier.size(32.dp),
+        ) {
+            Icon(
+                Icons.Outlined.ShoppingCart,
+                contentDescription = null,
+                tint = Color(0xFF5B422A),
+                modifier = Modifier.size(32.dp),
+            )
         }
     }
 }
@@ -161,19 +148,17 @@ private fun EarnFireButton(
 ) {
     Surface(
         modifier = modifier
-            .height(126.dp)
+            .height(96.dp)
             .testTag("action_earn_fire")
             .clickableWithScale(onClick),
-        shape = RoundedCornerShape(36.dp),
+        shape = RoundedCornerShape(28.dp),
         color = Color(0xFFFFF0BB),
-        border = BorderStroke(1.5.dp, Color.White.copy(alpha = 0.9f)),
-        shadowElevation = 12.dp,
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.9f)),
+        shadowElevation = 4.dp,
     ) {
         Box(
             modifier = Modifier.background(
-                Brush.radialGradient(
-                    colors = listOf(Color(0xFFFFF4A9), Color(0xFFFFCC5C)),
-                ),
+                Brush.radialGradient(colors = listOf(Color(0xFFFFF4A9), Color(0xFFFFCC5C))),
             ),
             contentAlignment = Alignment.Center,
         ) {
@@ -182,12 +167,12 @@ private fun EarnFireButton(
                     imageVector = Icons.Outlined.Star,
                     contentDescription = null,
                     tint = Color(0xFFFFD12F),
-                    modifier = Modifier.size(48.dp),
+                    modifier = Modifier.size(36.dp),
                 )
-                Text("领火星", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = TextPrimary)
+                Text("领火星", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = TextPrimary)
                 Text(
-                    text = "★ $earnedStars",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = "⭐ $earnedStars",
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = TextSecondary,
                 )

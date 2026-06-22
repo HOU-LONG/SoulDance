@@ -62,11 +62,7 @@ class SpriteHomeViewModel(
                 setSpeech("完成导购任务就能赚火星")
                 emitEffect(SpriteHomeEffect.NavigateToTasks)
             }
-            SpriteHomeAction.GuideClicked,
-            SpriteHomeAction.MenuClicked,
-            SpriteHomeAction.CloseClicked -> emitEffect(SpriteHomeEffect.NavigateToGuide)
             SpriteHomeAction.DailyTaskClicked -> handleDailyTaskClicked()
-            SpriteHomeAction.NewOutfitClicked -> applyNewOutfit()
             SpriteHomeAction.ProfileClicked -> emitEffect(SpriteHomeEffect.ShowMessage("用户资料暂未开放"))
             SpriteHomeAction.SpeechBubbleClicked -> Unit
             SpriteHomeAction.ProductClicked -> {
@@ -285,22 +281,6 @@ class SpriteHomeViewModel(
             setSpeech("去聊天页完成一次导购吧")
             emitEffect(SpriteHomeEffect.NavigateToTasks)
         }
-    }
-
-    private fun applyNewOutfit() {
-        var appearanceToSave: AvatarAppearance? = null
-        _uiState.update { current ->
-            val hint = current.newOutfitHint ?: return@update current
-            val nextAppearance = current.appearance.copy(outfitId = hint.outfitId)
-            appearanceToSave = nextAppearance
-            current.copy(
-                appearance = nextAppearance,
-                newOutfitHint = null,
-                speechBubble = SpeechBubbleUiState("已换上${hint.title}装扮", style = SpeechBubbleStyle.SUCCESS),
-                animationSequence = current.animationSequence + 1,
-            )
-        }
-        appearanceToSave?.let(appearanceRepository::saveAppearance)
     }
 
     private fun setSpeech(text: String) {

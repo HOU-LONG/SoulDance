@@ -36,19 +36,6 @@ class SpriteHomePersistenceTest {
         assertEquals(0, progressRepository.savedProgress.last().currentIntimacy)
     }
 
-    @Test
-    fun newOutfitActionPersistsAppearance() {
-        val appearanceRepository = FakeAppearanceRepository()
-        val viewModel = SpriteHomeViewModel(
-            progressRepository = FakeProgressRepository(),
-            appearanceRepository = appearanceRepository,
-        )
-
-        viewModel.onAction(SpriteHomeAction.NewOutfitClicked)
-
-        assertEquals("digital_expert", appearanceRepository.savedAppearance.last().outfitId)
-    }
-
     private class FakeProgressRepository(
         private val initial: SpiritProgressUiState = SpiritProgressUiState(),
     ) : SpiritProgressRepository {

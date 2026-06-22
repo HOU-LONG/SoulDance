@@ -73,12 +73,14 @@ import com.example.shopguideagent.ui.component.MessageBubble
 import com.example.shopguideagent.ui.component.ProductDetailBottomSheet
 import com.example.shopguideagent.ui.component.ThinkingLogoIndicator
 import com.example.shopguideagent.ui.component.clickableWithScale
-import com.example.shopguideagent.ui.theme.AppBackground
-import com.example.shopguideagent.ui.theme.AppBackgroundGradientEnd
 import com.example.shopguideagent.ui.theme.BrandPrimary
 import com.example.shopguideagent.ui.theme.BrandSoft
 import com.example.shopguideagent.ui.theme.ShadowColorStrong
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
+import com.example.shopguideagent.ui.theme.SpriteRoomBottom
+import com.example.shopguideagent.ui.theme.SpriteRoomLight
+import com.example.shopguideagent.ui.theme.SpriteRoomMiddle
+import com.example.shopguideagent.ui.theme.SpriteRoomTop
 import com.example.shopguideagent.ui.theme.SurfacePrimary
 import com.example.shopguideagent.ui.theme.TextOnDark
 import com.example.shopguideagent.ui.theme.TextPrimary
@@ -291,7 +293,7 @@ fun ChatScreen(
                     },
                 )
             },
-            containerColor = AppBackground,
+            containerColor = SpriteRoomLight,
         ) { paddingValues ->
             AnimatedVisibility(
                 visible = contentEntered,
@@ -303,7 +305,7 @@ fun ChatScreen(
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                colors = listOf(AppBackground, AppBackgroundGradientEnd),
+                                colors = listOf(SpriteRoomTop, SpriteRoomMiddle, SpriteRoomLight, SpriteRoomBottom),
                             ),
                         )
                         .padding(paddingValues)

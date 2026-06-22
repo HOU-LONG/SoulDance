@@ -51,40 +51,40 @@ fun UserProfileCard(
 ) {
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(40.dp),
+        shape = RoundedCornerShape(34.dp),
         color = Color.White.copy(alpha = 0.72f),
-        shadowElevation = 10.dp,
+        shadowElevation = 8.dp,
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.65f)),
     ) {
         Row(
-            modifier = Modifier.padding(start = 12.dp, top = 10.dp, end = 22.dp, bottom = 10.dp),
+            modifier = Modifier.padding(start = 8.dp, top = 6.dp, end = 16.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             AvatarPair(userAvatarUri, partnerAvatarUri, identityBadge)
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = "\uD83D\uDD25",
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(Brush.verticalGradient(listOf(Color(0xFFFF8A00), Color(0xFFFF4D2E))))
-                            .padding(horizontal = 7.dp, vertical = 3.dp),
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
                         color = TextOnBrand,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(7.dp))
                     Text(
                         text = fireValue.toString(),
-                        style = MaterialTheme.typography.headlineMedium,
+                        style = MaterialTheme.typography.headlineSmall,
                         color = TextPrimary,
                         fontWeight = FontWeight.Bold,
                     )
                 }
                 Text(
                     text = identity,
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     color = TextSecondary,
                     fontWeight = FontWeight.Medium,
                 )
@@ -95,27 +95,27 @@ fun UserProfileCard(
 
 @Composable
 private fun AvatarPair(userAvatarUri: String?, partnerAvatarUri: String?, identityBadge: String) {
-    Box(modifier = Modifier.size(width = 92.dp, height = 70.dp)) {
+    Box(modifier = Modifier.size(width = 74.dp, height = 48.dp)) {
         AvatarImage(
             avatarUri = userAvatarUri,
             modifier = Modifier
-                .size(64.dp)
+                .size(48.dp)
                 .align(Alignment.CenterStart),
         )
         AvatarImage(
             avatarUri = partnerAvatarUri,
             modifier = Modifier
-                .size(50.dp)
+                .size(44.dp)
                 .align(Alignment.CenterEnd),
         )
         Text(
             text = identityBadge,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .offset(x = (-2).dp)
+                .offset(x = (-1).dp)
                 .clip(RoundedCornerShape(999.dp))
                 .background(PriceColor)
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .padding(horizontal = 7.dp, vertical = 1.dp),
             color = TextOnBrand,
             style = MaterialTheme.typography.labelSmall,
             fontWeight = FontWeight.Bold,
@@ -146,14 +146,14 @@ private fun AvatarImage(avatarUri: String?, modifier: Modifier = Modifier) {
             Image(
                 painter = painterResource(R.drawable.shopping),
                 contentDescription = "\u9ed8\u8ba4\u5934\u50cf",
-                modifier = Modifier.size(42.dp),
+                modifier = Modifier.size(32.dp),
                 contentScale = ContentScale.Crop,
             )
             Icon(
                 imageVector = Icons.Outlined.Person,
                 contentDescription = null,
                 tint = Color(0x553B2B1D),
-                modifier = Modifier.size(20.dp),
+                modifier = Modifier.size(16.dp),
             )
         }
     }

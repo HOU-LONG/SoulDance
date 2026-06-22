@@ -26,15 +26,15 @@ data class UserProfileUiState(
     val displayName: String = "Guest",
     val avatarUrl: String? = null,
     val partnerAvatarUrl: String? = null,
-    val firePoints: Int = 698,
-    val identityTitle: String = "默认证件",
+    val firePoints: Int = 700,
+    val identityTitle: String = "默认火花",
     val identityLevel: String = "V2",
 )
 
 data class SpiritProgressUiState(
-    val spiritName: String = "购购宝宝",
+    val spiritName: String = "龙龙宝宝猪猪咪",
     val level: Int = 22,
-    val currentIntimacy: Int = 115,
+    val currentIntimacy: Int = 215,
     val requiredIntimacy: Int = 2000,
     val intimacyLabel: String = "亲密度",
     val subtitle: String = "我的专属智能购物小助手",
@@ -44,8 +44,8 @@ data class SpiritProgressUiState(
 }
 
 data class SpeechBubbleUiState(
-    val text: String = "想换新装扮",
-    val visible: Boolean = true,
+    val text: String = "",
+    val visible: Boolean = text.isNotBlank(),
     val style: SpeechBubbleStyle = SpeechBubbleStyle.NORMAL,
 )
 
@@ -78,12 +78,6 @@ data class DailyTaskUiState(
         }
 }
 
-data class NewOutfitHintUiState(
-    val outfitId: String = "digital_expert",
-    val title: String = "数码达人",
-    val badge: String = "新",
-)
-
 data class ProductPresentationUiState(
     val primaryProduct: ProductUiModel? = null,
     val alternatives: List<ProductUiModel> = emptyList(),
@@ -108,7 +102,6 @@ data class SpriteHomeUiState(
     val transientAvatarState: AvatarState? = null,
     val speechBubble: SpeechBubbleUiState = SpeechBubbleUiState(),
     val dailyTask: DailyTaskUiState = DailyTaskUiState(),
-    val newOutfitHint: NewOutfitHintUiState? = NewOutfitHintUiState(),
     val presentingProduct: ProductUiModel? = null,
     val productPresentation: ProductPresentationUiState = ProductPresentationUiState(),
     val cartCount: Int = 0,
@@ -172,7 +165,7 @@ object SpriteHomeStateMapper {
         }
 
     fun speechFor(state: AvatarState, product: ProductUiModel? = null): SpeechBubbleUiState = when (state) {
-        AvatarState.IDLE -> SpeechBubbleUiState("想换新装扮")
+        AvatarState.IDLE -> SpeechBubbleUiState()
         AvatarState.LISTENING -> SpeechBubbleUiState("我在听，说说你想买什么", style = SpeechBubbleStyle.LISTENING)
         AvatarState.SEARCHING -> SpeechBubbleUiState("正在找好物", style = SpeechBubbleStyle.SEARCHING)
         AvatarState.PRESENTING -> SpeechBubbleUiState(product?.let { "推荐 ${it.name}" } ?: "找到合适好物")

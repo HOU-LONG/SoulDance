@@ -50,7 +50,6 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.VoiceRecognitionState
-import com.example.shopguideagent.ui.component.SpeakerToggle
 import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
 import com.example.shopguideagent.ui.theme.SpritePanel
@@ -69,12 +68,10 @@ fun SpriteVoiceBar(
     voiceState: VoiceInputUiState,
     recognitionState: VoiceRecognitionState,
     recognitionMessage: String?,
-    speakerEnabled: Boolean,
     onTextSubmit: (String) -> Unit,
     onVoicePress: () -> Unit,
     onVoiceDrag: (Float) -> Unit,
     onVoiceRelease: () -> Unit,
-    onSpeakerToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var input by remember { mutableStateOf("") }
@@ -91,9 +88,10 @@ fun SpriteVoiceBar(
         modifier = modifier
             .fillMaxWidth()
             .imePadding(),
-        color = SpriteVoiceBarBackground,
-        shape = RoundedCornerShape(topStart = AppCornerRadius.Sheet, topEnd = AppCornerRadius.Sheet),
-        shadowElevation = 12.dp,
+        color = Color.White.copy(alpha = 0.72f),
+        shape = RoundedCornerShape(34.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.78f)),
+        shadowElevation = 8.dp,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
@@ -121,7 +119,6 @@ fun SpriteVoiceBar(
                     onDrag = onVoiceDrag,
                     onRelease = onVoiceRelease,
                 )
-                SpeakerToggle(enabled = speakerEnabled, onToggle = onSpeakerToggle)
                 if (voiceState == VoiceInputUiState.Idle) {
                     TextField(
                         value = input,
@@ -317,12 +314,10 @@ private fun SpriteVoiceBarPreview() {
             voiceState = VoiceInputUiState.Idle,
             recognitionState = VoiceRecognitionState.Idle,
             recognitionMessage = null,
-            speakerEnabled = true,
             onTextSubmit = {},
             onVoicePress = {},
             onVoiceDrag = {},
             onVoiceRelease = {},
-            onSpeakerToggle = {},
         )
     }
 }

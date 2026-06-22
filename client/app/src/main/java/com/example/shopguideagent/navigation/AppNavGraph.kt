@@ -7,7 +7,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -114,64 +119,75 @@ fun AppNavGraph() {
         cartViewModel.operationEvents.collect { spriteHomeViewModel.onCartOperationEvent(it) }
     }
 
-    BackHandler(enabled = AppRouteBackStack.previousRoute(route) != null) {
-        AppRouteBackStack.previousRoute(route)?.let { route = it }
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
+    fun showSnackbar(message: String) {
+        scope.launch { snackbarHostState.showSnackbar(message) }
     }
 
-    when (route) {
-        AppRoute.Home -> SpriteHomeRoute(
-            viewModel = spriteHomeViewModel,
-            chatUiState = chatState,
-            onEffect = { effect ->
-                when (effect) {
-                    SpriteHomeEffect.NavigateToGuide,
-                    SpriteHomeEffect.NavigateToChat -> route = AppRoute.Chat
-                    SpriteHomeEffect.NavigateToWardrobe -> route = AppRoute.Wardrobe
-                    SpriteHomeEffect.NavigateToTasks -> route = AppRoute.Tasks
-                    SpriteHomeEffect.NavigateToCart -> route = AppRoute.Cart
-                    SpriteHomeEffect.NavigateToShare -> Unit
-                    SpriteHomeEffect.ShowTaskCenter -> Unit
-                    SpriteHomeEffect.HideTaskCenter -> Unit
-                    is SpriteHomeEffect.OpenProduct -> route = AppRoute.Chat
-                    is SpriteHomeEffect.ShowProductDetail -> route = AppRoute.Chat
-                    is SpriteHomeEffect.SendTextMessage -> chatViewModel.sendMessageStreaming(effect.text)
-                    is SpriteHomeEffect.SendVoiceMessage -> chatViewModel.sendVoiceMessage(effect.file)
-                    SpriteHomeEffect.ToggleSpeaker -> chatViewModel.setSpeakerEnabled(!chatState.isSpeakerEnabled)
-                    is SpriteHomeEffect.AddToCart -> cartViewModel.addProduct(effect.product)
-                    is SpriteHomeEffect.ShowMessage -> Unit
-                    is SpriteHomeEffect.ShowLevelUpReward -> Unit
-                    is SpriteHomeEffect.ShowClaimedReward -> Unit
-                }
-            },
-        )
-        AppRoute.Chat -> ChatScreen(
-            chatViewModel = chatViewModel,
-            cartBadgeCount = cartState.totalCount,
-            onCartClick = { route = AppRoute.Cart },
-            onAddToCart = cartViewModel::addProduct,
-            onVoiceRecordingStarted = spriteHomeViewModel::onVoiceRecordingStarted,
-            onMessageSubmitted = spriteHomeViewModel::onRequestSent,
-            onBackToSprite = { route = AppRoute.Home },
-        )
-        AppRoute.Wardrobe -> PlaceholderRoute(
-            title = "装扮衣橱",
-            message = "正式换装系统下一阶段接入",
-            onBackClick = { route = AppRoute.Home },
-        )
-        AppRoute.Tasks -> PlaceholderRoute(
-            title = "任务中心",
-            message = "完成一次导购对话后可回到首页领取奖励",
-            onBackClick = { route = AppRoute.Home },
-        )
-        AppRoute.Cart -> CartScreen(
-            cartViewModel = cartViewModel,
-            onBackClick = { route = AppRoute.Home },
-            onOrdersClick = { route = AppRoute.Orders },
-        )
-        AppRoute.Orders -> OrdersScreen(
-            cartViewModel = cartViewModel,
-            onBackClick = { route = AppRoute.Cart },
-        )
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+    ) { _ ->
+        when (route) {
+            AppRoute.Home -> SpriteHomeRoute(
+                viewModel = spriteHomeViewModel,
+                chatUiState = chatState,
+                onEffect = { effect ->
+                    when (effect) {
+                        SpriteHomeEffect.NavigateToGuide,
+                        SpriteHomeEffect.NavigateToChat -> route = AppRoute.Chat
+                        SpriteHomeEffect.NavigateToWardrobe -> route = AppRoute.Wardrobe
+                        SpriteHomeEffect.NavigateToTasks -> route = AppRoute.Tasks
+                        SpriteHomeEffect.NavigateToCart -> route = AppRoute.Cart
+                        SpriteHomeEffect.NavigateToShare -> showSnackbar("分享功能即将开放")
+                        SpriteHomeEffect.ShowTaskCenter -> Unit // handled locally in SpriteHomeRoute
+                        SpriteHomeEffect.HideTaskCenter -> Unit // handled locally in SpriteHomeRoute
+                        is SpriteHomeEffect.OpenProduct -> route = AppRoute.Chat
+                        is SpriteHomeEffect.ShowProductDetail -> route = AppRoute.Chat
+                        is SpriteHomeEffect.SendTextMessage -> chatViewModel.sendMessageStreaming(effect.text)
+                        is SpriteHomeEffect.SendVoiceMessage -> chatViewModel.sendVoiceMessage(effect.file)
+                        SpriteHomeEffect.ToggleSpeaker -> chatViewModel.setSpeakerEnabled(!chatState.isSpeakerEnabled)
+                        is SpriteHomeEffect.AddToCart -> cartViewModel.addProduct(effect.product)
+                        is SpriteHomeEffect.ShowMessage -> Unit
+                        is SpriteHomeEffect.ShowLevelUpReward -> Unit
+                        is SpriteHomeEffect.ShowClaimedReward -> showSnackbar("任务奖励已领取：${effect.firePoints} 火星")
+                    }
+                },
+            )
+            AppRoute.Chat -> ChatScreen(
+                chatViewModel = chatViewModel,
+                cartBadgeCount = cartState.totalCount,
+                onCartClick = { route = AppRoute.Cart },
+                onAddToCart = cartViewModel::addProduct,
+                onVoiceRecordingStarted = spriteHomeViewModel::onVoiceRecordingStarted,
+                onMessageSubmitted = spriteHomeViewModel::onRequestSent,
+                onBackToSprite = { route = AppRoute.Home },
+            )
+            AppRoute.Wardrobe -> PlaceholderRoute(
+                title = "装扮衣橱",
+                message = "正式换装系统下一阶段接入",
+                onBackClick = { route = AppRoute.Home },
+            )
+            AppRoute.Tasks -> PlaceholderRoute(
+                title = "任务中心",
+                message = "完成一次导购对话后可回到首页领取奖励",
+                onBackClick = { route = AppRoute.Home },
+            )
+            AppRoute.Cart -> CartScreen(
+                cartViewModel = cartViewModel,
+                onBackClick = { route = AppRoute.Home },
+                onOrdersClick = { route = AppRoute.Orders },
+            )
+            AppRoute.Orders -> OrdersScreen(
+                cartViewModel = cartViewModel,
+                onBackClick = { route = AppRoute.Cart },
+            )
+        }
+
+        BackHandler(enabled = AppRouteBackStack.previousRoute(route) != null) {
+            AppRouteBackStack.previousRoute(route)?.let { route = it }
+        }
     }
 }
 

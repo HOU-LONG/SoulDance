@@ -4,6 +4,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.example.shopguideagent.data.model.ChatUiState
 
@@ -18,9 +21,16 @@ fun SpriteHomeRoute(
     },
 ) {
     val state by viewModel.uiState.collectAsState()
+    var showTaskCenter by remember { mutableStateOf(false) }
 
     LaunchedEffect(viewModel) {
-        viewModel.effects.collect { onEffect(it) }
+        viewModel.effects.collect { effect ->
+            when (effect) {
+                is SpriteHomeEffect.ShowTaskCenter -> showTaskCenter = true
+                is SpriteHomeEffect.HideTaskCenter -> showTaskCenter = false
+                else -> onEffect(effect)
+            }
+        }
     }
 
     SpriteHomeScreen(
@@ -30,4 +40,17 @@ fun SpriteHomeRoute(
         modifier = modifier,
         avatarStage = avatarStage,
     )
+
+    if (showTaskCenter) {
+        TaskCenterBottomSheet(
+            tasks = state.tasks,
+            firePoints = state.userProfile.firePoints,
+            level = state.spiritProgress.level,
+            onClaim = { taskId -> viewModel.onAction(SpriteHomeAction.TaskClaimed(taskId)) },
+            onDismiss = {
+                showTaskCenter = false
+                viewModel.onAction(SpriteHomeAction.TaskCenterClosed)
+            },
+        )
+    }
 }

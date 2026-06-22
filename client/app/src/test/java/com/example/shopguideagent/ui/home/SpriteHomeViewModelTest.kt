@@ -303,8 +303,9 @@ class SpriteHomeViewModelTest {
                 spiritProgress = SpiritProgressUiState(level = 25, currentIntimacy = 0, requiredIntimacy = 100),
             ),
         )
+        val before = viewModel.uiState.value
         // Level 25 bonus rate is 20%
-        val loginTask = viewModel.uiState.value.tasks.find { it.taskId == "daily_login" }!!
+        val loginTask = before.tasks.find { it.taskId == "daily_login" }!!
         val expectedReward = FireRewardCalculator.reward(loginTask.baseFireReward, 25)
 
         val effects = mutableListOf<SpriteHomeEffect>()
@@ -315,7 +316,7 @@ class SpriteHomeViewModelTest {
         viewModel.onAction(SpriteHomeAction.TaskClaimed("daily_login"))
 
         val after = viewModel.uiState.value
-        assertEquals(700 + expectedReward, after.userProfile.firePoints)
+        assertEquals(before.userProfile.firePoints + expectedReward, after.userProfile.firePoints)
         job.cancel()
     }
 

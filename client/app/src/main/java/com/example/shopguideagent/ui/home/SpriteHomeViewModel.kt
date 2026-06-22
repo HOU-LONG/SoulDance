@@ -163,8 +163,8 @@ class SpriteHomeViewModel(
     private fun handleTaskClaimed(taskId: String) {
         val task = uiState.value.tasks.find { it.taskId == taskId }
         if (task == null || !task.claimable) return
+        val reward = FireRewardCalculator.reward(task.baseFireReward, uiState.value.spiritProgress.level)
         _uiState.update { current ->
-            val reward = FireRewardCalculator.reward(task.baseFireReward, current.spiritProgress.level)
             current.copy(
                 tasks = current.tasks.map { t ->
                     if (t.taskId == taskId) t.copy(claimed = true) else t
@@ -174,7 +174,7 @@ class SpriteHomeViewModel(
                 animationSequence = current.animationSequence + 1,
             )
         }
-        emitEffect(SpriteHomeEffect.ShowClaimedReward(taskId, _uiState.value.userProfile.firePoints))
+        emitEffect(SpriteHomeEffect.ShowClaimedReward(taskId, reward))
     }
 
     private fun onProductsStart(expectedCount: Int) {

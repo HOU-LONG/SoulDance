@@ -214,7 +214,13 @@ class ShopGuideAgent:
                 yield event
             return
         if plan.need_clarification or plan.intent == "clarification":
-            for event in self._build_clarification_events(context, plan, context_action):
+            async for event in self.tool_registry.execute(
+                "clarification",
+                request,
+                context,
+                plan=plan,
+                context_action=context_action,
+            ):
                 yield event
             return
         if plan.intent == "compare_products":

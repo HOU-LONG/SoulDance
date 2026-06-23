@@ -57,6 +57,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun CartScreen(
     cartViewModel: CartViewModel,
+    firePoints: Int,
     onBackClick: () -> Unit,
     onOrdersClick: () -> Unit,
 ) {
@@ -138,6 +139,7 @@ fun CartScreen(
             ) {
                 CartSummaryBar(
                     state = state,
+                    firePoints = firePoints,
                     onToggleAll = cartViewModel::setAllSelected,
                     onCheckout = cartViewModel::showCheckout,
                 )
@@ -191,6 +193,7 @@ fun CartScreen(
             is OrderFlowState.OrderPreview -> {
                 CheckoutBottomSheet(
                     state = state,
+                    firePoints = firePoints,
                     orderFlowState = flow,
                     onDismiss = cartViewModel::hideCheckout,
                     onConfirm = cartViewModel::confirmOrder,
@@ -200,6 +203,7 @@ fun CartScreen(
             is OrderFlowState.Creating -> {
                 CheckoutBottomSheet(
                     state = state,
+                    firePoints = firePoints,
                     orderFlowState = flow,
                     onDismiss = cartViewModel::hideCheckout,
                     onConfirm = {},
@@ -209,6 +213,7 @@ fun CartScreen(
             else -> {
                 CheckoutBottomSheet(
                     state = state,
+                    firePoints = firePoints,
                     onDismiss = cartViewModel::hideCheckout,
                     onConfirm = cartViewModel::checkout,
                 )
@@ -222,6 +227,6 @@ fun CartScreen(
 @Composable
 private fun CartScreenPreview() {
     ShopGuideAgentTheme {
-        CartScreen(cartViewModel = CartViewModel(), onBackClick = {}, onOrdersClick = {})
+        CartScreen(cartViewModel = CartViewModel(), firePoints = 886, onBackClick = {}, onOrdersClick = {})
     }
 }

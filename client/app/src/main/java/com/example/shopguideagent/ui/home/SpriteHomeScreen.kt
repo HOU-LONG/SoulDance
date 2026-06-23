@@ -129,6 +129,7 @@ fun SpriteHomeScreen(
                 receivedCount = state.productPresentation.receivedCount,
                 completed = state.productPresentation.completed,
                 quickActions = quickActionsForPresentation(state),
+                firePoints = state.userProfile.firePoints,
                 onProductClick = { onAction(SpriteHomeAction.ProductDetailClicked(it)) },
                 onAddToCart = { onAction(SpriteHomeAction.AddToCartClicked(it)) },
                 onQuickAction = { onAction(SpriteHomeAction.QuickActionClicked(it)) },

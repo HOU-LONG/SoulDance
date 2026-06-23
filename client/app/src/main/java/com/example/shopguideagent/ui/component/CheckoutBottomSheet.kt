@@ -46,6 +46,7 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 @Composable
 fun CheckoutBottomSheet(
     state: CartUiState,
+    firePoints: Int,
     orderFlowState: OrderFlowState = OrderFlowState.Idle,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -163,7 +164,7 @@ fun CheckoutBottomSheet(
                             fontWeight = FontWeight.Bold,
                             style = MaterialTheme.typography.headlineSmall,
                         )
-                        val discount = FireRewardCalculator.discountAmount(886, totalAmount)
+                        val discount = FireRewardCalculator.discountAmount(firePoints, totalAmount)
                         if (discount > 0) {
                             Text(
                                 "抵扣后 ¥${"%.2f".format(totalAmount - discount)}",

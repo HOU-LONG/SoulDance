@@ -63,6 +63,7 @@ object HeroProductCardActionPolicy {
 @Composable
 fun HeroProductCard(
     product: ProductUiModel,
+    firePoints: Int,
     onClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onRefine: (String) -> Unit,
@@ -141,7 +142,7 @@ fun HeroProductCard(
                     fontWeight = FontWeight.Bold,
                 )
                 FireDiscountLabel(
-                    firePoints = 886, // TODO: replace with actual firePoints when state is wired
+                    firePoints = firePoints,
                     price = product.price,
                 )
                 Text(

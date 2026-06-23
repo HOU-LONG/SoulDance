@@ -34,6 +34,7 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 @Composable
 fun CartSummaryBar(
     state: CartUiState,
+    firePoints: Int,
     onToggleAll: (Boolean) -> Unit,
     onCheckout: () -> Unit,
 ) {
@@ -66,7 +67,7 @@ fun CartSummaryBar(
                     fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.titleMedium,
                 )
-                val discount = FireRewardCalculator.discountAmount(886, state.totalPrice)
+                val discount = FireRewardCalculator.discountAmount(firePoints, state.totalPrice)
                 if (discount > 0) {
                     Text(
                         "可用 ⭐ 抵扣 ¥${"%.2f".format(discount)}",

@@ -23,6 +23,7 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 fun ProductCarousel(
     products: List<ProductUiModel>,
     expectedCount: Int,
+    firePoints: Int,
     onProductClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onQuickAction: (String) -> Unit,
@@ -47,6 +48,7 @@ fun ProductCarousel(
             if (primary != null) {
                 HeroProductCard(
                     product = primary,
+                    firePoints = firePoints,
                     onClick = onProductClick,
                     onAddToCart = onAddToCart,
                     onRefine = onQuickAction,

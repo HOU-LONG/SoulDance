@@ -99,6 +99,7 @@ fun AppNavGraph() {
     )
     val chatState by chatViewModel.uiState.collectAsState()
     val cartState by cartViewModel.uiState.collectAsState()
+    val spriteHomeState by spriteHomeViewModel.uiState.collectAsState()
 
     LaunchedEffect(chatViewModel) {
         spriteHomeViewModel.bindRealtimeEvents(chatViewModel.realtimeEvents)
@@ -161,6 +162,7 @@ fun AppNavGraph() {
             AppRoute.Chat -> ChatScreen(
                 chatViewModel = chatViewModel,
                 cartBadgeCount = cartState.totalCount,
+                firePoints = spriteHomeState.userProfile.firePoints,
                 onCartClick = { route = AppRoute.Cart },
                 onAddToCart = cartViewModel::addProduct,
                 onVoiceRecordingStarted = spriteHomeViewModel::onVoiceRecordingStarted,
@@ -179,6 +181,7 @@ fun AppNavGraph() {
             )
             AppRoute.Cart -> CartScreen(
                 cartViewModel = cartViewModel,
+                firePoints = spriteHomeState.userProfile.firePoints,
                 onBackClick = { route = AppRoute.Home },
                 onOrdersClick = { route = AppRoute.Orders },
             )

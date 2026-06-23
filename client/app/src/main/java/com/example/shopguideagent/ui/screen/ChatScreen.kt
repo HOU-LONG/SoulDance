@@ -103,6 +103,7 @@ object ChatDrawerBackBehavior {
 fun ChatScreen(
     chatViewModel: ChatViewModel,
     cartBadgeCount: Int,
+    firePoints: Int,
     onCartClick: () -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onVoiceRecordingStarted: () -> Unit = {},
@@ -344,6 +345,7 @@ fun ChatScreen(
                                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                             AiMessageBlock(
                                                 message = message,
+                                                firePoints = firePoints,
                                                 onProductClick = { selectedProduct = it },
                                                 onAddToCart = ::addToCartWithFeedback,
                                                 onQuickAction = { action ->
@@ -508,6 +510,7 @@ private fun ChatScreenPreview() {
         ChatScreen(
             chatViewModel = ChatViewModel(),
             cartBadgeCount = 0,
+            firePoints = 886,
             onCartClick = {},
             onAddToCart = {},
         )

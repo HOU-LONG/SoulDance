@@ -105,6 +105,7 @@ class ShopGuideAgent:
         self.tool_registry.register(RetrieveProductsTool(self))
         self.tool_registry.register(CartTool(self))
         self.tool_registry.register(ClarifyTool(self))
+        self.tool_registry.register(SmallTalkTool(self))
 
     def _record_feedback(self, session_id: str, signal_type: str, product_id: str = None,
                          action_label: str = None, context: dict = None) -> None:

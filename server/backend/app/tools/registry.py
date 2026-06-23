@@ -17,6 +17,7 @@ class ToolRegistry:
         tool = self.get(intent)
         if tool is None:
             tool = self.get("small_talk")
+            kwargs.setdefault("intent", intent)
         if tool is None:
             yield {"type": "error", "message": f"no tool for intent: {intent}"}
             return

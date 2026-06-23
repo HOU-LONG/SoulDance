@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -51,6 +52,14 @@ class Settings(BaseModel):
     # Database
     database_url: str = ""
     embedding_dimension: int = 384
+
+    # Retrieval. dense 路径走内存矩阵；BM25 保留 chunk 级 + group-by-product max；
+    # 融合策略和权重在 product 级别完成，全部可配置，便于 ablation。
+    retrieval_fusion_strategy: Literal["weighted", "rrf", "dense_only", "bm25_only"] = "weighted"
+    retrieval_dense_weight: float = 0.65
+    retrieval_rrf_k: int = 60
+    retrieval_top_k_recall: int = 30
+    retrieval_top_k_final: int = 10
 
     # TTS. openai_audio posts to /v1/audio/speech; mimo posts to /chat/completions.
     # doubao_chunked_v3 posts to Volcengine HTTP Chunked V3.
@@ -160,6 +169,34 @@ class Settings(BaseModel):
             return path
         return self.project_root / path
 
+    @property
+    def retrieval_config(self) -> "RetrievalConfig":
+        return RetrievalConfig(
+            fusion_strategy=self.retrieval_fusion_strategy,
+            dense_weight=self.retrieval_dense_weight,
+            rrf_k=self.retrieval_rrf_k,
+            top_k_recall=self.retrieval_top_k_recall,
+            top_k_final=self.retrieval_top_k_final,
+        )
+
+
+class RetrievalConfig(BaseModel):
+    """检索层超参集合。
+
+    所有融合权重、RRF k、top_k 默认值的唯一来源，便于 ablation 实验
+    无需改代码即可切换策略。
+    """
+
+    fusion_strategy: Literal["weighted", "rrf", "dense_only", "bm25_only"] = "weighted"
+    dense_weight: float = 0.65
+    rrf_k: int = 60
+    top_k_recall: int = 30
+    top_k_final: int = 10
+
+    @property
+    def bm25_weight(self) -> float:
+        return max(0.0, 1.0 - self.dense_weight)
+
 
 def _repo_relative_path(value: str) -> str:
     if not value:
@@ -168,6 +205,13 @@ def _repo_relative_path(value: str) -> str:
     if path.is_absolute():
         return str(path)
     return str(_REPO_ROOT / path)
+
+
+def _retrieval_strategy(value: str) -> str:
+    value = (value or "").strip().lower()
+    if value not in {"weighted", "rrf", "dense_only", "bm25_only"}:
+        return "weighted"
+    return value
 
 
 @lru_cache
@@ -185,6 +229,11 @@ def get_settings() -> Settings:
         ark_model=os.getenv("ARK_MODEL", "ep-20260514111645-lmgt2"),
         database_url=os.getenv("SHOPGUIDE_DATABASE_URL", ""),
         embedding_dimension=int(os.getenv("SHOPGUIDE_EMBEDDING_DIMENSION", "384")),
+        retrieval_fusion_strategy=_retrieval_strategy(os.getenv("RETRIEVAL_FUSION_STRATEGY", "weighted")),
+        retrieval_dense_weight=float(os.getenv("RETRIEVAL_DENSE_WEIGHT", "0.65")),
+        retrieval_rrf_k=int(os.getenv("RETRIEVAL_RRF_K", "60")),
+        retrieval_top_k_recall=int(os.getenv("RETRIEVAL_TOP_K_RECALL", "30")),
+        retrieval_top_k_final=int(os.getenv("RETRIEVAL_TOP_K_FINAL", "10")),
         embedding_model_dir=os.getenv("EMBEDDING_MODEL_DIR", "model/bge-small-zh-v1.5"),
         embedding_model_id=os.getenv("EMBEDDING_MODEL_ID", "AI-ModelScope/bge-small-zh-v1.5"),
         embedding_device=os.getenv("EMBEDDING_DEVICE", "cuda:0"),

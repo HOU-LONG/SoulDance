@@ -28,6 +28,7 @@ def test_list_checks_contains_release_acceptance_matrix() -> None:
     assert [check["name"] for check in checks] == [
         "backend-tests",
         "eval-runner",
+        "eval-full",
         "android-build",
         "script-syntax",
         "host-health-smoke",
@@ -37,7 +38,15 @@ def test_list_checks_contains_release_acceptance_matrix() -> None:
     assert backend["cwd"] == "server"
     assert "pytest" in " ".join(backend["command"])
 
-    android = checks[2]
+    eval_runner = checks[1]
+    assert "--fake-llm" in eval_runner["command"], "eval-runner should use fake LLM for CI portability"
+
+    eval_full = checks[2]
+    assert eval_full["kind"] == "eval-full"
+    assert "--min-pass-rate" in eval_full["command"]
+    assert "0.80" in eval_full["command"]
+
+    android = checks[3]
     assert android["cwd"] == "client"
     assert android["env"]["JAVA_HOME"].endswith("android-studio/jbr")
     assert android["env"]["ANDROID_HOME"].endswith("android-sdk")
@@ -73,7 +82,7 @@ def test_script_syntax_check_runs_bash_n_for_each_script() -> None:
 
     assert result.returncode == 0, result.stderr
     checks = json.loads(result.stdout)
-    script_check = checks[3]
+    script_check = checks[4]
     assert script_check["name"] == "script-syntax"
     assert script_check["command"][:2] == ["bash", "-c"]
     assert "for script in" in script_check["command"][2]

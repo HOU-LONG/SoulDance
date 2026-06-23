@@ -428,6 +428,14 @@ def _fallback_selected_products(candidates: list[RankedProduct]) -> list[RankedP
     return same_tier[:limit]
 
 
+async def _empty_json_fallback(*_args: Any, **_kwargs: Any) -> str:
+    '''熔断打开或 _json_completion 失败时的兜底：返回空 JSON。
+
+    下游（如 ComparisonEngine）应 catch JSON 解析失败并走 rule-based 降级。
+    '''
+    return '{}'
+
+
 class LLMClientWithBreaker:
     '''为 LLM 客户端增加熔断器保护的包装类。
 
@@ -526,3 +534,20 @@ class LLMClientWithBreaker:
             user_message, intent, context,
         ):
             yield chunk
+
+    async def _json_completion(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0,
+    ) -> str:
+        '''底层 JSON 补全（被 ComparisonEngine 等需要严格 JSON 输出的下游直接调用）。
+
+        FakeLLMClient 没有这个方法，所以 fallback 不能透传到它——熔断打开或调用失败时
+        返回 '{}'，让上游走自己的 rule-based 降级（如 ComparisonEngine._fallback_compare）。
+        '''
+        return await self.breaker.call(
+            self.client._json_completion,
+            _empty_json_fallback,
+            messages,
+            temperature,
+        )

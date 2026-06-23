@@ -15,6 +15,11 @@ def lexical_search_chunks(
     constraints: HardConstraints,
     top_k: int = 30,
 ) -> list[tuple[str, float]]:
+    """Chunk 级 BM25 + group-by-product 取 max。
+
+    保留 chunk 级粒度是为了让 FAQ / review 这类长尾文本也能命中召回，
+    最终在 product 级别归并取最高分。
+    """
     rows = _load_active_chunks(session, constraints)
     if not rows:
         return []

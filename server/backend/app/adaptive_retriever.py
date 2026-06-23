@@ -33,6 +33,9 @@ class AdaptiveRetriever:
 
     通过渐进式放松约束条件，执行多轮检索并合并结果，
     确保在严格条件无匹配时仍能召回相关商品。
+
+    可选注入 hybrid_retriever：如果传入，第一轮优先走 hybrid 融合检索；
+    失败或返回空时回退到 base retriever 的渐进放松循环。
     """
 
     def __init__(
@@ -40,15 +43,19 @@ class AdaptiveRetriever:
         retriever,
         policy: RelaxationPolicy | None = None,
         metrics=None,
+        *,
+        hybrid_retriever=None,
     ):
         self.retriever = retriever
         self.policy = policy or RelaxationPolicy()
         self.metrics = metrics
+        self.hybrid_retriever = hybrid_retriever
 
     def search(self, plan: RetrievalPlan, top_k: int = 30) -> list[tuple[Product, float]]:
         """执行多轮自适应检索，返回合并后的候选商品及其分数。
 
         检索轮次：
+        - Round 0: 如果注入了 hybrid_retriever，先尝试 hybrid 融合检索。
         - Round 1: 使用原始 plan 的完整约束进行严格检索。
         - Round 2: 移除 soft_preferences，仅基于 hard constraints 重建查询。
         - Round 3: 进一步移除 price bounds，仅保留类目和品牌等核心约束。
@@ -56,11 +63,9 @@ class AdaptiveRetriever:
         每轮结果按 product_id 合并，保留最高分数。当累计唯一商品数
         达到 min_candidates 时提前终止。
         """
-        if self._should_use_hybrid_retriever():
+        if self.hybrid_retriever is not None:
             try:
-                from .rag.fusion import HybridRetriever
-
-                hybrid_results = HybridRetriever(self.retriever).search(plan, top_k=top_k)
+                hybrid_results = self.hybrid_retriever.search(plan, top_k=top_k)
                 if hybrid_results:
                     if self.metrics is not None:
                         self.metrics.increment("retrieval.hybrid.success")
@@ -154,11 +159,4 @@ class AdaptiveRetriever:
             retrieval_query=" ".join(query_parts),
             need_clarification=plan.need_clarification,
             clarification_question=plan.clarification_question,
-        )
-
-    def _should_use_hybrid_retriever(self) -> bool:
-        retriever_class = self.retriever.__class__
-        return (
-            retriever_class.__module__.endswith("embedding_retriever")
-            and retriever_class.__name__ in {"EmbeddingRetriever", "BM25OnlyRetriever"}
         )

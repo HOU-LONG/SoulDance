@@ -1,0 +1,112 @@
+[
+  {
+    "id": "cart_crud_full_lifecycle",
+    "session_id": "eval_cart_crud_full",
+    "tags": ["cart", "crud"],
+    "steps": [
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_beauty_006", "action": "add_to_cart", "quantity": 1},
+        "expect": {
+          "require_cart_success": true,
+          "expect_cart_quantity": {"p_beauty_006": 1}
+        }
+      },
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_beauty_006", "action": "update_quantity", "quantity": 3},
+        "expect": {
+          "expect_cart_quantity": {"p_beauty_006": 3}
+        }
+      },
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_clothes_007", "action": "add_to_cart", "quantity": 2},
+        "expect": {
+          "expect_cart_quantity": {"p_beauty_006": 3, "p_clothes_007": 2}
+        }
+      },
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_beauty_006", "action": "remove"},
+        "expect": {
+          "expect_cart_quantity": {"p_clothes_007": 2}
+        }
+      }
+    ]
+  },
+  {
+    "id": "order_state_machine_three_stages",
+    "session_id": "eval_order_three_stages",
+    "tags": ["order", "state_machine"],
+    "steps": [
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_beauty_006", "action": "add_to_cart", "quantity": 1}
+      },
+      {
+        "action": "order_action",
+        "payload": {"kind": "initiate"},
+        "expect": {"expect_order_status": "address_required"},
+        "bind": {"oid": "last_order_id"}
+      },
+      {
+        "action": "order_action",
+        "payload": {"kind": "select_address", "order_id": "${oid}"},
+        "expect": {"expect_order_status": "awaiting_confirmation"},
+        "bind": {"token": "last_confirmation_token"}
+      },
+      {
+        "action": "order_action",
+        "payload": {
+          "kind": "confirm",
+          "order_id": "${oid}",
+          "confirmation_token": "${token}",
+          "idempotency_key": "eval_three_stages_1"
+        },
+        "expect": {"expect_order_status": "completed"}
+      }
+    ]
+  },
+  {
+    "id": "order_idempotent_confirm",
+    "session_id": "eval_order_idempotent",
+    "tags": ["order", "idempotency"],
+    "steps": [
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_beauty_006", "action": "add_to_cart", "quantity": 1}
+      },
+      {
+        "action": "order_action",
+        "payload": {"kind": "initiate"},
+        "bind": {"oid": "last_order_id"}
+      },
+      {
+        "action": "order_action",
+        "payload": {"kind": "select_address", "order_id": "${oid}"},
+        "bind": {"token": "last_confirmation_token"}
+      },
+      {
+        "action": "order_action",
+        "payload": {
+          "kind": "confirm",
+          "order_id": "${oid}",
+          "confirmation_token": "${token}",
+          "idempotency_key": "eval_idempotent_key_1"
+        },
+        "expect": {"expect_order_status": "completed"}
+      },
+      {
+        "action": "order_action",
+        "payload": {
+          "kind": "confirm",
+          "order_id": "${oid}",
+          "confirmation_token": "${token}",
+          "idempotency_key": "eval_idempotent_key_1"
+        },
+        "expect": {"expect_order_status": "completed"}
+      }
+    ]
+  }
+]

@@ -41,6 +41,10 @@ class ComparisonEngine:
                 }, ensure_ascii=False)},
             ], temperature=0)
             data = json.loads(raw)
+            if not data:
+                # 熔断 fallback 或 LLM 主动返回空 JSON：直接走 rule-based，不打 stack trace
+                logger.info("LLM comparison returned empty JSON, using rule-based fallback")
+                return self._fallback_compare(products, user_message)
             return ComparisonResult.model_validate(data)
         except Exception:
             logger.warning("LLM comparison failed, falling back to rule-based comparison", exc_info=True)

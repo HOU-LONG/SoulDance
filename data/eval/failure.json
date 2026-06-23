@@ -1,0 +1,40 @@
+[
+  {
+    "id": "failure_llm_timeout",
+    "session_id": "eval_failure_llm_timeout",
+    "tags": ["failure", "llm_timeout"],
+    "fault": "llm_timeout",
+    "message": "推荐一款防晒霜",
+    "expect": {
+      "expect_error_kind": "llm_timeout"
+    }
+  },
+  {
+    "id": "failure_llm_hallucination_blocked",
+    "session_id": "eval_failure_hallucination",
+    "tags": ["failure", "hallucination"],
+    "fault": "llm_hallucination",
+    "message": "推荐一款防晒霜",
+    "expect": {
+      "event_types": ["ack", "done"]
+    }
+  },
+  {
+    "id": "failure_websocket_reconnect",
+    "session_id": "eval_failure_ws_reconnect",
+    "tags": ["failure", "websocket"],
+    "steps": [
+      {
+        "action": "user_message",
+        "message": "推荐一款防晒霜",
+        "expect": {"min_product_items": 1}
+      },
+      {
+        "action": "websocket_disconnect",
+        "expect": {
+          "event_types": ["ack"]
+        }
+      }
+    ]
+  }
+]

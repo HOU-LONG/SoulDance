@@ -11,3 +11,20 @@ def test_eval_scenario_model_accepts_core_fields():
 
     assert scenario.id == "budget"
     assert scenario.expect.price_max == 100
+
+
+def test_eval_scenario_model_accepts_retrieval_gold_labels():
+    scenario = EvalScenario(
+        id="budget",
+        message="recommend sunscreen",
+        session_id="eval_budget",
+        expect=EvalExpectation(
+            gold_product_ids=["p1", "p2"],
+            gold_primary_ids=["p1"],
+            expected_gate="recommend",
+        ),
+    )
+
+    assert scenario.expect.gold_product_ids == ["p1", "p2"]
+    assert scenario.expect.gold_primary_ids == ["p1"]
+    assert scenario.expect.expected_gate == "recommend"

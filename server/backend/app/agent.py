@@ -101,6 +101,7 @@ class ShopGuideAgent:
         from .tools.cart import CartTool
         from .tools.clarify import ClarifyTool
         from .tools.comparison import CompareProductsTool
+        from .tools.bundle import ScenarioBundleTool
         from .tools.followup import ProductFollowupTool
         from .tools.small_talk import SmallTalkTool
         self.tool_registry = ToolRegistry()
@@ -108,6 +109,7 @@ class ShopGuideAgent:
         self.tool_registry.register(CartTool(self))
         self.tool_registry.register(ClarifyTool(self))
         self.tool_registry.register(CompareProductsTool(self))
+        self.tool_registry.register(ScenarioBundleTool(self))
         self.tool_registry.register(ProductFollowupTool(self))
         self.tool_registry.register(SmallTalkTool(self))
 
@@ -242,7 +244,12 @@ class ShopGuideAgent:
                 yield event
             return
         if plan.intent == "scenario_bundle":
-            for event in self._build_bundle_events(request, plan):
+            async for event in self.tool_registry.execute(
+                "scenario_bundle",
+                request,
+                context,
+                plan=plan,
+            ):
                 yield event
             return
         if _looks_like_product_request(request.message) and not self.taxonomy.is_known_request(request.message):

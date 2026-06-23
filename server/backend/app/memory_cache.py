@@ -8,6 +8,7 @@ from typing import Any
 
 from .constraint_filter import hard_filter
 from .models import Product, RankedProduct, RetrievalPlan
+from .response_contract import recommendation_contract_text
 
 
 class StructuredMemoryCache:
@@ -329,13 +330,13 @@ def _short_response_summary(plan: RetrievalPlan, selected: list[RankedProduct]) 
         constraints.append("排除" + "、".join(plan.hard_constraints.exclude_terms))
     handled = "，".join(constraints) if constraints else "你的核心需求"
     alternatives = selected[1:4]
-    sections = [
-        f"**结论：** 优先看「{primary.product.title}」。我按「{handled}」复用了已验证的推荐结果。",
-        f"**主推：** {primary.reason}。",
-    ]
+    alternatives_text = None
     if alternatives:
-        sections.append(
-            "**备选：** 备选差异：" + "；".join(f"{item.product.title}：{item.reason}" for item in alternatives) + "。"
-        )
-    sections.append("**下一步：** 如果你想调整预算、避开某个品牌，或者看同类备选，我可以继续筛。")
-    return "\n\n".join(sections)
+        alternatives_text = "备选差异：" + "；".join(f"{item.product.title}：{item.reason}" for item in alternatives) + "。"
+    return recommendation_contract_text(
+        understanding=f"我按「{handled}」理解你的需求，并复用了已验证的推荐结果。",
+        conclusion=f"优先看「{primary.product.title}」，它仍然是这组条件下的主推。",
+        primary_reason=f"{primary.reason}。",
+        alternatives=alternatives_text,
+        next_step="如果你想调整预算、避开某个品牌，或者看同类备选，我可以继续筛。",
+    )

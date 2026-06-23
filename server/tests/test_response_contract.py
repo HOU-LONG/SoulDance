@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import asyncio
+
+from backend.app.data_loader import load_products
+from backend.app.llm_client import FakeLLMClient
+from backend.app.memory_cache import _short_response_summary
+from backend.app.models import HardConstraints, RankedProduct, RetrievalPlan
 from backend.app.response_contract import (
     action_message,
     compose_markdown_sections,
@@ -46,3 +52,44 @@ def test_action_message_keeps_short_messages_plain_text():
     assert text == "已把 清爽防晒 加入购物车。"
     assert "**" not in text
     assert "\n\n" not in text
+
+
+def test_fake_llm_recommendation_uses_response_contract_sections():
+    products = load_products("ecommerce_agent_dataset")
+    ranked = [
+        RankedProduct(product=products[0], score=1.0, reason="类目精确匹配", evidence=[], tier=1),
+        RankedProduct(product=products[1], score=0.8, reason="价格更低", evidence=[], tier=1),
+    ]
+    plan = RetrievalPlan(
+        retrieval_query="推荐防晒",
+        hard_constraints=HardConstraints(price_max=100),
+    )
+
+    text = asyncio.run(FakeLLMClient().generate_response("推荐防晒", plan, ranked))
+
+    assert_contract_order(text)
+    assert products[0].title in text
+
+
+def test_memory_summary_uses_response_contract_sections():
+    products = load_products("ecommerce_agent_dataset")
+    ranked = [
+        RankedProduct(product=products[0], score=1.0, reason="类目精确匹配", evidence=[], tier=1),
+        RankedProduct(product=products[1], score=0.8, reason="价格更低", evidence=[], tier=1),
+    ]
+    plan = RetrievalPlan(
+        retrieval_query="推荐防晒",
+        hard_constraints=HardConstraints(price_max=100),
+    )
+
+    text = _short_response_summary(plan, ranked)
+
+    assert_contract_order(text)
+    assert "复用了已验证的推荐结果" in text
+
+
+def assert_contract_order(text: str):
+    required = ["**理解：**", "**结论：**", "**主推：**", "**下一步：**"]
+    for label in required:
+        assert label in text
+    assert [text.index(label) for label in required] == sorted(text.index(label) for label in required)

@@ -158,7 +158,13 @@ class ShopGuideAgent:
         else:
             candidates = self.products
             scores = {}
-        ranked = rank_products(candidates, plan, scores, limit=limit)
+        ranked = rank_products(
+            candidates,
+            plan,
+            scores,
+            limit=limit,
+            retrieval_evidence_by_product=getattr(self.adaptive_retriever, "last_evidence_by_product", {}),
+        )
         if not ranked and candidates != self.products:
             ranked = rank_products(self.products, plan, {}, limit=limit)
         # 反馈闭环：注入反馈信号权重

@@ -10,8 +10,10 @@ def rank_products(
     plan: RetrievalPlan,
     retrieval_scores: dict[str, float] | None = None,
     limit: int = 3,
+    retrieval_evidence_by_product: dict[str, list[str]] | None = None,
 ) -> list[RankedProduct]:
     retrieval_scores = retrieval_scores or {}
+    retrieval_evidence_by_product = retrieval_evidence_by_product or {}
     filtered = [product for product in products if hard_filter(product, plan.hard_constraints)]
     ranked: list[RankedProduct] = []
     query_terms = list(plan.soft_preferences.values()) + [
@@ -28,18 +30,41 @@ def rank_products(
         bundle = build_evidence_bundle(product, query_terms)
         tier, score, reason = _score_product(product, plan, retrieval_scores.get(product.product_id, 0.0))
         score += min(bundle.evidence_score, 2.0)
-        evidence_chunks = sorted([*bundle.support_chunks, *bundle.risk_chunks], key=lambda chunk: chunk.query_overlap + chunk.field_consistency - chunk.noise_score, reverse=True)
+        evidence_chunks = sorted(
+            [*bundle.support_chunks, *bundle.risk_chunks],
+            key=lambda chunk: chunk.query_overlap + chunk.field_consistency - chunk.noise_score,
+            reverse=True,
+        )
+        evidence = _dedupe_evidence(
+            [
+                *retrieval_evidence_by_product.get(product.product_id, []),
+                *[chunk.text[:120] for chunk in evidence_chunks if chunk.text],
+            ]
+        )[:3]
         ranked.append(
             RankedProduct(
                 product=product,
                 score=score,
                 tier=tier,
                 reason=reason,
-                evidence=[chunk.text[:120] for chunk in evidence_chunks[:3] if chunk.text],
+                evidence=evidence,
             )
         )
     ranked.sort(key=lambda item: (item.tier == 1, item.tier == 2, item.score), reverse=True)
     return ranked[:limit]
+
+
+
+def _dedupe_evidence(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in items:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def _score_product(product: Product, plan: RetrievalPlan, retrieval_score: float) -> tuple[int, float, str]:

@@ -1,5 +1,5 @@
-from backend.app.models import Product
-from backend.app.rag.chunking import chunk_product
+from backend.app.models import Product, SKU
+from backend.app.rag.chunking import canonical_chunk_type, chunk_product
 
 
 def test_chunk_product_emits_expected_chunk_types():
@@ -10,23 +10,33 @@ def test_chunk_product_emits_expected_chunk_types():
         category="beauty",
         sub_category="cleanser",
         price=99.0,
+        skus=[SKU(sku_id="sku-p1-blue", properties={"color": "blue", "size": "200ml"}, price=109.0)],
         image_path="",
-        marketing_description="温和清洁。保湿不紧绷。",
-        faqs=[{"question": "敏感肌能用吗", "answer": "可以，建议先局部测试。"}],
+        marketing_description="Gentle clean. Hydrating finish.",
+        faqs=[{"question": "Can sensitive skin use it?", "answer": "Yes, patch test first."}],
         reviews=[
-            {"content": "洗完不紧绷"},
-            {"content": "敏感肌用着舒服"},
-            {"content": "泡沫细腻"},
+            {"content": "not tight after washing"},
+            {"content": "comfortable for sensitive skin"},
+            {"content": "fine foam"},
         ],
-        chunk="适合日常洁面。",
-        search_text="敏感肌 温和 保湿",
-        extracted_terms=["敏感肌", "保湿"],
+        chunk="Suitable for daily cleansing.",
+        search_text="sensitive gentle hydrating",
+        extracted_terms=["sensitive", "hydrating"],
     )
 
     chunks = chunk_product(product)
     types = {chunk.chunk_type for chunk in chunks}
 
-    assert {"specification", "feature", "marketing", "review", "faq", "description"} <= types
+    assert {"specification", "official_description", "review_summary", "faq", "sku"} <= types
+    review_chunks = [chunk for chunk in chunks if chunk.chunk_type == "review_summary"]
+    assert review_chunks
+    assert all(chunk.source_type == "review_summary" for chunk in review_chunks)
+    assert all(chunk.trust_level == "review_aggregate" for chunk in review_chunks)
+    sku_chunks = [chunk for chunk in chunks if chunk.chunk_type == "sku"]
+    assert any(
+        chunk.sku_id == "sku-p1-blue" and "blue" in chunk.content and "109.0" in chunk.content
+        for chunk in sku_chunks
+    )
     assert all(chunk.product_id == "p1" for chunk in chunks)
     assert all(chunk.category_id == "beauty" for chunk in chunks)
     assert all(chunk.document_version == 1 for chunk in chunks)
@@ -34,7 +44,7 @@ def test_chunk_product_emits_expected_chunk_types():
 
 
 def test_chunk_product_splits_long_description():
-    long_text = "敏感肌可用。" * 80
+    long_text = "Sensitive skin friendly. " * 80
     product = Product(
         product_id="p2",
         title="Long Detail Product",
@@ -47,7 +57,18 @@ def test_chunk_product_splits_long_description():
     )
 
     chunks = chunk_product(product)
-    description_chunks = [chunk for chunk in chunks if chunk.chunk_type == "description"]
+    description_chunks = [
+        chunk
+        for chunk in chunks
+        if chunk.chunk_type == "official_description" and chunk.metadata.get("section") == "detail"
+    ]
 
     assert len(description_chunks) > 1
     assert all(len(chunk.content) <= 360 for chunk in description_chunks)
+
+
+def test_legacy_chunk_type_aliases_map_to_canonical_contract():
+    assert canonical_chunk_type("description") == "official_description"
+    assert canonical_chunk_type("feature") == "official_description"
+    assert canonical_chunk_type("marketing") == "official_description"
+    assert canonical_chunk_type("review") == "review_summary"

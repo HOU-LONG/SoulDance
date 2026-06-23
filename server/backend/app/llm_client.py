@@ -381,6 +381,13 @@ def _response_evidence_payload(
     return {
         'allowed_products': products,
         'selected_primary': products[0]['product_id'] if products else None,
+        'response_contract': {
+            'kind': 'recommendation_markdown_v2',
+            'required_sections': ['理解', '结论', '主推', '下一步'],
+            'optional_sections': ['评论摘要', '备选'],
+            'primary_product_id': products[0]['product_id'] if products else None,
+            'allowed_product_ids': [product['product_id'] for product in products],
+        },
         'hard_constraints_applied': {
             'category': constraints.category,
             'sub_category': constraints.sub_category,

@@ -3,32 +3,73 @@
     "id": "clear_sunscreen",
     "message": "推荐一款防晒霜",
     "session_id": "eval_clear_sunscreen",
-    "expect": {"min_product_items": 1, "event_types": ["ack", "products_start", "product_item", "done"]}
+    "expect": {
+      "min_product_items": 1,
+      "event_types": [
+        "ack",
+        "products_start",
+        "product_item",
+        "done"
+      ],
+      "gold_product_ids": [
+        "p_beauty_006",
+        "p_beauty_010",
+        "p_beauty_023"
+      ]
+    }
   },
   {
     "id": "budget_under_300",
     "message": "推荐300元以内的防晒霜",
     "session_id": "eval_budget_under_300",
-    "expect": {"min_product_items": 1, "price_max": 300}
+    "expect": {
+      "min_product_items": 1,
+      "price_max": 300,
+      "gold_product_ids": [
+        "p_beauty_006",
+        "p_beauty_010",
+        "p_beauty_023"
+      ]
+    }
   },
   {
     "id": "exclude_alcohol",
     "message": "推荐一款防晒霜，不要含酒精",
     "session_id": "eval_exclude_alcohol",
-    "expect": {"min_product_items": 1, "forbid_terms": ["酒精", "alcohol"]}
+    "expect": {
+      "min_product_items": 1,
+      "forbid_terms": [
+        "酒精",
+        "alcohol"
+      ],
+      "gold_product_ids": [
+        "p_beauty_006",
+        "p_beauty_010",
+        "p_beauty_023"
+      ]
+    }
   },
   {
     "id": "cart_add_ui_action",
     "message": "cart_action:add_first_product",
     "session_id": "eval_cart_add",
     "type": "cart_action",
-    "expect": {"require_cart_success": true, "event_types": ["ack", "cart_update", "done"]}
+    "expect": {
+      "require_cart_success": true,
+      "event_types": [
+        "ack",
+        "cart_update",
+        "done"
+      ]
+    }
   },
   {
     "id": "order_confirm_flow",
     "message": "order_flow:first_product",
     "session_id": "eval_order_flow",
     "type": "order_flow",
-    "expect": {"require_order_completed": true}
+    "expect": {
+      "require_order_completed": true
+    }
   }
 ]

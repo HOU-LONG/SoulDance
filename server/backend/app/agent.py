@@ -100,11 +100,13 @@ class ShopGuideAgent:
         from .tools.retrieval import RetrieveProductsTool
         from .tools.cart import CartTool
         from .tools.clarify import ClarifyTool
+        from .tools.followup import ProductFollowupTool
         from .tools.small_talk import SmallTalkTool
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(RetrieveProductsTool(self))
         self.tool_registry.register(CartTool(self))
         self.tool_registry.register(ClarifyTool(self))
+        self.tool_registry.register(ProductFollowupTool(self))
         self.tool_registry.register(SmallTalkTool(self))
 
     def _record_feedback(self, session_id: str, signal_type: str, product_id: str = None,
@@ -186,7 +188,12 @@ class ShopGuideAgent:
             and ir.intent == "product_followup"
             and not _is_pending_clarification_answer(context, request, ir)
         ):
-            async for event in self._stream_followup(request, ir):
+            async for event in self.tool_registry.execute(
+                "product_followup",
+                request,
+                context,
+                compiled_ir=ir,
+            ):
                 yield event
             return
         if ir.intent in {"small_talk", "unclear_input"}:

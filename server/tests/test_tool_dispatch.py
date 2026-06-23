@@ -44,7 +44,9 @@ async def test_tool_registry_dispatches_registered_intent():
     ]
 
     assert events == [{"type": "ok", "value": 42}]
-    assert tool.calls == [("request", "context", {"value": 42})]
+    assert tool.calls == [
+        ("request", "context", {"value": 42, "intent": "target_intent"})
+    ]
 
 
 @pytest.mark.asyncio

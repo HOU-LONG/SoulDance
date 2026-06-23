@@ -190,7 +190,11 @@ class ShopGuideAgent:
                 yield event
             return
         if ir.intent in {"small_talk", "unclear_input"}:
-            async for event in self._stream_no_retrieval_events(request, ir.intent):
+            async for event in self.tool_registry.execute(
+                ir.intent,
+                request,
+                context,
+            ):
                 yield event
             return
         context_action = self._prepare_context_for_turn(context, request, ir)
@@ -202,7 +206,11 @@ class ShopGuideAgent:
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         if plan.intent in {"small_talk", "unclear_input"}:
-            async for event in self._stream_no_retrieval_events(request, plan.intent):
+            async for event in self.tool_registry.execute(
+                plan.intent,
+                request,
+                context,
+            ):
                 yield event
             return
         if plan.need_clarification or plan.intent == "clarification":

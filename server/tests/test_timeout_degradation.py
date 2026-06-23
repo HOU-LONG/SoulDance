@@ -23,6 +23,8 @@ def test_fallback_text_mentions_degraded_state_without_claiming_fake_success():
     )
     text = fallback_text_for_failure("llm_timeout", plan)
     assert "暂时" in text
+    assert "**" not in text
+    assert "\n\n" not in text
     assert "已下单" not in text
     assert "已加购" not in text
 

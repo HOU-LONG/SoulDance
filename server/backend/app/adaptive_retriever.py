@@ -44,6 +44,7 @@ class AdaptiveRetriever:
         self.retriever = retriever
         self.policy = policy or RelaxationPolicy()
         self.metrics = metrics
+        self.last_evidence_by_product: dict[str, list[str]] = {}
 
     def search(self, plan: RetrievalPlan, top_k: int = 30) -> list[tuple[Product, float]]:
         """执行多轮自适应检索，返回合并后的候选商品及其分数。
@@ -56,15 +57,26 @@ class AdaptiveRetriever:
         每轮结果按 product_id 合并，保留最高分数。当累计唯一商品数
         达到 min_candidates 时提前终止。
         """
+        self.last_evidence_by_product = {}
         if self._should_use_hybrid_retriever():
             try:
                 from .rag.fusion import HybridRetriever
 
-                hybrid_results = HybridRetriever(self.retriever).search(plan, top_k=top_k)
+                from .rag.types import format_chunk_evidence
+
+                hybrid_results = HybridRetriever(self.retriever).search_with_evidence(plan, top_k=top_k)
                 if hybrid_results:
+                    self.last_evidence_by_product = {
+                        result.product.product_id: [
+                            text
+                            for text in (format_chunk_evidence(chunk) for chunk in result.evidence_chunks)
+                            if text
+                        ]
+                        for result in hybrid_results
+                    }
                     if self.metrics is not None:
                         self.metrics.increment("retrieval.hybrid.success")
-                    return hybrid_results
+                    return [(result.product, result.score) for result in hybrid_results]
                 if self.metrics is not None:
                     self.metrics.increment("retrieval.fallback.used")
             except Exception:

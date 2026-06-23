@@ -68,6 +68,31 @@ class MarkdownTextFormatterTest {
         assertFalse(rendered.text.contains("**"))
     }
 
+    @Test
+    fun renderMarkdownTextSupportsResponseContractLabels() {
+        val source = """
+            **理解：** 我按预算和清爽肤感来筛。
+
+            **结论：** 优先看「清爽防晒」。
+
+            **主推：** 它更贴合你的预算和肤感偏好。
+
+            **下一步：** 可以继续说要更便宜。
+        """.trimIndent()
+
+        val rendered = renderMarkdownText(source, fallback = "", autoSegment = true)
+
+        assertTrue(rendered.text.contains("理解： 我按预算和清爽肤感来筛。"))
+        assertTrue(rendered.text.contains("结论： 优先看「清爽防晒」。"))
+        assertTrue(rendered.text.contains("主推： 它更贴合你的预算和肤感偏好。"))
+        assertTrue(rendered.text.contains("下一步： 可以继续说要更便宜。"))
+        assertBoldRange(rendered, "理解：")
+        assertBoldRange(rendered, "结论：")
+        assertBoldRange(rendered, "主推：")
+        assertBoldRange(rendered, "下一步：")
+        assertFalse(rendered.text.contains("**"))
+    }
+
     private fun assertBoldRange(rendered: androidx.compose.ui.text.AnnotatedString, label: String) {
         val start = rendered.text.indexOf(label)
         assertTrue("$label should be present", start >= 0)

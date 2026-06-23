@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import ProductChunk
 from ..models import HardConstraints
+from .types import ChunkSearchResult, chunk_relevance_weight, chunk_result_from_orm
 
 
 def vector_search_chunks(
@@ -12,31 +13,38 @@ def vector_search_chunks(
     query_vector: np.ndarray,
     constraints: HardConstraints,
     top_k: int = 30,
-) -> list[tuple[str, float]]:
+    query: str = "",
+) -> list[ChunkSearchResult]:
     rows = _load_active_embeddings(session, constraints)
     if not rows:
         return []
     query_vec = np.asarray(query_vector, dtype=float)
-    raw_scores: list[tuple[str, float]] = []
-    for product_id, embedding in rows:
-        vector = np.asarray(embedding, dtype=float)
+    raw_scores: list[tuple[ProductChunk, float]] = []
+    for chunk in rows:
+        vector = np.asarray(chunk.embedding, dtype=float)
         if vector.shape != query_vec.shape:
             continue
-        raw_scores.append((product_id, float(np.dot(vector, query_vec))))
+        raw_scores.append((chunk, float(np.dot(vector, query_vec))))
     if not raw_scores:
         return []
     scores = _normalize(np.asarray([score for _, score in raw_scores], dtype=float))
-    best_by_product: dict[str, float] = {}
-    for (product_id, _), score in zip(raw_scores, scores):
-        best_by_product[product_id] = max(best_by_product.get(product_id, 0.0), float(score))
-    return sorted(best_by_product.items(), key=lambda item: item[1], reverse=True)[:top_k]
+    results: list[ChunkSearchResult] = []
+    for (chunk, _), score in zip(raw_scores, scores):
+        weighted = float(score) * chunk_relevance_weight(
+            query,
+            chunk.chunk_type,
+            chunk.source_type,
+            chunk.trust_level,
+        )
+        results.append(chunk_result_from_orm(chunk, weighted))
+    return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
 
 
 def _load_active_embeddings(
     session: Session,
     constraints: HardConstraints,
-) -> list[tuple[str, list[float]]]:
-    query = session.query(ProductChunk.product_id, ProductChunk.embedding).filter(
+) -> list[ProductChunk]:
+    query = session.query(ProductChunk).filter(
         ProductChunk.is_active.is_(True),
         ProductChunk.embedding.is_not(None),
     )
@@ -45,9 +53,9 @@ def _load_active_embeddings(
     if constraints.sub_category:
         query = query.filter(ProductChunk.sub_category == constraints.sub_category)
     return [
-        (product_id, embedding)
-        for product_id, embedding in query.all()
-        if isinstance(embedding, list) and embedding
+        chunk
+        for chunk in query.all()
+        if isinstance(chunk.embedding, list) and chunk.embedding
     ]
 
 
@@ -57,5 +65,7 @@ def _normalize(scores: np.ndarray) -> np.ndarray:
     min_score = float(scores.min())
     max_score = float(scores.max())
     if max_score == min_score:
-        return np.zeros_like(scores)
+        if max_score == 0:
+            return np.zeros_like(scores)
+        return np.ones_like(scores)
     return (scores - min_score) / (max_score - min_score)

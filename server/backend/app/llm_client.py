@@ -11,6 +11,7 @@ from .config import Settings
 from .knowledge_base import evidence_review_summary
 from .models import Product, RankedProduct, RetrievalPlan, SessionContext
 from .prompt_registry import PromptRegistry
+from .response_contract import recommendation_contract_text
 
 
 _prompts = PromptRegistry(Path(__file__).parent / "prompts")
@@ -278,19 +279,19 @@ class FakeLLMClient:
         )
         review_text = review_summary.get('positive_summary') or '暂无足够相关评论'
         alternatives = ranked_products[1:4]
-        sections = [
-            f'**结论：** 优先看「{primary.product.title}」。我已按「{handled_text}」筛选，主推价 {primary.product.price:.0f} 元。',
-            f'**主推：** {primary.reason}。',
-            f'**评论摘要：** {review_text}。',
-        ]
+        alternatives_text = None
         if alternatives:
-            sections.append(
-                '**备选：** 备选差异：' + '；'.join(
-                    f'{item.product.title}偏{item.reason}' for item in alternatives
-                ) + '。'
-            )
-        sections.append('**下一步：** 如果你想更便宜、更清爽或换个品牌，我可以继续帮你换。')
-        return '\n\n'.join(sections)
+            alternatives_text = '备选差异：' + '；'.join(
+                f'{item.product.title}偏{item.reason}' for item in alternatives
+            ) + '。'
+        return recommendation_contract_text(
+            understanding=f'我按「{handled_text}」理解你的需求，并只从当前商品库候选里回答。',
+            conclusion=f'优先看「{primary.product.title}」，它是当前最匹配的一款。',
+            primary_reason=f'{primary.reason}，当前价格 {primary.product.price:.0f} 元。',
+            review_summary=review_text,
+            alternatives=alternatives_text,
+            next_step='如果你想更便宜、更清爽或换个品牌，我可以继续帮你换。',
+        )
 
     async def select_products(
         self,
@@ -381,6 +382,13 @@ def _response_evidence_payload(
     return {
         'allowed_products': products,
         'selected_primary': products[0]['product_id'] if products else None,
+        'response_contract': {
+            'kind': 'recommendation_markdown_v2',
+            'required_sections': ['理解', '结论', '主推', '下一步'],
+            'optional_sections': ['评论摘要', '备选'],
+            'primary_product_id': products[0]['product_id'] if products else None,
+            'allowed_product_ids': [product['product_id'] for product in products],
+        },
         'hard_constraints_applied': {
             'category': constraints.category,
             'sub_category': constraints.sub_category,

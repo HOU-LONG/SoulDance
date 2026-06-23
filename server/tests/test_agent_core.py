@@ -142,9 +142,10 @@ def test_hard_filter_excludes_brand_aliases_and_explains_reason():
 def test_response_prompt_requires_short_paragraphs_or_bullets():
     prompt = Path("server/backend/app/prompts/v1/response.txt").read_text(encoding="utf-8")
 
-    assert "2-4" in prompt
+    assert "回答合同" in prompt
     assert "短段落" in prompt
-    assert "短列表" in prompt
+    assert "response_contract" in prompt
+    assert "**\u7406\u89e3\uff1a**" in prompt
     assert "**\u7ed3\u8bba\uff1a**" in prompt
     assert "**\u4e3b\u63a8\uff1a**" in prompt
     assert "**\u5907\u9009\uff1a**" in prompt
@@ -1556,6 +1557,8 @@ def test_llm_clients_do_not_expose_legacy_plan_method():
 
 
 def test_response_prompt_mentions_primary_and_alternative_differences():
+    assert "recommendation_markdown_v2" in RESPONSE_SYSTEM_PROMPT
+    assert "selected_primary" in RESPONSE_SYSTEM_PROMPT
     assert "主推一个" in RESPONSE_SYSTEM_PROMPT
     assert "备选差异" in RESPONSE_SYSTEM_PROMPT
 
@@ -1575,6 +1578,13 @@ def test_response_evidence_payload_includes_four_allowed_products():
 
     assert len(payload["allowed_products"]) == 4
     assert payload["selected_primary"] == ranked[0].product.product_id
+    assert payload["response_contract"] == {
+        "kind": "recommendation_markdown_v2",
+        "required_sections": ["理解", "结论", "主推", "下一步"],
+        "optional_sections": ["评论摘要", "备选"],
+        "primary_product_id": ranked[0].product.product_id,
+        "allowed_product_ids": [item.product.product_id for item in ranked],
+    }
 
 
 def test_recommendation_uses_single_intent_compiler_without_llm_plan():
@@ -3262,7 +3272,7 @@ def test_explain_followup_can_still_use_internal_evidence_text():
     assert "评论" in text or "证据" in text or "匹配" in text
 
 
-def test_default_recommendation_text_starts_with_conclusion():
+def test_default_recommendation_text_starts_with_understanding():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
 
@@ -3277,8 +3287,9 @@ def test_default_recommendation_text_starts_with_conclusion():
     )
 
     text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
-    assert text.startswith("**\u7ed3\u8bba\uff1a**")
+    assert text.startswith("**\u7406\u89e3\uff1a**")
     assert "\n\n" in text
+    assert "**\u7ed3\u8bba\uff1a**" in text
     assert "**\u4e3b\u63a8\uff1a**" in text
     assert "**\u8bc4\u8bba\u6458\u8981\uff1a**" in text
     assert "**\u4e0b\u4e00\u6b65\uff1a**" in text

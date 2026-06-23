@@ -7,6 +7,14 @@ from typing import Any
 from ..models import Product
 
 
+CHUNK_TYPE_ALIASES = {
+    "description": "official_description",
+    "feature": "official_description",
+    "marketing": "official_description",
+    "review": "review_summary",
+}
+
+
 @dataclass(frozen=True)
 class ChunkMeta:
     product_id: str
@@ -19,6 +27,11 @@ class ChunkMeta:
     document_version: int
     content: str
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+def canonical_chunk_type(chunk_type: str) -> str:
+    normalized = (chunk_type or "").strip()
+    return CHUNK_TYPE_ALIASES.get(normalized, normalized)
 
 
 def chunk_product(product: Product, version: int = 1) -> list[ChunkMeta]:
@@ -41,7 +54,7 @@ def chunk_product(product: Product, version: int = 1) -> list[ChunkMeta]:
                 sku_id=sku_id,
                 category_id=product.category,
                 sub_category=product.sub_category,
-                chunk_type=chunk_type,
+                chunk_type=canonical_chunk_type(chunk_type),
                 source_type=source_type,
                 trust_level=trust_level,
                 document_version=version,
@@ -51,44 +64,47 @@ def chunk_product(product: Product, version: int = 1) -> list[ChunkMeta]:
         )
 
     spec_parts = [
-        f"商品名称: {product.title}",
-        f"品牌: {product.brand}",
-        f"类目: {product.category}",
-        f"子类目: {product.sub_category}",
+        f"title: {product.title}",
+        f"brand: {product.brand}",
+        f"category: {product.category}",
+        f"sub_category: {product.sub_category}",
+        f"price: {product.price}",
     ]
     if product.extracted_terms:
-        spec_parts.append("属性词: " + " ".join(product.extracted_terms))
+        spec_parts.append("terms: " + " ".join(product.extracted_terms))
     if product.skus:
         sku_text = []
         for sku in product.skus:
             properties = " ".join(f"{key}:{value}" for key, value in sku.properties.items())
-            sku_text.append(f"{sku.sku_id} {properties} 价格:{sku.price}")
-        spec_parts.append("SKU: " + "；".join(sku_text))
+            sku_text.append(f"{sku.sku_id} {properties} price:{sku.price}")
+        spec_parts.append("SKU: " + ";".join(sku_text))
     add("specification", "\n".join(spec_parts), metadata={"price": product.price})
+
+    for index, sku in enumerate(product.skus):
+        properties = " ".join(f"{key}:{value}" for key, value in sku.properties.items())
+        add(
+            "sku",
+            f"SKU: {sku.sku_id}\nproperties: {properties}\nprice: {sku.price}",
+            sku_id=sku.sku_id,
+            metadata={"sku_index": index, "sku_properties": dict(sku.properties), "sku_price": sku.price},
+        )
 
     for index, sentence in enumerate(_split_sentences(product.marketing_description)):
         add(
-            "feature",
+            "official_description",
             sentence,
-            source_type="official_detail",
-            trust_level="official",
-            metadata={"sentence_index": index},
+            source_type="marketing_copy",
+            trust_level="marketing",
+            metadata={"section": "marketing", "sentence_index": index},
         )
-
-    add(
-        "marketing",
-        product.marketing_description,
-        source_type="marketing_copy",
-        trust_level="marketing",
-    )
 
     for index, text in enumerate(_split_long_text(product.chunk, max_chars=300)):
         add(
-            "description",
+            "official_description",
             text,
             source_type="official_detail",
             trust_level="official",
-            metadata={"part_index": index},
+            metadata={"section": "detail", "part_index": index},
         )
 
     for index, faq in enumerate(product.faqs):
@@ -108,11 +124,11 @@ def chunk_product(product: Product, version: int = 1) -> list[ChunkMeta]:
             content = str(review.get("content") or review.get("text") or "").strip()
             rating = review.get("rating")
             if content and rating is not None:
-                review_lines.append(f"{content} 评分:{rating}")
+                review_lines.append(f"{content} rating:{rating}")
             elif content:
                 review_lines.append(content)
         add(
-            "review",
+            "review_summary",
             "\n".join(review_lines),
             source_type="review_summary",
             trust_level="review_aggregate",
@@ -126,7 +142,7 @@ def _split_sentences(text: str) -> list[str]:
     normalized = _normalize_space(text)
     if not normalized:
         return []
-    parts = re.split(r"(?<=[。！？!?；;])\s*", normalized)
+    parts = re.split(r"(?<=[\u3002\uff01\uff1f\uff1b!?;\.])\s*", normalized)
     return [part.strip() for part in parts if part.strip()]
 
 
@@ -141,10 +157,11 @@ def _split_long_text(text: str, max_chars: int = 300) -> list[str]:
     while start < len(normalized):
         end = min(len(normalized), start + max_chars)
         boundary = max(
-            normalized.rfind("。", start, end),
-            normalized.rfind("！", start, end),
-            normalized.rfind("？", start, end),
-            normalized.rfind("；", start, end),
+            normalized.rfind("\u3002", start, end),
+            normalized.rfind("\uff01", start, end),
+            normalized.rfind("\uff1f", start, end),
+            normalized.rfind("\uff1b", start, end),
+            normalized.rfind(".", start, end),
         )
         if boundary > start + max_chars // 2:
             end = boundary + 1

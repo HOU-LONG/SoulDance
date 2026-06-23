@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ..db.models import ProductChunk
 from ..models import HardConstraints
+from .types import ChunkSearchResult, chunk_relevance_weight, chunk_result_from_orm
 
 
 def lexical_search_chunks(
@@ -14,33 +15,37 @@ def lexical_search_chunks(
     query: str,
     constraints: HardConstraints,
     top_k: int = 30,
-) -> list[tuple[str, float]]:
+) -> list[ChunkSearchResult]:
     rows = _load_active_chunks(session, constraints)
     if not rows:
         return []
-    tokenized = [_tokenize(content) for _, content in rows]
+    tokenized = [_tokenize(chunk.content or "") for chunk in rows]
     if not any(tokenized):
         return []
     scores = BM25Okapi(tokenized).get_scores(_tokenize(query))
     scores = _normalize(np.asarray(scores, dtype=float))
-    best_by_product: dict[str, float] = {}
-    for (product_id, _), score in zip(rows, scores):
-        best_by_product[product_id] = max(best_by_product.get(product_id, 0.0), float(score))
-    return sorted(best_by_product.items(), key=lambda item: item[1], reverse=True)[:top_k]
+    results: list[ChunkSearchResult] = []
+    for chunk, score in zip(rows, scores):
+        weighted = float(score) * chunk_relevance_weight(
+            query,
+            chunk.chunk_type,
+            chunk.source_type,
+            chunk.trust_level,
+        )
+        results.append(chunk_result_from_orm(chunk, weighted))
+    return sorted(results, key=lambda item: item.score, reverse=True)[:top_k]
 
 
 def _load_active_chunks(
     session: Session,
     constraints: HardConstraints,
-) -> list[tuple[str, str]]:
-    query = session.query(ProductChunk.product_id, ProductChunk.content).filter(
-        ProductChunk.is_active.is_(True)
-    )
+) -> list[ProductChunk]:
+    query = session.query(ProductChunk).filter(ProductChunk.is_active.is_(True))
     if constraints.category:
         query = query.filter(ProductChunk.category_id == constraints.category)
     if constraints.sub_category:
         query = query.filter(ProductChunk.sub_category == constraints.sub_category)
-    return [(product_id, content or "") for product_id, content in query.all()]
+    return list(query.all())
 
 
 def _tokenize(text: str) -> list[str]:
@@ -53,5 +58,7 @@ def _normalize(scores: np.ndarray) -> np.ndarray:
     min_score = float(scores.min())
     max_score = float(scores.max())
     if max_score == min_score:
-        return np.zeros_like(scores)
+        if max_score == 0:
+            return np.zeros_like(scores)
+        return np.ones_like(scores)
     return (scores - min_score) / (max_score - min_score)

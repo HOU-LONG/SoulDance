@@ -100,11 +100,18 @@ class ShopGuideAgent:
         from .tools.retrieval import RetrieveProductsTool
         from .tools.cart import CartTool
         from .tools.clarify import ClarifyTool
+        from .tools.comparison import CompareProductsTool
+        from .tools.bundle import ScenarioBundleTool
+        from .tools.followup import ProductFollowupTool
         from .tools.small_talk import SmallTalkTool
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(RetrieveProductsTool(self))
         self.tool_registry.register(CartTool(self))
         self.tool_registry.register(ClarifyTool(self))
+        self.tool_registry.register(CompareProductsTool(self))
+        self.tool_registry.register(ScenarioBundleTool(self))
+        self.tool_registry.register(ProductFollowupTool(self))
+        self.tool_registry.register(SmallTalkTool(self))
 
     def _record_feedback(self, session_id: str, signal_type: str, product_id: str = None,
                          action_label: str = None, context: dict = None) -> None:
@@ -185,11 +192,20 @@ class ShopGuideAgent:
             and ir.intent == "product_followup"
             and not _is_pending_clarification_answer(context, request, ir)
         ):
-            async for event in self._stream_followup(request, ir):
+            async for event in self.tool_registry.execute(
+                "product_followup",
+                request,
+                context,
+                compiled_ir=ir,
+            ):
                 yield event
             return
         if ir.intent in {"small_talk", "unclear_input"}:
-            async for event in self._stream_no_retrieval_events(request, ir.intent):
+            async for event in self.tool_registry.execute(
+                ir.intent,
+                request,
+                context,
+            ):
                 yield event
             return
         context_action = self._prepare_context_for_turn(context, request, ir)
@@ -201,19 +217,39 @@ class ShopGuideAgent:
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         if plan.intent in {"small_talk", "unclear_input"}:
-            async for event in self._stream_no_retrieval_events(request, plan.intent):
+            async for event in self.tool_registry.execute(
+                plan.intent,
+                request,
+                context,
+            ):
                 yield event
             return
         if plan.need_clarification or plan.intent == "clarification":
-            for event in self._build_clarification_events(context, plan, context_action):
+            async for event in self.tool_registry.execute(
+                "clarification",
+                request,
+                context,
+                plan=plan,
+                context_action=context_action,
+            ):
                 yield event
             return
         if plan.intent == "compare_products":
-            for event in await self._build_comparison_events(request):
+            async for event in self.tool_registry.execute(
+                "compare_products",
+                request,
+                context,
+                plan=plan,
+            ):
                 yield event
             return
         if plan.intent == "scenario_bundle":
-            for event in self._build_bundle_events(request, plan):
+            async for event in self.tool_registry.execute(
+                "scenario_bundle",
+                request,
+                context,
+                plan=plan,
+            ):
                 yield event
             return
         if _looks_like_product_request(request.message) and not self.taxonomy.is_known_request(request.message):
@@ -228,20 +264,15 @@ class ShopGuideAgent:
             yield {"type": "done", "message_id": message_id}
             return
         memory_hit = self._get_recommendation_memory_hit(plan, request.message)
-        if memory_hit is not None:
-            async for event in self._stream_recommendation_events(
-                request,
-                plan,
-                memory_hit.ranked,
-                context_action,
-                memory_mode=memory_hit.mode,
-                selected_override=memory_hit.ranked,
-                cached_summary=memory_hit.summary,
-            ):
-                yield event
-            return
-        ranked = self.retrieve_and_rank(plan, session_id=request.session_id)
-        async for event in self._stream_recommendation_events(request, plan, ranked, context_action):
+        async for event in self.tool_registry.execute(
+            "recommend_product",
+            request,
+            context,
+            plan=plan,
+            compiled_ir=ir,
+            context_action=context_action,
+            memory_hit=memory_hit,
+        ):
             yield event
 
     def _build_pending_recovery_events(self, context: SessionContext, request: ChatRequest) -> list[dict] | None:

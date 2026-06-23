@@ -14,6 +14,7 @@ class ToolRegistry:
         return self._tools.get(intent)
 
     async def execute(self, intent: str, request, context, **kwargs):
+        kwargs.setdefault("intent", intent)
         tool = self.get(intent)
         if tool is None:
             tool = self.get("small_talk")

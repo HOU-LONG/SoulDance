@@ -191,36 +191,42 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                 envelope = RealtimeEnvelope(session_id=request.session_id)
                 await websocket.send_json(envelope.ack())
                 metrics.increment("ws.events.sent")
+
+                async def send_cart_tool_events(compiled_ir=None) -> bool:
+                    handled = False
+                    context = agent.sessions.get(request.session_id)
+                    async for event in agent.tool_registry.execute(
+                        "cart_operation",
+                        request,
+                        context,
+                        cart_service=cart,
+                        compiled_ir=compiled_ir,
+                    ):
+                        handled = True
+                        await websocket.send_json(envelope.wrap(event))
+                        metrics.increment("ws.events.sent")
+                    if handled:
+                        session_store.save(request.session_id)
+                    return handled
+
                 if request.type == "cart_action":
-                    event = agent.execute_cart_action(
-                        request.session_id,
-                        request.action or "add_to_cart",
-                        request.product_id,
-                        request.quantity,
-                        cart,
-                    )
-                    await websocket.send_json(envelope.wrap({"type": "cart_update", **event}))
-                    metrics.increment("ws.events.sent")
-                    await websocket.send_json(envelope.wrap({"type": "done"}))
-                    metrics.increment("ws.events.sent")
-                    session_store.save(request.session_id)
+                    await send_cart_tool_events()
                     continue
-                cart_event = None
+
                 compiled_ir = None
                 if request.type != "product_followup":
                     rule_frame = rule_semantic_frame(request)
                     if rule_frame.intent == "cart_operation" and rule_frame.cart_operation is not None:
-                        cart_event = await agent.try_handle_cart_message(request, cart, rule_frame)
+                        if await send_cart_tool_events(rule_frame):
+                            continue
                     else:
                         compiled_ir = await agent.compile_intent(request)
-                        cart_event = await agent.try_handle_cart_message(request, cart, compiled_ir)
-                if cart_event is not None:
-                    await websocket.send_json(envelope.wrap({"type": "cart_update", **cart_event}))
-                    metrics.increment("ws.events.sent")
-                    await websocket.send_json(envelope.wrap({"type": "done"}))
-                    metrics.increment("ws.events.sent")
-                    session_store.save(request.session_id)
-                    continue
+                        if (
+                            compiled_ir.intent == "cart_operation"
+                            and compiled_ir.cart_operation is not None
+                            and await send_cart_tool_events(compiled_ir)
+                        ):
+                            continue
                 async for event in agent.stream_message(request, compiled_ir):
                     await websocket.send_json(envelope.wrap(event))
                     metrics.increment("ws.events.sent")

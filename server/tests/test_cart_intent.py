@@ -40,3 +40,11 @@ def test_detect_quantity_ignores_model_numbers_without_quantity_units():
 
 def test_cart_message_for_remove_action():
     assert cart_intent._cart_message("remove", "苹果手机") == "已从购物车移除 苹果手机。"
+
+
+def test_cart_messages_stay_plain_text():
+    message = cart_intent._cart_message("add_to_cart", "清爽防晒")
+
+    assert message == "已把 清爽防晒 加入购物车。"
+    assert "**" not in message
+    assert "\n\n" not in message

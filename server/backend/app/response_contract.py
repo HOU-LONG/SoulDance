@@ -38,3 +38,13 @@ def recommendation_contract_text(
 
 def action_message(text: str) -> str:
     return " ".join((text or "").split())
+
+
+def no_result_contract_text(*, understanding: str, conclusion: str, next_step: str) -> str:
+    return compose_markdown_sections(
+        [
+            ("理解", understanding),
+            ("结论", conclusion),
+            ("下一步", next_step),
+        ]
+    )

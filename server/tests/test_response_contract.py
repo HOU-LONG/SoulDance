@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 
 from backend.app.data_loader import load_products
+from backend.app.agent import ShopGuideAgent, _no_match_text
 from backend.app.llm_client import FakeLLMClient
 from backend.app.memory_cache import _short_response_summary
-from backend.app.models import HardConstraints, RankedProduct, RetrievalPlan
+from backend.app.models import ChatRequest, HardConstraints, RankedProduct, RetrievalPlan
 from backend.app.response_contract import (
     action_message,
     compose_markdown_sections,
@@ -52,6 +53,64 @@ def test_action_message_keeps_short_messages_plain_text():
     assert text == "已把 清爽防晒 加入购物车。"
     assert "**" not in text
     assert "\n\n" not in text
+
+
+def test_no_match_text_uses_response_contract_sections():
+    plan = RetrievalPlan(
+        retrieval_query="推荐防晒",
+        hard_constraints=HardConstraints(sub_category="防晒", price_max=100),
+    )
+
+    text = _no_match_text(plan)
+
+    assert text.startswith("**理解：**")
+    assert "**结论：**" in text
+    assert "**下一步：**" in text
+    assert "不推荐不合规替代品" in text
+
+
+def test_clarification_text_uses_response_contract_sections():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    context = agent.sessions.get("contract_clarification")
+    plan = RetrievalPlan(
+        intent="clarification",
+        retrieval_mode="clarification",
+        retrieval_query="推荐礼物",
+        need_clarification=True,
+        clarification_question="你更想要实用礼物还是惊喜感？",
+    )
+
+    events = agent._build_clarification_events(context, plan)
+    text = "".join(event.get("text", "") for event in events if event.get("type") == "text_delta")
+
+    assert text.startswith("**理解：**")
+    assert "**下一步：** 你更想要实用礼物还是惊喜感？" in text
+
+
+def test_comparison_and_bundle_intro_use_response_contract_sections():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+    context = agent.sessions.get("contract_compare")
+    context.last_product_ids = [products[0].product_id, products[1].product_id]
+
+    compare_events = asyncio.run(
+        agent._build_comparison_events(
+            ChatRequest(type="user_message", session_id="contract_compare", message="对比一下这两款")
+        )
+    )
+    compare_text = "".join(event.get("text", "") for event in compare_events if event.get("type") == "text_delta")
+
+    bundle_events = agent._build_bundle_events(
+        ChatRequest(type="user_message", session_id="contract_bundle", message="下周去三亚度假，帮我搭配一套"),
+        RetrievalPlan(intent="scenario_bundle", retrieval_mode="decompose_parallel", retrieval_query="三亚度假搭配"),
+    )
+    bundle_text = "".join(event.get("text", "") for event in bundle_events if event.get("type") == "text_delta")
+
+    assert compare_text.startswith("**理解：**")
+    assert "**结论：**" in compare_text
+    assert bundle_text.startswith("**理解：**")
+    assert "**下一步：**" in bundle_text
 
 
 def test_fake_llm_recommendation_uses_response_contract_sections():

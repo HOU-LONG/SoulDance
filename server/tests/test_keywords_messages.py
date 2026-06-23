@@ -16,6 +16,14 @@ def test_product_and_followup_keyword_markers_keep_existing_literals():
     assert DIFFERENT_BRAND_MARKERS == ("不要这个品牌", "换个品牌", "别的品牌", "不要这个牌子")
 
 
-def test_stable_user_messages_keep_existing_text():
-    assert unknown_category_text() == "当前商品库里还没有能稳定匹配这个需求的类目。为了不跨类目乱推荐，我先不返回商品卡。你可以换成现有商品类目再试。"
-    assert insufficient_comparison_products_text() == "我还没有足够的最近推荐商品可以对比。你可以先让我推荐几款，再说第一款和第二款怎么选。"
+def test_stable_user_messages_use_response_contract_sections():
+    unknown = unknown_category_text()
+    insufficient = insufficient_comparison_products_text()
+
+    assert unknown.startswith("**理解：**")
+    assert "**结论：** 当前商品库里还没有能稳定匹配这个需求的类目。" in unknown
+    assert "**下一步：** 你可以换成现有商品类目再试。" in unknown
+
+    assert insufficient.startswith("**理解：**")
+    assert "**结论：** 我还没有足够的最近推荐商品可以对比。" in insufficient
+    assert "**下一步：** 你可以先让我推荐几款，再说第一款和第二款怎么选。" in insufficient

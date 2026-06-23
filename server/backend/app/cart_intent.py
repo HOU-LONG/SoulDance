@@ -6,6 +6,7 @@
 import re
 
 from .cart import CartService
+from .response_contract import action_message
 
 
 def _detect_cart_action(text: str) -> str:
@@ -98,9 +99,9 @@ def _cart_product_display_name(cart: CartService, product_id: str) -> str:
 
 def _cart_message(action: str, product_name: str) -> str:
     if action == "clear_cart":
-        return "已清空购物车。"
+        return action_message("已清空购物车。")
     if action == "update_quantity":
-        return f"已更新 {product_name} 的数量。"
+        return action_message(f"已更新 {product_name} 的数量。")
     if action == "remove":
-        return f"已从购物车移除 {product_name}。"
-    return f"已把 {product_name} 加入购物车。"
+        return action_message(f"已从购物车移除 {product_name}。")
+    return action_message(f"已把 {product_name} 加入购物车。")

@@ -29,6 +29,7 @@ from .keywords import (
     PRODUCT_REQUEST_MARKERS,
 )
 from .messages import insufficient_comparison_products_text, unknown_category_text
+from .response_contract import action_message, compose_markdown_sections, no_result_contract_text
 from .llm_client import FakeLLMClient
 from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, StructuredMemoryCache
 from .models import (
@@ -718,7 +719,13 @@ class ShopGuideAgent:
                 context_action=context_action,
             )
         ]
-        events.extend(_text_delta_events(message_id, question))
+        text = compose_markdown_sections(
+            [
+                ("理解", "我还需要确认一个关键偏好，才能更稳地推荐。"),
+                ("下一步", question),
+            ]
+        )
+        events.extend(_text_delta_events(message_id, text))
         events.append(
             {
                 "type": "clarification_request",
@@ -872,9 +879,15 @@ class ShopGuideAgent:
                 "reason": (result.overall_reason or comparison_reason(winner, request.message)) if winner else "",
             },
         }
-        text = (
-            f"我把你刚才看的 {len(products)} 款放在一起比。"
-            f"如果只选一款，我更建议「{winner.title if winner else products[0].title}」，因为{result.overall_reason or '综合对比'}。"
+        text = compose_markdown_sections(
+            [
+                ("理解", f"我把你刚才看的 {len(products)} 款放在一起比。"),
+                (
+                    "结论",
+                    f"如果只选一款，我更建议「{winner.title if winner else products[0].title}」，因为{result.overall_reason or '综合对比'}。",
+                ),
+                ("下一步", "你可以继续说更便宜、换品牌，或直接围绕胜出款追问。"),
+            ]
         )
         _append_context_event(
             context,
@@ -901,7 +914,14 @@ class ShopGuideAgent:
             ("出行配件", "帽子", "海边 遮阳 防晒 轻便 帽子"),
         ]
         events: list[dict] = [_assistant_state(message_id, "retrieving", "正在拆解场景组合需求")]
-        events.extend(_text_delta_events(message_id, "我会按三亚海边的强紫外线、轻便出行和降温舒适来拆成几组搭配。"))
+        bundle_intro = compose_markdown_sections(
+            [
+                ("理解", "我会按三亚海边的强紫外线、轻便出行和降温舒适来拆成几组搭配。"),
+                ("结论", "先拆成防晒护理、穿搭和出行配件三组。"),
+                ("下一步", "你可以查看每组商品，也可以把整套组合加入购物车。"),
+            ]
+        )
+        events.extend(_text_delta_events(message_id, bundle_intro))
         events.append(
             {
                 "type": "bundle_start",
@@ -1135,11 +1155,11 @@ class ShopGuideAgent:
         ]
         if len(candidates) > 1:
             names = "、".join(product.title for product in candidates[:3])
-            text = f"我找到了多个可能的商品：{names}。请说完整型号，或点商品卡片上的加购按钮。"
+            text = action_message(f"我找到了多个可能的商品：{names}。请说完整型号，或点商品卡片上的加购按钮。")
         elif candidates:
-            text = f"我找到了一个可能的商品：{candidates[0].title}。请说完整型号，或点商品卡片上的加购按钮。"
+            text = action_message(f"我找到了一个可能的商品：{candidates[0].title}。请说完整型号，或点商品卡片上的加购按钮。")
         else:
-            text = "我还没找到明确要加入购物车的商品。请说完整品牌和型号，或点商品卡片上的加购按钮。"
+            text = action_message("我还没找到明确要加入购物车的商品。请说完整品牌和型号，或点商品卡片上的加购按钮。")
         return {
             "action": action,
             "product_id": None,
@@ -1210,7 +1230,7 @@ class ShopGuideAgent:
             }
         if not product_id:
             snapshot = cart.get(session_id)
-            return {"action": "get_cart", "product_id": None, "cart": snapshot, "message": "我还没找到要操作的商品。"}
+            return {"action": "get_cart", "product_id": None, "cart": snapshot, "message": action_message("我还没找到要操作的商品。")}
         if action == "update_quantity":
             snapshot = cart.update_quantity(session_id, product_id, quantity)
         elif action == "remove":
@@ -2119,7 +2139,9 @@ def _no_match_text(plan: RetrievalPlan) -> str:
         parts.append("排除" + "、".join(constraints.exclude_brand_regions) + "品牌")
     condition_text = "、".join(part for part in parts if part) or "这些条件"
     return (
-        f"我按「{condition_text}」做了硬过滤，当前商品库里没有完全满足的商品。"
-        "为了不违反你的明确要求，我先不推荐不合规替代品。"
-        "你可以放宽预算、取消一个排除条件，或者换成相近类目，我再继续帮你筛。"
+        no_result_contract_text(
+            understanding=f"我按「{condition_text}」做了硬过滤。",
+            conclusion="当前商品库里没有完全满足的商品。为了不违反你的明确要求，我先不推荐不合规替代品。",
+            next_step="你可以放宽预算、取消一个排除条件，或者换成相近类目，我再继续帮你筛。",
+        )
     )

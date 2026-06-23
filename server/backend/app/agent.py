@@ -100,12 +100,14 @@ class ShopGuideAgent:
         from .tools.retrieval import RetrieveProductsTool
         from .tools.cart import CartTool
         from .tools.clarify import ClarifyTool
+        from .tools.comparison import CompareProductsTool
         from .tools.followup import ProductFollowupTool
         from .tools.small_talk import SmallTalkTool
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(RetrieveProductsTool(self))
         self.tool_registry.register(CartTool(self))
         self.tool_registry.register(ClarifyTool(self))
+        self.tool_registry.register(CompareProductsTool(self))
         self.tool_registry.register(ProductFollowupTool(self))
         self.tool_registry.register(SmallTalkTool(self))
 
@@ -231,7 +233,12 @@ class ShopGuideAgent:
                 yield event
             return
         if plan.intent == "compare_products":
-            for event in await self._build_comparison_events(request):
+            async for event in self.tool_registry.execute(
+                "compare_products",
+                request,
+                context,
+                plan=plan,
+            ):
                 yield event
             return
         if plan.intent == "scenario_bundle":

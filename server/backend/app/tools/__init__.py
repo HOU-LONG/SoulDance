@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from .base import Tool
+from .comparison import CompareProductsTool
 from .followup import ProductFollowupTool
 from .registry import ToolRegistry
 
-__all__ = ["Tool", "ToolRegistry", "ProductFollowupTool"]
+__all__ = ["Tool", "ToolRegistry", "ProductFollowupTool", "CompareProductsTool"]

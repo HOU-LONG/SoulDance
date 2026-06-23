@@ -243,20 +243,15 @@ class ShopGuideAgent:
             yield {"type": "done", "message_id": message_id}
             return
         memory_hit = self._get_recommendation_memory_hit(plan, request.message)
-        if memory_hit is not None:
-            async for event in self._stream_recommendation_events(
-                request,
-                plan,
-                memory_hit.ranked,
-                context_action,
-                memory_mode=memory_hit.mode,
-                selected_override=memory_hit.ranked,
-                cached_summary=memory_hit.summary,
-            ):
-                yield event
-            return
-        ranked = self.retrieve_and_rank(plan, session_id=request.session_id)
-        async for event in self._stream_recommendation_events(request, plan, ranked, context_action):
+        async for event in self.tool_registry.execute(
+            "recommend_product",
+            request,
+            context,
+            plan=plan,
+            compiled_ir=ir,
+            context_action=context_action,
+            memory_hit=memory_hit,
+        ):
             yield event
 
     def _build_pending_recovery_events(self, context: SessionContext, request: ChatRequest) -> list[dict] | None:

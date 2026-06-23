@@ -3272,7 +3272,7 @@ def test_explain_followup_can_still_use_internal_evidence_text():
     assert "评论" in text or "证据" in text or "匹配" in text
 
 
-def test_default_recommendation_text_starts_with_conclusion():
+def test_default_recommendation_text_starts_with_understanding():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
 
@@ -3287,8 +3287,9 @@ def test_default_recommendation_text_starts_with_conclusion():
     )
 
     text = "".join(event.get("text", "") for event in events if event["type"] == "text_delta")
-    assert text.startswith("**\u7ed3\u8bba\uff1a**")
+    assert text.startswith("**\u7406\u89e3\uff1a**")
     assert "\n\n" in text
+    assert "**\u7ed3\u8bba\uff1a**" in text
     assert "**\u4e3b\u63a8\uff1a**" in text
     assert "**\u8bc4\u8bba\u6458\u8981\uff1a**" in text
     assert "**\u4e0b\u4e00\u6b65\uff1a**" in text

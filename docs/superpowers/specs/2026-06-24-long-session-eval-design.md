@@ -446,6 +446,44 @@ Stage 3 — full run (每 condition 1100 轮 = 5500 轮)
   - 缓存污染 → 接 §3.3 + 独立进程 + stage 隔离
   - 跑到一半改模板 → 接 §8 hash 拒绝续跑
 
+### 10.1 Cost Appendix（Task 13 dry-run smoke 实测）
+
+**实测日期：** 2026-06-25
+**Smoke 规模：** C0 5 轮（续跑测试遗留）+ C1/C2/C3/C4 各 2 轮 = 13 轮真实 ARK 调用
+**ARK model：** `ep-20260514111645-lmgt2`（豆包 Pro）
+
+| Condition | n_turns | 平均 ARK tool_calls/turn | 平均 prompt_tokens | 平均 total_ms | degradation 次数 |
+|---|---|---|---|---|---|
+| C0 | 5 | 0.0 | 0 | 4259 | 0 |
+| C1 | 2 | 0.0 | 0 | 6616 | 0 |
+| C2 | 2 | 0.0 | 0 | 5973 | 0 |
+| C3 | 2 | 0.0 | 0 | 6380 | 0 |
+| C4 | 2 | 0.0 | 0 | 6633 | 0 |
+
+**Judge 采样：** 0（dryrun smoke 规模太小，sample_rate × 13 < 1 故无采样）；分歧率推断保留至 pilot/full 实测后决定。
+**Judge call_count 推断：** pending（需 pilot 阶段实测）。
+
+**已知数据缺口（待后续修复）：**
+- `prompt_tokens` / `tool_calls` 全为 0。原因：Task 10 的 `_invoke_agent` 当前只从 `handle_message` 的 events 里抽取 `assistant_text` 和 `product_card`，未抽取 token 计数与工具调用链。Pilot 阶段进入前需要增强 `_invoke_agent` 真实抽取这两个字段，否则 token/cost 推估无法做。
+- 这是 Task 10 设计时与 controller 约定的"未知字段 default 0" 的现状，pilot/full 启动前必须补齐。
+
+**有效观测：**
+- **总 ARK 调用通过率 100%**：13 个真实调用，0 个 degradation/超时/限流。
+- **真实端到端时延**（含 jieba 加载 / 商品向量预热 / answer 生成）：4.3-6.6 秒/turn。C0（A1 关）显著低于 C1/C4 — 这说明 disable_window=True 时 LLM 注入上下文确实变小且更快。
+- **trace schema 一次通过**：65 个 turn line 全部通过 jsonschema 校验。
+- **缓存隔离已验证**：5 个独立 cache_c{N} 目录互不可见。
+- **断点续跑已验证**：截断 trace 到第 3 turn 后 resume，正确从 turn 3/4 接续，不重不漏。
+- **Hash mismatch 拒绝已验证**：篡改 script_version_hash 后 resume，CLI 抛 `HashMismatchError`，exit code 1。
+
+**Pilot/Full 预估方法（实施时再算）：**
+- Pilot 预估总 ARK 调用 = dryrun_avg × 100 × 5 = ~5000 calls
+- Full 预估总 ARK 调用 = dryrun_avg × 1100 × 5 = ~55000 calls
+- 单轮均耗 ≈ 6 秒 → full run ≈ 5500 × 6 = 33000 秒 ≈ 9.2 小时（串行）
+- 实际 token 量需 pilot 实测后回填本附录
+
+**Pilot 与 Full 放行条件：** 基于以上实测，token/cost 缺口需先补齐，user-approved 后才放行。
+
+
 ---
 
 ## 11. 产物清单

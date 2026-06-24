@@ -2,6 +2,7 @@ import numpy as np
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from backend.app.adaptive_retriever import AdaptiveRetriever
 from backend.app.db.base import Base
 from backend.app.db.models import Product as ProductOrm, ProductChunk
 from backend.app.models import HardConstraints, Product, RetrievalPlan
@@ -204,7 +205,7 @@ def _product(product_id: str) -> Product:
     )
 
 
-from backend.app.adaptive_retriever import AdaptiveRetriever
+
 
 
 class _RecordingReranker:

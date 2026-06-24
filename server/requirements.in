@@ -11,6 +11,7 @@ websockets==16.0
 
 # Data & ML
 numpy==2.3.5
+matplotlib>=3.7.0
 jieba==0.42.1
 rank-bm25==0.2.2
 sentence-transformers==5.1.2

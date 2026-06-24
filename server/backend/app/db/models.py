@@ -114,11 +114,14 @@ class Cart(Base):
     __tablename__ = "carts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    session_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, default="anonymous", index=True)
+    session_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
     )
+
+    __table_args__ = (UniqueConstraint("user_id", "session_id", name="uq_carts_user_session"),)
 
     items: Mapped[list["CartItem"]] = relationship(
         "CartItem", back_populates="cart", cascade="all, delete-orphan", lazy="selectin"
@@ -185,7 +188,8 @@ class SessionState(Base):
     __tablename__ = "session_states"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    session_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(128), nullable=False, default="anonymous", index=True)
+    session_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     state_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_activity_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -193,6 +197,8 @@ class SessionState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, onupdate=_now
     )
+
+    __table_args__ = (UniqueConstraint("user_id", "session_id", name="uq_session_states_user_session"),)
 
 
 class FeedbackEvent(Base):

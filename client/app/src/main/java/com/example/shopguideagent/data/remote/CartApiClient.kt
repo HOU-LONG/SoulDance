@@ -6,7 +6,10 @@ import com.example.shopguideagent.data.model.ProductUiModel
 import org.json.JSONObject
 import retrofit2.HttpException
 
-open class CartApiClient(private val service: CartApiService = CartApiService.create()) {
+open class CartApiClient(private val service: CartApiService) {
+    @Deprecated("Use constructor with service instead")
+    constructor() : this(CartApiService.create())
+
 
     open suspend fun getCart(sessionId: String): List<CartItemUiModel> {
         val response = backendRequest { service.getCart(sessionId) }

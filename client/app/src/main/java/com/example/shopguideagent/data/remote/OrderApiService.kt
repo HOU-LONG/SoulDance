@@ -23,11 +23,15 @@ interface OrderApiService {
     suspend fun confirm(@Body request: OrderConfirmRequest): OrderResponse
 
     companion object {
-        fun create(): OrderApiService {
+        @Deprecated("Use create(userIdProvider) instead")
+        fun create(): OrderApiService = create({ "demo_user_a" })
+
+        fun create(userIdProvider: () -> String): OrderApiService {
             val httpClient = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)
                 .writeTimeout(20, TimeUnit.SECONDS)
+                .addInterceptor(UserIdHeaderInterceptor(userIdProvider))
                 .build()
             return Retrofit.Builder()
                 .baseUrl(AppConfig.BASE_HTTP_URL)

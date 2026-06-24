@@ -37,11 +37,15 @@ interface CartApiService {
     suspend fun checkout(@Body request: CheckoutRequest): CheckoutResponse
 
     companion object {
-        fun create(): CartApiService {
+        @Deprecated("Use create(userIdProvider) instead")
+        fun create(): CartApiService = create({ "demo_user_a" })
+
+        fun create(userIdProvider: () -> String): CartApiService {
             val httpClient = OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .readTimeout(20, TimeUnit.SECONDS)
                 .writeTimeout(20, TimeUnit.SECONDS)
+                .addInterceptor(UserIdHeaderInterceptor(userIdProvider))
                 .build()
             val retrofit = Retrofit.Builder()
                 .baseUrl(AppConfig.BASE_HTTP_URL)

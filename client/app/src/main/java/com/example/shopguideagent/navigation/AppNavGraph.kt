@@ -41,6 +41,13 @@ import com.example.shopguideagent.ui.home.SpriteHomeViewModel
 import com.example.shopguideagent.ui.screen.CartScreen
 import com.example.shopguideagent.ui.screen.ChatScreen
 import com.example.shopguideagent.ui.screen.OrdersScreen
+import com.example.shopguideagent.config.UserSession
+import com.example.shopguideagent.data.remote.CartApiClient
+import com.example.shopguideagent.data.remote.CartApiService
+import com.example.shopguideagent.data.remote.OrderApiClient
+import com.example.shopguideagent.data.remote.OrderApiService
+import com.example.shopguideagent.data.remote.RealtimeChatWebSocketClient
+import com.example.shopguideagent.data.remote.SttApiService
 import com.example.shopguideagent.vm.CartViewModel
 import com.example.shopguideagent.vm.ChatViewModel
 
@@ -70,10 +77,13 @@ object AppRouteBackStack {
 fun AppNavGraph() {
     val context = LocalContext.current
     var route by rememberSaveable { mutableStateOf(AppRoute.Home) }
+    val userIdProvider = { UserSession.get(context).currentUserId.value }
     val chatViewModel = remember {
         ChatViewModel(
             productCatalog = AndroidAssetProductCatalog(context.assets),
             historyRepository = chatHistoryRepository(context),
+            wsClient = RealtimeChatWebSocketClient(userIdProvider),
+            sttApi = SttApiService(userIdProvider),
         )
     }
     val cartStore = remember { SharedPreferencesCartPersistenceStore(context) }
@@ -82,8 +92,10 @@ fun AppNavGraph() {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return CartViewModel(
-                    context = context,
+                    userIdProvider = userIdProvider,
                     persistenceStore = cartStore,
+                    cartApiClient = CartApiClient(CartApiService.create(userIdProvider)),
+                    orderApiClient = OrderApiClient(OrderApiService.create(userIdProvider)),
                 ) as T
             }
         },

@@ -4,7 +4,10 @@ import com.example.shopguideagent.data.model.AddressUiModel
 import org.json.JSONObject
 import retrofit2.HttpException
 
-open class OrderApiClient(private val service: OrderApiService = OrderApiService.create()) {
+open class OrderApiClient(private val service: OrderApiService) {
+    @Deprecated("Use constructor with service instead")
+    constructor() : this(OrderApiService.create())
+
     open suspend fun initiate(sessionId: String): Result<OrderResponse> = runCatching {
         backendRequest { service.initiate(OrderInitiateRequest(sessionId)) }
     }

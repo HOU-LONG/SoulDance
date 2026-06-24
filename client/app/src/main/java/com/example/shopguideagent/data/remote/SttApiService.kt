@@ -21,9 +21,15 @@ interface SpeechToTextClient {
 }
 
 class SttApiService(
+    private val userIdProvider: () -> String = { "demo_user_a" },
     private val baseHttpUrl: String = AppConfig.BASE_HTTP_URL,
-    private val client: OkHttpClient = defaultSttClient(),
+    private val client: OkHttpClient? = null,
 ) : SpeechToTextClient {
+
+    private val actualClient: OkHttpClient by lazy {
+        client ?: defaultSttClient(userIdProvider)
+    }
+
 
     override suspend fun transcribe(audioFile: File): Result<String> = withContext(Dispatchers.IO) {
         var lastFailure: Exception? = null
@@ -58,7 +64,7 @@ class SttApiService(
             .post(requestBody)
             .build()
 
-        client.newCall(request).execute().use { response ->
+        actualClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val message = response.body?.string()?.backendMessage()
                 return Result.failure(
@@ -115,12 +121,13 @@ class SttApiService(
     companion object {
         private const val STT_MAX_ATTEMPTS = 2
 
-        private fun defaultSttClient(): OkHttpClient =
+        private fun defaultSttClient(userIdProvider: () -> String): OkHttpClient =
             OkHttpClient.Builder()
                 .connectTimeout(10, TimeUnit.SECONDS)
                 .writeTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(30, TimeUnit.SECONDS)
                 .callTimeout(45, TimeUnit.SECONDS)
+                .addInterceptor(UserIdHeaderInterceptor(userIdProvider))
                 .build()
     }
 }

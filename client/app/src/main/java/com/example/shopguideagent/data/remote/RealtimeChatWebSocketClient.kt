@@ -19,7 +19,12 @@ import okhttp3.logging.HttpLoggingInterceptor
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-open class RealtimeChatWebSocketClient {
+open class RealtimeChatWebSocketClient(
+    private val userIdProvider: () -> String,
+) {
+    @Deprecated("Use constructor with userIdProvider instead")
+    constructor() : this({ "demo_user_a" })
+
 
     private val client: OkHttpClient by lazy {
         val logging = HttpLoggingInterceptor().apply {
@@ -28,6 +33,7 @@ open class RealtimeChatWebSocketClient {
         OkHttpClient.Builder()
             .pingInterval(20, TimeUnit.SECONDS)
             .addInterceptor(logging)
+            .addInterceptor(UserIdHeaderInterceptor(userIdProvider))
             .build()
     }
 
@@ -36,6 +42,7 @@ open class RealtimeChatWebSocketClient {
     open fun connect(): Flow<RealtimeEvent> = callbackFlow {
         val request = Request.Builder()
             .url("${AppConfig.BASE_WS_URL}${AppConfig.WS_CHAT_PATH}")
+            .header(UserIdHeaderInterceptor.HEADER_NAME, userIdProvider())
             .build()
 
         val listener = object : WebSocketListener() {

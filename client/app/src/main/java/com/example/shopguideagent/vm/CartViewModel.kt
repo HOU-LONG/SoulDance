@@ -1,5 +1,6 @@
 package com.example.shopguideagent.vm
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.shopguideagent.config.UserSession
@@ -30,24 +31,58 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 class CartViewModel @JvmOverloads constructor(
-    private val userId: String = UserSession.USER_ID,
+    private val userIdProvider: () -> String,
     sessionId: String = UserSession.DEFAULT_SESSION_ID,
     private val persistenceStore: CartPersistenceStore = InMemoryCartPersistenceStore(),
     private val cartApiClient: CartApiClient = CartApiClient(),
     private val orderApiClient: OrderApiClient = OrderApiClient(),
     private val operationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
 ) : ViewModel() {
+
+    @JvmOverloads
+    constructor(
+        userId: String,
+        sessionId: String = UserSession.DEFAULT_SESSION_ID,
+        persistenceStore: CartPersistenceStore = InMemoryCartPersistenceStore(),
+        cartApiClient: CartApiClient = CartApiClient(),
+        orderApiClient: OrderApiClient = OrderApiClient(),
+        operationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    ) : this(
+        userIdProvider = { userId },
+        sessionId = sessionId,
+        persistenceStore = persistenceStore,
+        cartApiClient = cartApiClient,
+        orderApiClient = orderApiClient,
+        operationDispatcher = operationDispatcher,
+    )
+
+    @JvmOverloads
+    constructor(
+        context: Context,
+        sessionId: String = UserSession.DEFAULT_SESSION_ID,
+        persistenceStore: CartPersistenceStore = InMemoryCartPersistenceStore(),
+        cartApiClient: CartApiClient = CartApiClient(),
+        orderApiClient: OrderApiClient = OrderApiClient(),
+        operationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    ) : this(
+        userIdProvider = { UserSession.get(context).currentUserId.value },
+        sessionId = sessionId,
+        persistenceStore = persistenceStore,
+        cartApiClient = cartApiClient,
+        orderApiClient = orderApiClient,
+        operationDispatcher = operationDispatcher,
+    )
     private var activeSessionId: String = sessionId
     private var cartSyncJob: Job? = null
     private var cartSyncVersion: Long = 0L
 
     private val _uiState = MutableStateFlow(
-        CartUiState(items = persistenceStore.loadCartItems(userId)).recalculate(),
+        CartUiState(items = persistenceStore.loadCartItems(userIdProvider())).recalculate(),
     )
     val uiState: StateFlow<CartUiState> = _uiState.asStateFlow()
 
     private val _ordersState = MutableStateFlow(
-        OrdersUiState(orders = persistenceStore.loadOrders(userId)),
+        OrdersUiState(orders = persistenceStore.loadOrders(userIdProvider())),
     )
     val ordersState: StateFlow<OrdersUiState> = _ordersState.asStateFlow()
 
@@ -82,10 +117,10 @@ class CartViewModel @JvmOverloads constructor(
                 val items = cartApiClient.getCart(sessionForRequest)
                 if (sessionForRequest != activeSessionId || requestVersion != cartSyncVersion) return@launch
                 _uiState.value = CartUiState(items = items).recalculate()
-                persistenceStore.saveCartItems(userId, items)
+                persistenceStore.saveCartItems(userIdProvider(), items)
             } catch (e: Exception) {
                 if (sessionForRequest != activeSessionId || requestVersion != cartSyncVersion) return@launch
-                val fallbackItems = _uiState.value.items.ifEmpty { persistenceStore.loadCartItems(userId) }
+                val fallbackItems = _uiState.value.items.ifEmpty { persistenceStore.loadCartItems(userIdProvider()) }
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     items = fallbackItems,
@@ -353,7 +388,7 @@ class CartViewModel @JvmOverloads constructor(
         lastRemovedItem: CartItemUiModel? = _uiState.value.lastRemovedItem,
     ) {
         _uiState.value = _uiState.value.copy(items = items, lastRemovedItem = lastRemovedItem).recalculate()
-        persistenceStore.saveCartItems(userId, items)
+        persistenceStore.saveCartItems(userIdProvider(), items)
     }
 
     private fun CartItemUiModel.toProduct(): ProductUiModel = ProductUiModel(
@@ -378,7 +413,7 @@ class CartViewModel @JvmOverloads constructor(
             ),
         ) + _ordersState.value.orders
         _ordersState.value = _ordersState.value.copy(orders = updatedOrders)
-        persistenceStore.saveOrders(userId, updatedOrders)
+        persistenceStore.saveOrders(userIdProvider(), updatedOrders)
         val remainingItems = state.items.filterNot { it.selected }
         _uiState.value = state.copy(
             items = remainingItems,
@@ -386,7 +421,7 @@ class CartViewModel @JvmOverloads constructor(
             checkoutResult = CheckoutResult(orderId, paidAmount),
             errorMessage = null,
         ).recalculate()
-        persistenceStore.saveCartItems(userId, remainingItems)
+        persistenceStore.saveCartItems(userIdProvider(), remainingItems)
         _orderFlow.value = OrderFlowState.OrderSuccess(orderId, successMessage)
     }
 

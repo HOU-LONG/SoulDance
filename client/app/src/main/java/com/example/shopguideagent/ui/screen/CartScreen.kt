@@ -227,6 +227,6 @@ fun CartScreen(
 @Composable
 private fun CartScreenPreview() {
     ShopGuideAgentTheme {
-        CartScreen(cartViewModel = CartViewModel(), firePoints = 886, onBackClick = {}, onOrdersClick = {})
+        CartScreen(cartViewModel = CartViewModel(userId = "demo_user_a"), firePoints = 886, onBackClick = {}, onOrdersClick = {})
     }
 }

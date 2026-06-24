@@ -255,6 +255,6 @@ private fun OrderCard(order: OrderUiModel) {
 @Composable
 private fun OrdersScreenPreview() {
     ShopGuideAgentTheme {
-        OrdersScreen(cartViewModel = CartViewModel(), onBackClick = {})
+        OrdersScreen(cartViewModel = CartViewModel(userId = "demo_user_a"), onBackClick = {})
     }
 }

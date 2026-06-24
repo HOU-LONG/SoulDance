@@ -37,6 +37,7 @@ class CartViewModel @JvmOverloads constructor(
     private val cartApiClient: CartApiClient = CartApiClient(),
     private val orderApiClient: OrderApiClient = OrderApiClient(),
     private val operationDispatcher: CoroutineDispatcher = Dispatchers.Main.immediate,
+    private val userSession: UserSession? = null,
 ) : ViewModel() {
 
     @JvmOverloads
@@ -71,6 +72,7 @@ class CartViewModel @JvmOverloads constructor(
         cartApiClient = cartApiClient,
         orderApiClient = orderApiClient,
         operationDispatcher = operationDispatcher,
+        userSession = UserSession.get(context),
     )
     private var activeSessionId: String = sessionId
     private var cartSyncJob: Job? = null
@@ -93,6 +95,20 @@ class CartViewModel @JvmOverloads constructor(
     val operationEvents: SharedFlow<CartOperationEvent> = _operationEvents.asSharedFlow()
 
     init {
+        loadCartFromServer()
+        userSession?.let { session ->
+            viewModelScope.launch {
+                session.currentUserId.collect {
+                    onCurrentUserChanged()
+                }
+            }
+        }
+    }
+
+    fun onCurrentUserChanged() {
+        val userId = userIdProvider()
+        _uiState.value = CartUiState(items = persistenceStore.loadCartItems(userId)).recalculate()
+        _ordersState.value = OrdersUiState(orders = persistenceStore.loadOrders(userId))
         loadCartFromServer()
     }
 

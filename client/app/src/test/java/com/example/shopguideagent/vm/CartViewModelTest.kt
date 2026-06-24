@@ -200,6 +200,23 @@ class CartViewModelTest {
     }
 
     @Test
+    fun `switching userId reloads items from per-user storage`() {
+        val store = FakeCartPersistenceStore()
+        store.saveCartItems("demo_user_a", listOf(cartItem("apple", "Apple", 1.0, 1)))
+        store.saveCartItems("demo_user_b", listOf(cartItem("banana", "Banana", 2.0, 1)))
+        var currentUser = "demo_user_a"
+        val vm = CartViewModel(
+            userIdProvider = { currentUser },
+            sessionId = "s1",
+            persistenceStore = store,
+        )
+        assertEquals(listOf("apple"), vm.uiState.value.items.map { it.productId })
+        currentUser = "demo_user_b"
+        vm.onCurrentUserChanged()
+        assertEquals(listOf("banana"), vm.uiState.value.items.map { it.productId })
+    }
+
+    @Test
     fun switchSessionRefreshesCartFromServerForChatSession() {
         val api = SessionCartApiClient(
             carts = mutableMapOf(

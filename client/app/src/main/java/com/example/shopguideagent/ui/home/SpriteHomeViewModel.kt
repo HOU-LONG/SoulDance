@@ -1,7 +1,11 @@
 package com.example.shopguideagent.ui.home
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.shopguideagent.config.UserSession
+import com.example.shopguideagent.data.local.FirePointsStore
+import com.example.shopguideagent.data.local.InMemoryFirePointsStore
 import com.example.shopguideagent.data.model.ChatUiState
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.model.RealtimeEvent
@@ -25,11 +29,34 @@ class SpriteHomeViewModel(
     initialState: SpriteHomeUiState? = null,
     private val progressRepository: SpiritProgressRepository = InMemorySpiritProgressRepository(),
     private val appearanceRepository: SpiritAppearanceRepository = InMemorySpiritAppearanceRepository(),
+    private val firePointsStore: FirePointsStore = InMemoryFirePointsStore(),
+    private val userIdProvider: () -> String = { "demo_user_a" },
+    private val userSession: UserSession? = null,
 ) : ViewModel() {
+
+    @JvmOverloads
+    constructor(
+        context: Context,
+        initialState: SpriteHomeUiState? = null,
+        progressRepository: SpiritProgressRepository = InMemorySpiritProgressRepository(),
+        appearanceRepository: SpiritAppearanceRepository = InMemorySpiritAppearanceRepository(),
+        firePointsStore: FirePointsStore = InMemoryFirePointsStore(),
+    ) : this(
+        initialState = initialState,
+        progressRepository = progressRepository,
+        appearanceRepository = appearanceRepository,
+        firePointsStore = firePointsStore,
+        userIdProvider = { UserSession.get(context).currentUserId.value },
+        userSession = UserSession.get(context),
+    )
     private val _uiState = MutableStateFlow(
         initialState ?: SpriteHomeUiState(
             spiritProgress = progressRepository.loadProgress(),
             appearance = appearanceRepository.loadAppearance(),
+        ).copy(
+            userProfile = UserProfileUiState(
+                firePoints = firePointsStore.load(userIdProvider())
+            )
         ),
     )
     val uiState: StateFlow<SpriteHomeUiState> = _uiState.asStateFlow()
@@ -39,6 +66,27 @@ class SpriteHomeViewModel(
 
     private val processedCartEvents = mutableSetOf<String>()
     private var realtimeEventJob: Job? = null
+
+    init {
+        userSession?.let { session ->
+            viewModelScope.launch {
+                session.currentUserId.collect {
+                    onCurrentUserChanged()
+                }
+            }
+        }
+    }
+
+    fun onCurrentUserChanged() {
+        val userId = userIdProvider()
+        _uiState.update { current ->
+            current.copy(
+                userProfile = current.userProfile.copy(
+                    firePoints = firePointsStore.load(userId)
+                )
+            )
+        }
+    }
 
     fun bindRealtimeEvents(events: Flow<RealtimeEvent>) {
         realtimeEventJob?.cancel()
@@ -164,12 +212,14 @@ class SpriteHomeViewModel(
         val task = uiState.value.tasks.find { it.taskId == taskId }
         if (task == null || !task.claimable) return
         val reward = FireRewardCalculator.reward(task.baseFireReward, uiState.value.spiritProgress.level)
+        val newFirePoints = uiState.value.userProfile.firePoints + reward
+        firePointsStore.save(userIdProvider(), newFirePoints)
         _uiState.update { current ->
             current.copy(
                 tasks = current.tasks.map { t ->
                     if (t.taskId == taskId) t.copy(claimed = true) else t
                 },
-                userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + reward),
+                userProfile = current.userProfile.copy(firePoints = newFirePoints),
                 speechBubble = SpeechBubbleUiState("任务奖励已领取", style = SpeechBubbleStyle.SUCCESS),
                 animationSequence = current.animationSequence + 1,
             )
@@ -262,6 +312,13 @@ class SpriteHomeViewModel(
     private fun rewardAddToCart(eventKey: String?) {
         if (eventKey != null && !processedCartEvents.add(eventKey)) return
         var progressToSave: SpiritProgressUiState? = null
+        val currentState = uiState.value
+        val fireReward = FireRewardCalculator.reward(
+            SpriteHomeRewards.ADD_TO_CART_FIRE,
+            currentState.spiritProgress.level,
+        )
+        val newFirePoints = currentState.userProfile.firePoints + fireReward
+        firePointsStore.save(userIdProvider(), newFirePoints)
         _uiState.update { current ->
             val intimacyTotal = current.spiritProgress.currentIntimacy + SpriteHomeRewards.ADD_TO_CART_INTIMACY
             val levelUp = intimacyTotal >= current.spiritProgress.requiredIntimacy && current.spiritProgress.requiredIntimacy > 0
@@ -272,13 +329,9 @@ class SpriteHomeViewModel(
                 currentIntimacy = if (levelUp) 0 else intimacyTotal,
             )
             progressToSave = nextProgress
-            val fireReward = FireRewardCalculator.reward(
-                SpriteHomeRewards.ADD_TO_CART_FIRE,
-                nextProgress.level,
-            )
             current.copy(
                 transientAvatarState = nextTransient,
-                userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + fireReward),
+                userProfile = current.userProfile.copy(firePoints = newFirePoints),
                 spiritProgress = nextProgress,
                 tasks = current.tasks.incrementById("add_to_cart"),
                 speechBubble = SpriteHomeStateMapper.speechFor(nextTransient, current.presentingProduct),

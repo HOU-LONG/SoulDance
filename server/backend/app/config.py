@@ -49,6 +49,10 @@ class Settings(BaseModel):
     feedback_path: str = ""
     user_profile_dir: str = ""
 
+    # Operational limits
+    max_llm_calls: int = 10
+    max_connections: int = 50
+
     # Database
     database_url: str = ""
     embedding_dimension: int = 384
@@ -246,6 +250,8 @@ def get_settings() -> Settings:
         server_base_url=os.getenv("SERVER_BASE_URL", ""),
         feedback_path=_repo_relative_path(os.getenv("SHOPGUIDE_FEEDBACK_PATH", "")),
         user_profile_dir=_repo_relative_path(os.getenv("SHOPGUIDE_USER_PROFILE_DIR", "")),
+        max_llm_calls=int(os.getenv("SHOPGUIDE_MAX_LLM_CALLS", "10")),
+        max_connections=int(os.getenv("SHOPGUIDE_MAX_CONNECTIONS", "50")),
         tts_enabled=os.getenv("TTS_ENABLED", "true").lower() not in {"0", "false"},
         tts_provider=os.getenv("TTS_PROVIDER", "openai_audio"),
         tts_base_url=os.getenv("TTS_BASE_URL", "http://127.0.0.1:18880"),

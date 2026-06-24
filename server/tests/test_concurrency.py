@@ -92,3 +92,19 @@ async def test_context_manager_for_llm():
     await guard.acquire_llm()
     assert True
     guard.release_llm()
+
+def test_create_app_uses_concurrency_limits_from_env(monkeypatch):
+    from backend.app.config import get_settings
+    from backend.app.main import create_app
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("SHOPGUIDE_MAX_LLM_CALLS", "2")
+    monkeypatch.setenv("SHOPGUIDE_MAX_CONNECTIONS", "3")
+    try:
+        app = create_app(use_fake_llm=True, use_fake_retriever=True)
+        guard = app.state.concurrency_guard
+
+        assert guard.max_llm_calls == 2
+        assert guard.max_connections == 3
+    finally:
+        get_settings.cache_clear()

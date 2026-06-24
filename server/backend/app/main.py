@@ -94,8 +94,8 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     cart = CartService(products, settings.cart_path or None, db_session=db_session)
     product_map = {product.product_id: product for product in products}
     guard = concurrency_guard or ConcurrencyGuard(
-        max_llm_calls=10,
-        max_connections=50,
+        max_llm_calls=settings.max_llm_calls,
+        max_connections=settings.max_connections,
     )
 
     app = FastAPI(title="SoulDance ShopGuide Agent Backend", version="0.1.0")

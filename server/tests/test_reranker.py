@@ -194,28 +194,50 @@ class TestCrossEncoderReranker:
         assert metrics.counters.get("retrieval.reranker.fallback.cross_failed", 0) == 1
 
 
+import json
+import asyncio
+
 class FakeLLMClient:
-    """Stub LLM client. `responses` queue feeds chat_json_sync return values."""
+    """Stub async LLM client. `responses` queue feeds _json_completion return values."""
 
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls: list[list[dict]] = []
 
-    def chat_json_sync(self, messages, **kwargs):
+    async def _json_completion(self, messages, **kwargs):
         self.calls.append(messages)
         if not self.responses:
             raise RuntimeError("no fake response queued")
         response = self.responses.pop(0)
         if isinstance(response, Exception):
             raise response
-        return response
+        if isinstance(response, (dict, list)):
+            return json.dumps(response, ensure_ascii=False)
+        return str(response)
+
+
+class SlowLLMClient:
+    """Mock LLM client that sleeps before responding, for timeout testing."""
+
+    def __init__(self, response, delay_seconds: float):
+        self.response = response
+        self.delay = delay_seconds
+        self.calls: list[list[dict]] = []
+
+    async def _json_completion(self, messages, **kwargs):
+        self.calls.append(messages)
+        await asyncio.sleep(self.delay)
+        if isinstance(self.response, (dict, list)):
+            return json.dumps(self.response, ensure_ascii=False)
+        return str(self.response)
 
 
 class TestLLMReranker:
     def _result(self, pid: str) -> ProductRetrievalResult:
         return ProductRetrievalResult(product=_product(pid), score=0.5, evidence_chunks=[])
 
-    def test_reorders_using_llm_output(self):
+    @pytest.mark.asyncio
+    async def test_reorders_using_llm_output(self):
         from backend.app.rag.reranker import LLMReranker
 
         c1, c2, c3 = self._result("p1"), self._result("p2"), self._result("p3")
@@ -227,10 +249,11 @@ class TestLLMReranker:
             ]
         ])
         rer = LLMReranker(llm, top_n=8)
-        result = rer.rerank("query", [c1, c2, c3], top_k=8)
+        result = await rer.rerank("query", [c1, c2, c3], top_k=8)
         assert [r.product.product_id for r in result] == ["p3", "p1", "p2"]
 
-    def test_invalid_product_id_falls_back_to_input_order(self):
+    @pytest.mark.asyncio
+    async def test_invalid_product_id_falls_back_to_input_order(self):
         from backend.app.rag.reranker import LLMReranker
 
         c1, c2 = self._result("p1"), self._result("p2")
@@ -239,33 +262,36 @@ class TestLLMReranker:
         ])
         metrics = StubMetrics()
         rer = LLMReranker(llm, metrics=metrics, top_n=8)
-        result = rer.rerank("q", [c1, c2], top_k=8)
+        result = await rer.rerank("q", [c1, c2], top_k=8)
         assert [r.product.product_id for r in result] == ["p1", "p2"]
         assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
 
-    def test_parse_error_falls_back(self):
+    @pytest.mark.asyncio
+    async def test_parse_error_falls_back(self):
         from backend.app.rag.reranker import LLMReranker
 
         c1 = self._result("p1")
         llm = FakeLLMClient(responses=[{"unexpected": "shape"}])
         metrics = StubMetrics()
         rer = LLMReranker(llm, metrics=metrics, top_n=8)
-        result = rer.rerank("q", [c1], top_k=8)
+        result = await rer.rerank("q", [c1], top_k=8)
         assert [r.product.product_id for r in result] == ["p1"]
         assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
 
-    def test_llm_exception_falls_back(self):
+    @pytest.mark.asyncio
+    async def test_llm_exception_falls_back(self):
         from backend.app.rag.reranker import LLMReranker
 
         c1 = self._result("p1")
         llm = FakeLLMClient(responses=[RuntimeError("boom")])
         metrics = StubMetrics()
         rer = LLMReranker(llm, metrics=metrics, top_n=8)
-        result = rer.rerank("q", [c1], top_k=8)
+        result = await rer.rerank("q", [c1], top_k=8)
         assert [r.product.product_id for r in result] == ["p1"]
         assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
 
-    def test_partial_coverage_appends_remaining_in_input_order(self):
+    @pytest.mark.asyncio
+    async def test_partial_coverage_appends_remaining_in_input_order(self):
         from backend.app.rag.reranker import LLMReranker
 
         c1, c2, c3 = self._result("p1"), self._result("p2"), self._result("p3")
@@ -273,8 +299,26 @@ class TestLLMReranker:
             [{"product_id": "p3", "rank": 1}]  # only p3 ranked
         ])
         rer = LLMReranker(llm, top_n=8)
-        result = rer.rerank("q", [c1, c2, c3], top_k=8)
+        result = await rer.rerank("q", [c1, c2, c3], top_k=8)
         assert [r.product.product_id for r in result] == ["p3", "p1", "p2"]
+
+    @pytest.mark.asyncio
+    async def test_timeout_behavior(self):
+        from backend.app.rag.reranker import LLMReranker
+
+        c1 = self._result("p1")
+        # Set delay longer than timeout to trigger timeout
+        llm = SlowLLMClient(
+            response=[{"product_id": "p1", "rank": 1}],
+            delay_seconds=1.0
+        )
+        metrics = StubMetrics()
+        rer = LLMReranker(llm, metrics=metrics, timeout_seconds=0.5)
+
+        # This should timeout and fall back to input order
+        result = await rer.rerank("q", [c1], top_k=8)
+        assert [r.product.product_id for r in result] == ["p1"]
+        assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
 
 
 class TestHybridReranker:

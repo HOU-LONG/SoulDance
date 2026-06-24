@@ -119,8 +119,8 @@ class CrossEncoderReranker:
 class LLMReranker:
     """List-wise LLM reranker.
 
-    Expects llm_client.chat_json_sync(messages) to return a JSON list of
-    {product_id, rank}. Any parse error or invalid product_id falls back
+    Expects llm_client._json_completion(messages) to return a JSON string containing
+    a list of {product_id, rank}. Any parse error or invalid product_id falls back
     to the input order silently.
     """
 
@@ -130,12 +130,13 @@ class LLMReranker:
         "不要输出任何解释。"
     )
 
-    def __init__(self, llm_client, *, metrics=None, top_n: int = 8):
+    def __init__(self, llm_client, *, metrics=None, top_n: int = 8, timeout_seconds: float = 4.0):
         self.llm_client = llm_client
         self.metrics = metrics
         self.top_n = top_n
+        self.timeout_seconds = timeout_seconds
 
-    def rerank(
+    async def rerank(
         self,
         query: str,
         candidates: list[ProductRetrievalResult],
@@ -149,7 +150,10 @@ class LLMReranker:
         input_window = list(candidates[:cap])
 
         try:
-            ranked_ids = self._invoke_llm(query, input_window)
+            ranked_ids = await asyncio.wait_for(
+                self._invoke_llm(query, input_window),
+                timeout=self.timeout_seconds
+            )
         except Exception:
             _LOG.warning("LLMReranker.invoke failed", exc_info=True)
             self._record_fallback()
@@ -161,11 +165,12 @@ class LLMReranker:
 
         return self._reorder(ranked_ids, input_window)
 
-    def _invoke_llm(
+    async def _invoke_llm(
         self,
         query: str,
         candidates: list[ProductRetrievalResult],
     ) -> list[str] | None:
+        import json
         payload = [
             {
                 "product_id": c.product.product_id,
@@ -183,22 +188,29 @@ class LLMReranker:
             {
                 "role": "user",
                 "content": (
-                    f"用户查询：{query}\n候选商品：{payload}\n"
+                    f"用户查询：{query}\n候选商品：{json.dumps(payload, ensure_ascii=False)}\n"
                     "请输出排序后的 JSON。"
                 ),
             },
         ]
-        response = self.llm_client.chat_json_sync(messages)
+        response = await self.llm_client._json_completion(messages)
         if self.metrics is not None:
             self.metrics.increment("retrieval.reranker.llm.invoked")
         return self._parse_response(response)
 
     @staticmethod
-    def _parse_response(response) -> list[str] | None:
-        if not isinstance(response, list):
+    def _parse_response(response: str) -> list[str] | None:
+        import json
+        if not isinstance(response, str):
+            return None
+        try:
+            parsed = json.loads(response)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, list):
             return None
         seen: list[str] = []
-        for item in response:
+        for item in parsed:
             if not isinstance(item, dict):
                 return None
             pid = item.get("product_id")

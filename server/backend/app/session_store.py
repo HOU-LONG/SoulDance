@@ -20,7 +20,7 @@ class SessionStore:
         ttl_days: int = DEFAULT_TTL_DAYS,
         db_session=None,
     ):
-        self._sessions: dict[str, SessionContext] = {}
+        self._sessions: dict[tuple[str, str], SessionContext] = {}
         self.persist_dir = Path(persist_dir) if persist_dir else None
         self.ttl_days = ttl_days
         self.db_session = db_session
@@ -33,64 +33,71 @@ class SessionStore:
             self._cleanup_expired()
             self._load_all()
 
-    def get(self, session_id: str) -> SessionContext:
+    def get(self, user_id: str, session_id: str) -> SessionContext:
+        key = (user_id, session_id)
         if self._repo is not None:
-            ctx = self._repo.get(session_id)
+            ctx = self._repo.get(user_id, session_id)
             if ctx is None:
                 ctx = SessionContext(session_id=session_id)
-                self._repo.save(ctx)
+                self._repo.save(user_id, ctx)
             else:
                 ctx.last_activity_at = datetime.now(timezone.utc).isoformat()
-                self._repo.save(ctx)
-            self._sessions[session_id] = ctx
+                self._repo.save(user_id, ctx)
+            self._sessions[key] = ctx
             return ctx
-        if session_id not in self._sessions:
-            loaded = self._load_one(session_id)
-            self._sessions[session_id] = loaded if loaded else SessionContext(session_id=session_id)
-        ctx = self._sessions[session_id]
+        if key not in self._sessions:
+            loaded = self._load_one(user_id, session_id)
+            self._sessions[key] = loaded if loaded else SessionContext(session_id=session_id)
+        ctx = self._sessions[key]
         ctx.last_activity_at = datetime.now(timezone.utc).isoformat()
         return ctx
 
-    def save(self, session_id: str) -> None:
+    def save(self, user_id: str, session_id: str) -> None:
+        key = (user_id, session_id)
         if self._repo is not None:
-            ctx = self._sessions.get(session_id)
+            ctx = self._sessions.get(key)
             if ctx is None:
-                ctx = self._repo.get(session_id)
+                ctx = self._repo.get(user_id, session_id)
             if ctx is not None:
                 ctx.schema_version = self.CURRENT_SCHEMA_VERSION
                 ctx.last_activity_at = datetime.now(timezone.utc).isoformat()
-                self._repo.save(ctx)
+                self._repo.save(user_id, ctx)
             return
         if not self.persist_dir:
             return
-        context = self._sessions.get(session_id)
+        context = self._sessions.get(key)
         if context is None:
             return
         context.schema_version = self.CURRENT_SCHEMA_VERSION
         context.last_activity_at = datetime.now(timezone.utc).isoformat()
-        path = self._path(session_id)
+        path = self._path(user_id, session_id)
         tmp_path = path.with_suffix(".tmp")
         tmp_path.write_text(context.model_dump_json(), encoding="utf-8")
         tmp_path.rename(path)
 
     def save_all(self) -> None:
         if self._repo is not None:
-            for session_id in list(self._sessions):
-                self.save(session_id)
+            for key in list(self._sessions):
+                user_id, session_id = key
+                self.save(user_id, session_id)
             return
         if not self.persist_dir:
             return
-        for session_id in list(self._sessions):
-            self.save(session_id)
+        for key in list(self._sessions):
+            user_id, session_id = key
+            self.save(user_id, session_id)
 
-    def _path(self, session_id: str) -> Path:
-        safe_id = session_id.replace("/", "_").replace("\\", "_")
-        return self.persist_dir / f"{safe_id}.json"
+    def _path(self, user_id: str, session_id: str) -> Path:
+        safe_user_id = user_id.replace("/", "_").replace("\\", "_")
+        safe_session_id = session_id.replace("/", "_").replace("\\", "_")
+        user_dir = self.persist_dir / safe_user_id
+        user_dir.mkdir(parents=True, exist_ok=True)
+        return user_dir / f"{safe_session_id}.json"
 
-    def _load_one(self, session_id: str) -> SessionContext | None:
+    def _load_one(self, user_id: str, session_id: str) -> SessionContext | None:
         if not self.persist_dir:
             return None
-        path = self._path(session_id)
+        path = self._path(user_id, session_id)
         if not path.exists():
             return None
         try:
@@ -100,7 +107,7 @@ class SessionStore:
                 ctx = self._migrate_if_needed(ctx)
             return ctx
         except Exception:
-            logger.warning("Failed to load session %s, backing up as corrupted", session_id, exc_info=True)
+            logger.warning("Failed to load session %s/%s, backing up as corrupted", user_id, session_id, exc_info=True)
             corrupted_path = path.with_suffix(".corrupted")
             path.rename(corrupted_path)
             return None
@@ -108,11 +115,15 @@ class SessionStore:
     def _load_all(self) -> None:
         if not self.persist_dir:
             return
-        for path in self.persist_dir.glob("*.json"):
-            session_id = path.stem
-            loaded = self._load_one(session_id)
-            if loaded is not None:
-                self._sessions[session_id] = loaded
+        for user_dir in self.persist_dir.iterdir():
+            if not user_dir.is_dir():
+                continue
+            user_id = user_dir.name
+            for path in user_dir.glob("*.json"):
+                session_id = path.stem
+                loaded = self._load_one(user_id, session_id)
+                if loaded is not None:
+                    self._sessions[(user_id, session_id)] = loaded
 
     def _cleanup_expired(self) -> None:
         if self._repo is not None:
@@ -122,10 +133,18 @@ class SessionStore:
             return
         now = time.time()
         cutoff = now - self.ttl_days * 86400
-        for path in self.persist_dir.glob("*.json"):
+        for user_dir in self.persist_dir.iterdir():
+            if not user_dir.is_dir():
+                continue
+            for path in user_dir.glob("*.json"):
+                try:
+                    if path.stat().st_mtime < cutoff:
+                        path.unlink()
+                except OSError:
+                    pass
             try:
-                if path.stat().st_mtime < cutoff:
-                    path.unlink()
+                if not any(user_dir.iterdir()):
+                    user_dir.rmdir()
             except OSError:
                 pass
 

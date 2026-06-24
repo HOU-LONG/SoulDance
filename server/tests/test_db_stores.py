@@ -62,10 +62,10 @@ def mock_cart():
 
 def test_session_store_roundtrip(db):
     store = SessionStore(db_session=db)
-    ctx = store.get("sess_1")
+    ctx = store.get("anonymous", "sess_1")
     ctx.state.dialog_state.turn_index = 5
-    store.save("sess_1")
-    reloaded = store.get("sess_1")
+    store.save("anonymous", "sess_1")
+    reloaded = store.get("anonymous", "sess_1")
     assert reloaded.state.dialog_state.turn_index == 5
 
 

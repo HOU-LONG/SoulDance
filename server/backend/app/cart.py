@@ -34,7 +34,7 @@ class CartService:
             from .repositories.cart_repository import CartRepository
             self._repo = CartRepository(self.db_session)
         if self.persist_path and self._repo is None:
-            self.persist_path.parent.mkdir(parents=True, exist_ok=True)
+            self.persist_path.mkdir(parents=True, exist_ok=True)
             self._load()
 
     # ... 保留原有 _load/_save/文件逻辑不变 ...
@@ -49,7 +49,7 @@ class CartService:
     ) -> dict:
         if self._repo is not None:
             return self._db_add(user_id, session_id, product_id, quantity, idempotency_key)
-        return self._file_add(session_id, product_id, quantity, idempotency_key)
+        return self._file_add(user_id, session_id, product_id, quantity, idempotency_key)
 
     def _db_add(self, user_id, session_id, product_id, quantity, idempotency_key):
         existing = self._get_idempotency_result(session_id, idempotency_key)
@@ -90,27 +90,27 @@ class CartService:
     def get(self, user_id: str, session_id: str) -> dict:
         if self._repo is not None:
             return self._db_get(user_id, session_id)
-        return self._file_get(session_id)
+        return self._file_get(user_id, session_id)
 
     def update_quantity(self, user_id: str, session_id: str, product_id: str, quantity: int) -> dict:
         if self._repo is not None:
             return self._db_update_quantity(user_id, session_id, product_id, quantity)
-        return self._file_update_quantity(session_id, product_id, quantity)
+        return self._file_update_quantity(user_id, session_id, product_id, quantity)
 
     def remove(self, user_id: str, session_id: str, product_id: str) -> dict:
         if self._repo is not None:
             return self._db_remove(user_id, session_id, product_id)
-        return self._file_remove(session_id, product_id)
+        return self._file_remove(user_id, session_id, product_id)
 
     def clear(self, user_id: str, session_id: str) -> dict:
         if self._repo is not None:
             return self._db_clear(user_id, session_id)
-        return self._file_clear(session_id)
+        return self._file_clear(user_id, session_id)
 
     def checkout(self, user_id: str, session_id: str, idempotency_key: str | None = None) -> dict:
         if self._repo is not None:
             return self._db_checkout(user_id, session_id, idempotency_key)
-        return self._file_checkout(session_id, idempotency_key)
+        return self._file_checkout(user_id, session_id, idempotency_key)
 
     def _db_update_quantity(self, user_id, session_id, product_id, quantity):
         self._validate_product(product_id)
@@ -143,7 +143,7 @@ class CartService:
         self._remember_idempotency_result(session_id, idempotency_key, result)
         return result
 
-    def _file_add(self, session_id, product_id, quantity, idempotency_key):
+    def _file_add(self, user_id, session_id, product_id, quantity, idempotency_key):
         existing = self._get_idempotency_result(session_id, idempotency_key)
         if existing is not None:
             return existing
@@ -152,12 +152,12 @@ class CartService:
         cart = self._carts.setdefault(session_id, {})
         cart[product_id] = cart.get(product_id, 0) + quantity
         self._log_action(session_id, "add", product_id, cart[product_id])
-        snapshot = self.get(session_id)
+        snapshot = self.get(user_id, session_id)
         self._remember_idempotency_result(session_id, idempotency_key, snapshot)
-        self._save()
+        self._save_one(user_id, session_id)
         return snapshot
 
-    def _file_get(self, session_id):
+    def _file_get(self, user_id, session_id):
         cart = self._carts.setdefault(session_id, {})
         items = []
         total = 0.0
@@ -180,7 +180,7 @@ class CartService:
             )
         return {"session_id": session_id, "items": items, "total_amount": total}
 
-    def _file_update_quantity(self, session_id, product_id, quantity):
+    def _file_update_quantity(self, user_id, session_id, product_id, quantity):
         self._validate_product(product_id)
         self._validate_quantity(quantity, allow_zero=True)
         cart = self._carts.setdefault(session_id, {})
@@ -190,29 +190,29 @@ class CartService:
         else:
             cart[product_id] = quantity
             self._log_action(session_id, "update", product_id, quantity)
-        self._save()
-        return self.get(session_id)
+        self._save_one(user_id, session_id)
+        return self.get(user_id, session_id)
 
-    def _file_remove(self, session_id, product_id):
+    def _file_remove(self, user_id, session_id, product_id):
         self._validate_product(product_id)
         self._carts.setdefault(session_id, {}).pop(product_id, None)
         self._log_action(session_id, "remove", product_id, 0)
-        self._save()
-        return self.get(session_id)
+        self._save_one(user_id, session_id)
+        return self.get(user_id, session_id)
 
-    def _file_clear(self, session_id):
+    def _file_clear(self, user_id, session_id):
         self._carts[session_id] = {}
         self._log_action(session_id, "clear", None, 0)
-        self._save()
-        return self.get(session_id)
+        self._save_one(user_id, session_id)
+        return self.get(user_id, session_id)
 
-    def _file_checkout(self, session_id, idempotency_key):
+    def _file_checkout(self, user_id, session_id, idempotency_key):
         existing = self._get_idempotency_result(session_id, idempotency_key)
         if existing is not None:
             return existing
-        snapshot = self._file_get(session_id)
+        snapshot = self._file_get(user_id, session_id)
         self._log_action(session_id, "checkout", None, 0)
-        self._file_clear(session_id)
+        self._file_clear(user_id, session_id)
         result = {
             "status": "ok",
             "session_id": session_id,
@@ -221,7 +221,7 @@ class CartService:
             "items": snapshot["items"],
         }
         self._remember_idempotency_result(session_id, idempotency_key, result)
-        self._save()
+        self._save_one(user_id, session_id)
         return result
 
     def get_audit_log(self, session_id: str) -> list[dict]:
@@ -260,46 +260,60 @@ class CartService:
         if len(log) > 100:
             self._audit_log[session_id] = log[-100:]
 
+    def _path(self, user_id: str, session_id: str) -> Path:
+        safe_user_id = user_id.replace("/", "_").replace("\\", "_")
+        safe_session_id = session_id.replace("/", "_").replace("\\", "_")
+        user_dir = self.persist_path / safe_user_id
+        user_dir.mkdir(parents=True, exist_ok=True)
+        return user_dir / f"{safe_session_id}.json"
+
     def _load(self) -> None:
         if not self.persist_path or not self.persist_path.exists():
             return
-        try:
-            data = json.loads(self.persist_path.read_text(encoding="utf-8"))
-            if isinstance(data, dict):
-                if "carts" in data and "audit_log" in data:
-                    self._carts = {
-                        str(k): {str(pk): int(qv) for pk, qv in v.items()}
-                        for k, v in data["carts"].items()
-                        if isinstance(v, dict)
-                    }
-                    self._audit_log = {
-                        str(k): list(v) for k, v in data["audit_log"].items()
-                    }
-                    raw_idempotency = data.get("idempotency_results", {})
-                    if isinstance(raw_idempotency, dict):
-                        self._idempotency_results = {
-                            str(k): {str(ik): dict(iv) for ik, iv in v.items() if isinstance(iv, dict)}
-                            for k, v in raw_idempotency.items()
-                            if isinstance(v, dict)
-                        }
-                else:
-                    self._carts = {
-                        str(k): {str(pk): int(qv) for pk, qv in v.items()}
-                        for k, v in data.items()
-                        if isinstance(v, dict)
-                    }
-        except Exception:
-            logger.warning("Failed to load cart data, resetting", exc_info=True)
-            self._carts = {}
-            self._audit_log = {}
-            self._idempotency_results = {}
+        # Load all user session files from per-user directories
+        for user_dir in self.persist_path.iterdir():
+            if not user_dir.is_dir():
+                continue
+            user_id = user_dir.name
+            for path in user_dir.glob("*.json"):
+                session_id = path.stem
+                try:
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        if "cart" in data:
+                            self._carts[session_id] = {
+                                str(pk): int(qv) for pk, qv in data["cart"].items()
+                                if isinstance(qv, int)
+                            }
+                        if "audit_log" in data:
+                            self._audit_log[session_id] = list(data["audit_log"])
+                        if "idempotency_results" in data:
+                            raw_idempotency = data["idempotency_results"]
+                            if isinstance(raw_idempotency, dict):
+                                self._idempotency_results[session_id] = {
+                                    str(ik): dict(iv) for ik, iv in raw_idempotency.items()
+                                    if isinstance(iv, dict)
+                                }
+                except Exception:
+                    logger.warning("Failed to load cart %s/%s, skipping", user_id, session_id, exc_info=True)
+                    continue
+
+    def _save_one(self, user_id: str, session_id: str) -> None:
+        if not self.persist_path:
+            return
+        path = self._path(user_id, session_id)
+        tmp_path = path.with_suffix(".tmp")
+        payload = {
+            "cart": self._carts.get(session_id, {}),
+            "audit_log": self._audit_log.get(session_id, []),
+            "idempotency_results": self._idempotency_results.get(session_id, {}),
+        }
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp_path.rename(path)
 
     def _save(self) -> None:
         if not self.persist_path:
             return
-        payload = {
-            "carts": self._carts,
-            "audit_log": self._audit_log,
-            "idempotency_results": self._idempotency_results,
-        }
-        self.persist_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        # Note: We save per user/session on demand in file-mode methods
+        # The old monolithic save is kept for backward compatibility but not used
+        pass

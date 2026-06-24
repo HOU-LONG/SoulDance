@@ -5,9 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import statistics
-from collections import defaultdict
 from pathlib import Path
-from typing import Any
 
 
 def _load_traces(stage_dir: Path) -> dict[str, list[dict]]:

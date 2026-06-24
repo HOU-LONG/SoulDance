@@ -83,6 +83,7 @@ class StubMetrics:
         self.counters[name] = self.counters.get(name, 0) + value
 
 
+@pytest.mark.asyncio
 class TestCrossEncoderReranker:
     def _result_with_title(self, pid: str, title: str, score: float) -> ProductRetrievalResult:
         return ProductRetrievalResult(
@@ -91,7 +92,7 @@ class TestCrossEncoderReranker:
             evidence_chunks=[],
         )
 
-    def test_reorders_by_query_relevance(self):
+    async def test_reorders_by_query_relevance(self):
         from backend.app.rag.reranker import CrossEncoderReranker
 
         candidates = [
@@ -105,30 +106,30 @@ class TestCrossEncoderReranker:
             "running socks": 0.8,
         })
         rer = CrossEncoderReranker(encoder, output_top_k=10)
-        result = rer.rerank("running gear", candidates, top_k=10)
+        result = await rer.rerank("running gear", candidates, top_k=10)
 
         assert [r.product.product_id for r in result] == ["p2", "p3", "p1"]
         assert result[0].score == pytest.approx(0.95)
         assert result[1].score == pytest.approx(0.8)
         assert result[2].score == pytest.approx(0.1)
 
-    def test_truncates_to_top_k(self):
+    async def test_truncates_to_top_k(self):
         from backend.app.rag.reranker import CrossEncoderReranker
 
         candidates = [self._result_with_title(f"p{i}", f"text-{i}", 0.0) for i in range(20)]
         encoder = FakeEncoder(score_map={f"text-{i}": 1.0 - i * 0.01 for i in range(20)})
         rer = CrossEncoderReranker(encoder, output_top_k=5)
-        result = rer.rerank("q", candidates, top_k=5)
+        result = await rer.rerank("q", candidates, top_k=5)
         assert len(result) == 5
         assert [r.product.product_id for r in result] == [f"p{i}" for i in range(5)]
 
-    def test_empty_candidates_returns_empty(self):
+    async def test_empty_candidates_returns_empty(self):
         from backend.app.rag.reranker import CrossEncoderReranker
         encoder = FakeEncoder()
         rer = CrossEncoderReranker(encoder)
-        assert rer.rerank("q", [], top_k=5) == []
+        assert await rer.rerank("q", [], top_k=5) == []
 
-    def test_evidence_chunks_preserved_after_rerank(self):
+    async def test_evidence_chunks_preserved_after_rerank(self):
         from backend.app.rag.reranker import CrossEncoderReranker
         from backend.app.rag.types import ChunkSearchResult
 
@@ -144,12 +145,12 @@ class TestCrossEncoderReranker:
             evidence_chunks=[chunk],
         )
         encoder = FakeEncoder(score_map={"evidence for p1": 0.99})
-        result = CrossEncoderReranker(encoder).rerank("q", [c1], top_k=5)
+        result = await CrossEncoderReranker(encoder).rerank("q", [c1], top_k=5)
         assert result[0].evidence_chunks == [chunk]
         # uses evidence chunk excerpt over product title
         assert encoder.calls[0][0] == ("q", "evidence for p1")
 
-    def test_encoder_exception_falls_back_to_input_order(self):
+    async def test_encoder_exception_falls_back_to_input_order(self):
         from backend.app.rag.reranker import CrossEncoderReranker
 
         c1 = self._result_with_title("p1", "a", 0.5)
@@ -157,18 +158,40 @@ class TestCrossEncoderReranker:
         metrics = StubMetrics()
         rer = CrossEncoderReranker(BrokenEncoder(), metrics=metrics)
 
-        result = rer.rerank("q", [c1, c2], top_k=10)
+        result = await rer.rerank("q", [c1, c2], top_k=10)
         assert [r.product.product_id for r in result] == ["p1", "p2"]
         assert metrics.counters.get("retrieval.reranker.fallback.cross_failed", 0) == 1
 
-    def test_records_cross_latency_metric(self):
+    async def test_records_cross_latency_metric(self):
         from backend.app.rag.reranker import CrossEncoderReranker
         encoder = FakeEncoder(score_map={"a": 0.7})
         metrics = StubMetrics()
         rer = CrossEncoderReranker(encoder, metrics=metrics)
-        rer.rerank("q", [self._result_with_title("p1", "a", 0.5)], top_k=5)
+        await rer.rerank("q", [self._result_with_title("p1", "a", 0.5)], top_k=5)
         # Just confirm latency counter was touched at least once
         assert any(name.startswith("retrieval.reranker.cross.calls") for name in metrics.counters)
+
+    async def test_timeout_behavior(self):
+        import asyncio
+        from backend.app.rag.reranker import CrossEncoderReranker
+
+        class SlowEncoder:
+            def predict(self, pairs):
+                # Simulate a slow prediction that will timeout
+                import time
+                time.sleep(0.1)
+                return [0.5] * len(pairs)
+
+        candidates = [self._result_with_title("p1", "a", 0.5)]
+        encoder = SlowEncoder()
+        # Set timeout to 0.05 seconds, which is shorter than the 0.1s sleep
+        metrics = StubMetrics()
+        rer = CrossEncoderReranker(encoder, timeout_seconds=0.05, metrics=metrics)
+
+        # This should timeout and fall back to input order
+        result = await rer.rerank("q", candidates, top_k=5)
+        assert [r.product.product_id for r in result] == ["p1"]
+        assert metrics.counters.get("retrieval.reranker.fallback.cross_failed", 0) == 1
 
 
 class FakeLLMClient:

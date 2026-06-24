@@ -6,6 +6,7 @@ All failure paths degrade silently — the caller never sees an exception.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Protocol, Sequence, runtime_checkable
 
@@ -54,12 +55,14 @@ class CrossEncoderReranker:
         *,
         metrics=None,
         output_top_k: int = 15,
+        timeout_seconds: float = 0.5,
     ):
         self.model = model
         self.metrics = metrics
         self.output_top_k = output_top_k
+        self.timeout_seconds = timeout_seconds
 
-    def rerank(
+    async def rerank(
         self,
         query: str,
         candidates: list[ProductRetrievalResult],
@@ -72,7 +75,12 @@ class CrossEncoderReranker:
         cap = min(top_k, self.output_top_k)
         pairs = [[query, self._passage_text(c)] for c in candidates]
         try:
-            scores = list(self.model.predict(pairs))
+            # Run the synchronous predict call in a thread pool with timeout
+            scores = await asyncio.wait_for(
+                asyncio.to_thread(self.model.predict, pairs),
+                timeout=self.timeout_seconds
+            )
+            scores = list(scores)
         except Exception:
             _LOG.warning("CrossEncoderReranker.predict failed", exc_info=True)
             if self.metrics is not None:

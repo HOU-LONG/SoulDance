@@ -261,3 +261,45 @@ class HybridReranker:
         if self.metrics is None:
             return
         self.metrics.increment(f"retrieval.reranker.scenario.{scenario.value}")
+
+
+def _load_cross_encoder(model_dir: str, device: str):
+    """Indirection so tests can monkeypatch model loading."""
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder(model_dir, device=device)
+
+
+def build_reranker(settings, *, llm_client=None, metrics=None) -> Reranker:
+    """Construct the configured reranker, with silent fallback to NoOp."""
+    if not getattr(settings, "rerank_enabled", False):
+        return NoOpReranker()
+
+    model_dir = getattr(settings, "rerank_model_dir", "")
+    device = getattr(settings, "rerank_device", "cpu")
+
+    try:
+        model = _load_cross_encoder(model_dir, device)
+    except Exception:
+        _LOG.warning("Reranker model load failed at %s", model_dir, exc_info=True)
+        if metrics is not None:
+            metrics.increment("retrieval.reranker.fallback.no_model")
+        return NoOpReranker()
+
+    cross = CrossEncoderReranker(
+        model,
+        metrics=metrics,
+        output_top_k=getattr(settings, "rerank_output_top_k", 15),
+    )
+    if getattr(settings, "rerank_llm_enabled", False) and llm_client is not None:
+        llm = LLMReranker(
+            llm_client,
+            metrics=metrics,
+            top_n=getattr(settings, "rerank_llm_top_n", 8),
+        )
+        return HybridReranker(
+            cross,
+            llm,
+            metrics=metrics,
+            low_confidence_threshold=getattr(settings, "rerank_low_confidence_threshold", 0.05),
+        )
+    return cross

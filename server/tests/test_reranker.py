@@ -348,3 +348,68 @@ class TestHybridReranker:
         result = hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.COMPARISON)
         # No LLM available → must follow cross order
         assert [r.product.product_id for r in result] == ["p2", "p1"]
+
+
+class TestBuildReranker:
+    def _settings(self, **overrides):
+        from backend.app.config import Settings
+        defaults = dict(
+            rerank_enabled=True,
+            rerank_model_dir="model/does-not-exist",
+            rerank_model_id="BAAI/bge-reranker-v2-m3",
+            rerank_device="cpu",
+            rerank_input_top_k=30,
+            rerank_output_top_k=15,
+            rerank_llm_enabled=False,
+            rerank_llm_top_n=8,
+            rerank_low_confidence_threshold=0.05,
+        )
+        defaults.update(overrides)
+        return Settings(**defaults)
+
+    def test_disabled_returns_noop(self):
+        from backend.app.rag.reranker import build_reranker, NoOpReranker
+        settings = self._settings(rerank_enabled=False)
+        result = build_reranker(settings)
+        assert isinstance(result, NoOpReranker)
+
+    def test_model_dir_missing_falls_back_to_noop_with_metric(self):
+        from backend.app.rag.reranker import build_reranker, NoOpReranker
+        settings = self._settings(rerank_model_dir="/tmp/definitely-not-a-model")
+        metrics = StubMetrics()
+        result = build_reranker(settings, metrics=metrics)
+        assert isinstance(result, NoOpReranker)
+        assert metrics.counters.get("retrieval.reranker.fallback.no_model", 0) == 1
+
+    def test_returns_hybrid_when_llm_enabled(self, monkeypatch):
+        from backend.app.rag import reranker as rerank_module
+        from backend.app.rag.reranker import build_reranker, HybridReranker
+
+        # Stub CrossEncoder to avoid loading a real model
+        class StubCE:
+            def __init__(self, *a, **kw):
+                pass
+            def predict(self, pairs):
+                return [0.0] * len(pairs)
+
+        monkeypatch.setattr(rerank_module, "_load_cross_encoder", lambda *a, **kw: StubCE())
+
+        settings = self._settings(rerank_llm_enabled=True)
+        result = build_reranker(settings, llm_client=FakeLLMClient(responses=[]))
+        assert isinstance(result, HybridReranker)
+        assert result.llm is not None
+
+    def test_returns_cross_only_when_llm_disabled(self, monkeypatch):
+        from backend.app.rag import reranker as rerank_module
+        from backend.app.rag.reranker import build_reranker, CrossEncoderReranker
+
+        class StubCE:
+            def __init__(self, *a, **kw):
+                pass
+            def predict(self, pairs):
+                return [0.0] * len(pairs)
+
+        monkeypatch.setattr(rerank_module, "_load_cross_encoder", lambda *a, **kw: StubCE())
+        settings = self._settings(rerank_llm_enabled=False)
+        result = build_reranker(settings)
+        assert isinstance(result, CrossEncoderReranker)

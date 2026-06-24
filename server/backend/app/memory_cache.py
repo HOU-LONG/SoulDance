@@ -23,7 +23,15 @@ class StructuredMemoryCache:
         if self.path and self.path.exists():
             self._load()
 
-    def get(self, plan: RetrievalPlan, product_map: dict[str, Product]) -> list[RankedProduct] | None:
+    def get(
+        self,
+        plan: RetrievalPlan,
+        product_map: dict[str, Product],
+        *,
+        disable_get: bool = False,
+    ) -> list[RankedProduct] | None:
+        if disable_get:
+            return None
         key = self.make_key(plan)
         rows = self._items.get(key)
         if not rows:
@@ -48,6 +56,18 @@ class StructuredMemoryCache:
             return None
         self._hits += 1
         return ranked
+
+    def probe(self, plan: RetrievalPlan, product_map: dict[str, Product]) -> bool:
+        """Pure: 仅判断是否能命中，不改任何 stats。"""
+        key = self.make_key(plan)
+        rows = self._items.get(key)
+        if not rows:
+            return False
+        for row in rows:
+            product = product_map.get(str(row.get("product_id", "")))
+            if product and hard_filter(product, plan.hard_constraints):
+                return True
+        return False
 
     def put(self, plan: RetrievalPlan, ranked: list[RankedProduct]) -> None:
         key = self.make_key(plan)
@@ -126,7 +146,16 @@ class RecommendationMemoryCache:
         if self.path and self.path.exists():
             self._load()
 
-    def get(self, plan: RetrievalPlan, message: str, product_map: dict[str, Product]) -> RecommendationMemoryHit | None:
+    def get(
+        self,
+        plan: RetrievalPlan,
+        message: str,
+        product_map: dict[str, Product],
+        *,
+        disable_get: bool = False,
+    ) -> RecommendationMemoryHit | None:
+        if disable_get:
+            return None
         exact_key = self.make_exact_key(plan, message)
         row = self._items.get(exact_key)
         if row:
@@ -144,6 +173,42 @@ class RecommendationMemoryCache:
             self._invalidations += 1
         self._misses += 1
         return None
+
+    def probe(
+        self,
+        plan: RetrievalPlan,
+        message: str,
+        product_map: dict[str, Product],
+    ) -> bool:
+        """Pure: 仅判断 exact 或 semantic 是否能命中，不改任何 stats / _invalidations。"""
+        exact_key = self.make_exact_key(plan, message)
+        row = self._items.get(exact_key)
+        if row and self._validated_hit_dry(row, plan, product_map):
+            return True
+        semantic_row = self._find_semantic_row(plan, message)
+        if semantic_row and self._validated_hit_dry(semantic_row, plan, product_map):
+            return True
+        return False
+
+    def _validated_hit_dry(
+        self,
+        row: dict[str, Any],
+        plan: RetrievalPlan,
+        product_map: dict[str, Product],
+    ) -> bool:
+        """与 _validated_hit 同逻辑但不构造 RankedProduct，仅返回 True/False。"""
+        for item in row.get("selected_products", []):
+            product = product_map.get(str(item.get("product_id", "")))
+            if not product or not hard_filter(product, plan.hard_constraints):
+                return False
+            taxonomy = row.get("taxonomy", {})
+            expected_sub = taxonomy.get("sub_category")
+            expected_cat = taxonomy.get("category")
+            if expected_sub and product.sub_category != expected_sub:
+                return False
+            if expected_cat and product.category != expected_cat:
+                return False
+        return bool(row.get("selected_products"))
 
     def put(self, plan: RetrievalPlan, message: str, selected: list[RankedProduct]) -> None:
         if not selected:

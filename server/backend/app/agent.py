@@ -100,6 +100,8 @@ class ShopGuideAgent:
         self.feedback_ranker = feedback_ranker
         self.feedback_store = feedback_store
         self.user_profile_store = user_profile_store
+        # 长会话评测专用：记录上一轮 cache probe 结果
+        self._last_cache_probe: dict = {}
         self._init_tool_registry()
 
     def _init_tool_registry(self) -> None:
@@ -157,8 +159,18 @@ class ShopGuideAgent:
         # 完全由 plan 内容决定）。命中后必须再走 feedback_ranker 才能注入当前 session 的反馈，
         # 否则会出现"session A 的偏好被 cache 走，session B 拿到 A 的个性化结果"的数据泄漏。
         cached_base: list[RankedProduct] | None = None
+        would_hit_b2 = False
         if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
-            cached_base = self.memory_cache.get(plan, self.product_map)
+            would_hit_b2 = self.memory_cache.probe(plan, self.product_map)
+            cached_base = self.memory_cache.get(
+                plan,
+                self.product_map,
+                disable_get=getattr(self.settings, "eval_disable_rank_cache", False),
+            )
+        self._last_cache_probe["would_hit_b2"] = would_hit_b2
+        self._last_cache_probe["effective_hit_b2"] = cached_base is not None
+        if self.memory_cache:
+            self._last_cache_probe["cache_stats_b2"] = dict(self.memory_cache.stats())
 
         if cached_base is not None:
             ranked = list(cached_base)
@@ -518,8 +530,21 @@ class ShopGuideAgent:
 
     def _get_recommendation_memory_hit(self, plan: RetrievalPlan, message: str) -> RecommendationMemoryHit | None:
         if not self.recommendation_memory or plan.intent != "recommend_product":
+            self._last_cache_probe["would_hit_b1"] = False
+            self._last_cache_probe["effective_hit_b1"] = False
             return None
-        return self.recommendation_memory.get(plan, message, self.product_map)
+        would_hit_b1 = self.recommendation_memory.probe(plan, message, self.product_map)
+        memory_hit = self.recommendation_memory.get(
+            plan,
+            message,
+            self.product_map,
+            disable_get=getattr(self.settings, "eval_disable_recommendation_memory", False),
+        )
+        self._last_cache_probe["would_hit_b1"] = would_hit_b1
+        self._last_cache_probe["effective_hit_b1"] = memory_hit is not None
+        if self.recommendation_memory:
+            self._last_cache_probe["cache_stats_b1"] = dict(self.recommendation_memory.stats())
+        return memory_hit
 
     async def _stream_recommendation_events(
         self,

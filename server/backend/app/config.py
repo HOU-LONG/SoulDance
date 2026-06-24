@@ -57,6 +57,11 @@ class Settings(BaseModel):
     database_url: str = ""
     embedding_dimension: int = 384
 
+    # Session context compression. Single runtime value for the LLM context
+    # window — when model-name → limit mapping is added later, it must resolve
+    # into this field before the watermark policy is consulted.
+    llm_context_limit: int = 128000
+
     # Retrieval. dense 路径走内存矩阵；BM25 保留 chunk 级 + group-by-product max；
     # 融合策略和权重在 product 级别完成，全部可配置，便于 ablation。
     retrieval_fusion_strategy: Literal["weighted", "rrf", "dense_only", "bm25_only"] = "weighted"
@@ -233,6 +238,7 @@ def get_settings() -> Settings:
         ark_model=os.getenv("ARK_MODEL", "ep-20260514111645-lmgt2"),
         database_url=os.getenv("SHOPGUIDE_DATABASE_URL", ""),
         embedding_dimension=int(os.getenv("SHOPGUIDE_EMBEDDING_DIMENSION", "384")),
+        llm_context_limit=int(os.getenv("LLM_CONTEXT_LIMIT", "128000")),
         retrieval_fusion_strategy=_retrieval_strategy(os.getenv("RETRIEVAL_FUSION_STRATEGY", "weighted")),
         retrieval_dense_weight=float(os.getenv("RETRIEVAL_DENSE_WEIGHT", "0.65")),
         retrieval_rrf_k=int(os.getenv("RETRIEVAL_RRF_K", "60")),

@@ -54,18 +54,8 @@ class AdaptiveRetriever:
         self.hybrid_retriever = hybrid_retriever
         self.reranker = reranker
 
-    def search(self, plan: RetrievalPlan, top_k: int = 30) -> list[tuple[Product, float]]:
-        """执行多轮自适应检索，返回合并后的候选商品及其分数。
-
-        检索轮次：
-        - Round 0: 如果注入了 hybrid_retriever，先尝试 hybrid 融合检索。
-        - Round 1: 使用原始 plan 的完整约束进行严格检索。
-        - Round 2: 移除 soft_preferences，仅基于 hard constraints 重建查询。
-        - Round 3: 进一步移除 price bounds，仅保留类目和品牌等核心约束。
-
-        每轮结果按 product_id 合并，保留最高分数。当累计唯一商品数
-        达到 min_candidates 时提前终止。
-        """
+    async def search_async(self, plan: RetrievalPlan, top_k: int = 30) -> list[tuple[Product, float]]:
+        """Async path: hybrid retrieval → optional reranker → fallback to sync search if hybrid fails."""
         self.last_evidence_by_product = {}
         if self.hybrid_retriever is not None:
             try:
@@ -84,12 +74,51 @@ class AdaptiveRetriever:
                     if self.reranker is not None:
                         from .rag.reranker_scenarios import detect_pre_scenario
                         pre_scenario = detect_pre_scenario(plan)
-                        hybrid_results = self.reranker.rerank(
+                        hybrid_results = await self.reranker.rerank(
                             plan.retrieval_query or "",
                             hybrid_results,
                             top_k=top_k,
                             scenario=pre_scenario,
                         )
+                    self.last_evidence_by_product = {
+                        result.product.product_id: [
+                            text
+                            for text in (format_chunk_evidence(chunk) for chunk in result.evidence_chunks)
+                            if text
+                        ]
+                        for result in hybrid_results
+                    }
+                    if self.metrics is not None:
+                        self.metrics.increment("retrieval.hybrid.success")
+                    return [(result.product, result.score) for result in hybrid_results]
+                if self.metrics is not None:
+                    self.metrics.increment("retrieval.fallback.used")
+            except Exception:
+                if self.metrics is not None:
+                    self.metrics.increment("retrieval.fallback.used")
+                pass
+
+        # Fallback: identical sync logic from search()
+        return self.search(plan, top_k=top_k)
+
+    def search(self, plan: RetrievalPlan, top_k: int = 30) -> list[tuple[Product, float]]:
+        """Sync path: hybrid retrieval without reranker. Kept for backward compat;
+        async path (search_async) is the canonical entry for reranker usage."""
+        self.last_evidence_by_product = {}
+        if self.hybrid_retriever is not None:
+            try:
+                from .rag.types import format_chunk_evidence
+
+                if hasattr(self.hybrid_retriever, "search_with_evidence"):
+                    hybrid_results = self.hybrid_retriever.search_with_evidence(plan, top_k=top_k)
+                else:
+                    raw_results = self.hybrid_retriever.search(plan, top_k=top_k)
+                    if raw_results:
+                        if self.metrics is not None:
+                            self.metrics.increment("retrieval.hybrid.success")
+                        return raw_results
+                    hybrid_results = []
+                if hybrid_results:
                     self.last_evidence_by_product = {
                         result.product.product_id: [
                             text

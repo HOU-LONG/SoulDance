@@ -6,6 +6,7 @@ import com.example.shopguideagent.data.repository.SpiritProgressRepository
 import com.example.shopguideagent.test.CoroutineTestHelper
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -34,6 +35,33 @@ class SpriteHomePersistenceTest {
 
         assertEquals(2, progressRepository.savedProgress.last().level)
         assertEquals(0, progressRepository.savedProgress.last().currentIntimacy)
+    }
+
+    @Test
+    fun outfitSelectionUpdatesStateAndPersistsAppearance() {
+        val appearanceRepository = FakeAppearanceRepository()
+        val viewModel = SpriteHomeViewModel(
+            progressRepository = FakeProgressRepository(),
+            appearanceRepository = appearanceRepository,
+        )
+
+        viewModel.onOutfitSelected(SpriteAssetRegistry.OUTFIT_HOME_ADVISOR)
+
+        assertEquals(SpriteAssetRegistry.OUTFIT_HOME_ADVISOR, viewModel.uiState.value.appearance.outfitId)
+        assertEquals(SpriteAssetRegistry.OUTFIT_HOME_ADVISOR, appearanceRepository.savedAppearance.last().outfitId)
+    }
+
+    @Test
+    fun reselectingCurrentOutfitDoesNotPersistAgain() {
+        val appearanceRepository = FakeAppearanceRepository()
+        val viewModel = SpriteHomeViewModel(
+            progressRepository = FakeProgressRepository(),
+            appearanceRepository = appearanceRepository,
+        )
+
+        viewModel.onOutfitSelected(SpriteAssetRegistry.OUTFIT_DEFAULT) // 初始即默认
+
+        assertTrue(appearanceRepository.savedAppearance.isEmpty())
     }
 
     private class FakeProgressRepository(

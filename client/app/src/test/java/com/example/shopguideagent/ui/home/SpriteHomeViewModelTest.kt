@@ -80,6 +80,30 @@ class SpriteHomeViewModelTest {
     }
 
     @Test
+    fun localAddToCartFailureShowsApologyAndKeepsRecoverableBaseState() = runTest {
+        val viewModel = SpriteHomeViewModel(
+            initialState = SpriteHomeUiState(
+                baseAvatarState = AvatarState.PRESENTING,
+                presentingProduct = sampleProduct(),
+            ),
+        )
+        val effects = mutableListOf<SpriteHomeEffect>()
+        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.effects.take(1).collect { effects.add(it) }
+        }
+
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartFailed("p1", "库存不足"))
+
+        val state = viewModel.uiState.value
+        assertEquals(AvatarState.ERROR, state.transientAvatarState)
+        // base 保持 PRESENTING：商品卡仍在，动画结束后可重试
+        assertEquals(AvatarState.PRESENTING, state.baseAvatarState)
+        assertEquals(SpeechBubbleStyle.ERROR, state.speechBubble.style)
+        assertTrue(effects.first() is SpriteHomeEffect.ShowMessage)
+        job.cancel()
+    }
+
+    @Test
     fun intimacyCrossingThresholdTriggersLevelUpTransientState() {
         val viewModel = SpriteHomeViewModel(
             initialState = SpriteHomeUiState(

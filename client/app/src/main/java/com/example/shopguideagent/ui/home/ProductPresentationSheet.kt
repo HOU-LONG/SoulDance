@@ -58,7 +58,7 @@ fun ProductPresentationSheet(
         visibleState = transitionState,
         modifier = modifier,
         enter = scaleIn(
-            transformOrigin = TransformOrigin(0.5f, 1f),
+            transformOrigin = TransformOrigin(0.85f, 0.1f),
             initialScale = 0.2f,
             animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = 400f),
         ) + fadeIn(),

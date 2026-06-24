@@ -7,6 +7,7 @@ import com.example.shopguideagent.data.model.ProductUiModel
 enum class AvatarState {
     IDLE,
     LISTENING,
+    THINKING,
     SEARCHING,
     PRESENTING,
     CELEBRATING,
@@ -140,9 +141,9 @@ object SpriteHomeStateMapper {
     fun baseAvatarStateFromChatState(state: ChatUiState): AvatarState = when {
         state.phase == ChatExperiencePhase.Error || !state.errorMessage.isNullOrBlank() -> AvatarState.IDLE
         state.phase == ChatExperiencePhase.RecommendationLoading -> AvatarState.SEARCHING
-        state.phase == ChatExperiencePhase.AssistantThinking -> AvatarState.SEARCHING
-        state.phase == ChatExperiencePhase.UserSending -> AvatarState.SEARCHING
-        state.isSending -> AvatarState.SEARCHING
+        state.phase == ChatExperiencePhase.AssistantThinking -> AvatarState.THINKING
+        state.phase == ChatExperiencePhase.UserSending -> AvatarState.THINKING
+        state.isSending -> AvatarState.THINKING
         latestProduct(state) != null -> AvatarState.PRESENTING
         else -> AvatarState.IDLE
     }
@@ -167,6 +168,7 @@ object SpriteHomeStateMapper {
     fun speechFor(state: AvatarState, product: ProductUiModel? = null): SpeechBubbleUiState = when (state) {
         AvatarState.IDLE -> SpeechBubbleUiState()
         AvatarState.LISTENING -> SpeechBubbleUiState("我在听，说说你想买什么", style = SpeechBubbleStyle.LISTENING)
+        AvatarState.THINKING -> SpeechBubbleUiState("让我想想，正在帮你挑", style = SpeechBubbleStyle.SEARCHING)
         AvatarState.SEARCHING -> SpeechBubbleUiState("正在找好物", style = SpeechBubbleStyle.SEARCHING)
         AvatarState.PRESENTING -> SpeechBubbleUiState(product?.let { "推荐 ${it.name}" } ?: "找到合适好物")
         AvatarState.CELEBRATING -> SpeechBubbleUiState("加购成功，亲密度提升", style = SpeechBubbleStyle.SUCCESS)

@@ -10,8 +10,15 @@ import org.junit.Test
 
 class SpriteHomeStateMapperTest {
     @Test
-    fun assistantThinkingMapsToSearching() {
+    fun assistantThinkingMapsToThinking() {
         val state = ChatUiState(phase = ChatExperiencePhase.AssistantThinking, isSending = true)
+
+        assertEquals(AvatarState.THINKING, SpriteHomeStateMapper.baseAvatarStateFromChatState(state))
+    }
+
+    @Test
+    fun recommendationLoadingMapsToSearching() {
+        val state = ChatUiState(phase = ChatExperiencePhase.RecommendationLoading, isSending = true)
 
         assertEquals(AvatarState.SEARCHING, SpriteHomeStateMapper.baseAvatarStateFromChatState(state))
     }

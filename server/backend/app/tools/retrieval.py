@@ -24,6 +24,6 @@ class RetrieveProductsTool:
             ):
                 yield event
             return
-        ranked = self._agent.retrieve_and_rank(plan, session_id=request.session_id)
+        ranked = await self._agent.retrieve_and_rank(plan, session_id=request.session_id)
         async for event in self._agent._stream_recommendation_events(request, plan, ranked, context_action):
             yield event

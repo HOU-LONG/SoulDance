@@ -149,7 +149,7 @@ class ShopGuideAgent:
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         return plan
 
-    def retrieve_and_rank(self, plan: RetrievalPlan, limit: int = 8, session_id: str = "") -> list[RankedProduct]:
+    async def retrieve_and_rank(self, plan: RetrievalPlan, limit: int = 8, session_id: str = "") -> list[RankedProduct]:
         # memory_cache 存的是"未个性化"的基础排序（cross-session 共享是安全的，因为 key
         # 完全由 plan 内容决定）。命中后必须再走 feedback_ranker 才能注入当前 session 的反馈，
         # 否则会出现"session A 的偏好被 cache 走，session B 拿到 A 的个性化结果"的数据泄漏。
@@ -160,7 +160,7 @@ class ShopGuideAgent:
         if cached_base is not None:
             ranked = list(cached_base)
         else:
-            retrieved = self.adaptive_retriever.search(plan, top_k=30)
+            retrieved = await self.adaptive_retriever.search_async(plan, top_k=30)
             if retrieved:
                 candidates = [product for product, _ in retrieved]
                 scores = {product.product_id: score for product, score in retrieved}
@@ -446,7 +446,8 @@ class ShopGuideAgent:
             ):
                 yield event
             return
-        ranked = [item for item in self.retrieve_and_rank(plan, session_id=request.session_id) if hard_filter(item.product, plan.hard_constraints)]
+        ranked_raw = await self.retrieve_and_rank(plan, session_id=request.session_id)
+        ranked = [item for item in ranked_raw if hard_filter(item.product, plan.hard_constraints)]
         if cheaper_than_price is not None:
             ranked = [item for item in ranked if item.product.price < cheaper_than_price]
         if more_expensive_than_price is not None:
@@ -929,7 +930,7 @@ class ShopGuideAgent:
             {"type": "done", "message_id": message_id},
         ]
 
-    def _build_bundle_events(self, request: ChatRequest, plan: RetrievalPlan) -> list[dict]:
+    async def _build_bundle_events(self, request: ChatRequest, plan: RetrievalPlan) -> list[dict]:
         context = self.sessions.get(request.session_id)
         message_id = _message_id()
         bundle_id = "bundle_" + uuid.uuid4().hex[:8]
@@ -965,7 +966,7 @@ class ShopGuideAgent:
                 soft_preferences={"scene": "海边度假"},
                 retrieval_query=query,
             )
-            ranked = self.retrieve_and_rank(slot_plan, session_id=request.session_id)
+            ranked = await self.retrieve_and_rank(slot_plan, session_id=request.session_id)
             if not ranked:
                 continue
             item = ranked[0]

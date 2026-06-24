@@ -18,5 +18,5 @@ class ScenarioBundleTool:
             retrieval_mode="decompose_parallel",
             retrieval_query=request.message,
         )
-        for event in self._agent._build_bundle_events(request, plan):
+        for event in await self._agent._build_bundle_events(request, plan):
             yield event

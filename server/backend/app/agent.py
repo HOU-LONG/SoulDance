@@ -102,6 +102,8 @@ class ShopGuideAgent:
         self.user_profile_store = user_profile_store
         # 长会话评测专用：记录上一轮 cache probe 结果
         self._last_cache_probe: dict = {}
+        # 长会话评测专用：记录上一轮 degradation（如 context_overflow_forced_trim）
+        self._last_degradation: str | None = None
         self._init_tool_registry()
 
     def _init_tool_registry(self) -> None:
@@ -1312,6 +1314,39 @@ class ShopGuideAgent:
             "success": True,
             "message": _cart_message(action, _cart_product_display_name(cart, product_id)),
         }
+
+    @staticmethod
+    def _estimate_tokens(payload: dict) -> int:
+        try:
+            import tiktoken
+            enc = tiktoken.get_encoding("cl100k_base")
+            return len(enc.encode(json.dumps(payload, ensure_ascii=False)))
+        except Exception:
+            # 兜底：粗估 1 token ≈ 1.6 char（中文场景）
+            return int(len(json.dumps(payload, ensure_ascii=False)) / 1.6)
+
+    def _maybe_force_trim_context(
+        self,
+        payload: dict,
+        *,
+        budget: int,
+    ) -> tuple[dict, str | None]:
+        """若 payload tokens 超 budget，逐步截断 recent_context.recent_user_turns / last_events 的尾部直到 ≤budget。
+        返回 (trimmed_payload, degradation_label 或 None)。
+        仅在 eval_disable_window_truncation=True 时有意义；A1 默认行为下窗口已经截好，几乎不会触发。
+        """
+        if not payload:
+            return payload, None
+        current = self._estimate_tokens(payload)
+        if current <= budget:
+            return payload, None
+        trimmed = json.loads(json.dumps(payload))  # deep copy
+        rc = trimmed.get("recent_context", {})
+        # 逐步从最早的 turn 开始砍
+        for key in ("recent_user_turns", "last_events", "recent_recommendation_sets"):
+            while rc.get(key) and self._estimate_tokens(trimmed) > budget:
+                rc[key].pop(0)  # 砍最早的
+        return trimmed, "context_overflow_forced_trim"
 
 
 def _normalize_product_match_text(text: str | None) -> str:

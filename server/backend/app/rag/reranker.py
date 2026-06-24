@@ -217,3 +217,47 @@ class LLMReranker:
     def _record_fallback(self) -> None:
         if self.metrics is not None:
             self.metrics.increment("retrieval.reranker.fallback.llm_failed")
+
+
+class HybridReranker:
+    """Cross-encoder first, LLM fallback for strong scenarios."""
+
+    def __init__(
+        self,
+        cross: Reranker,
+        llm: Reranker | None,
+        *,
+        metrics=None,
+        low_confidence_threshold: float = 0.05,
+    ):
+        self.cross = cross
+        self.llm = llm
+        self.metrics = metrics
+        self.low_confidence_threshold = low_confidence_threshold
+
+    def rerank(
+        self,
+        query: str,
+        candidates: list[ProductRetrievalResult],
+        *,
+        top_k: int = 15,
+        scenario: RerankScenario | None = None,
+    ) -> list[ProductRetrievalResult]:
+        from .reranker_scenarios import upgrade_scenario
+
+        pre = scenario or RerankScenario.DEFAULT
+        cross_result = self.cross.rerank(query, candidates, top_k=top_k, scenario=pre)
+
+        scores = [r.score for r in cross_result]
+        final_scenario = upgrade_scenario(pre, scores, self.low_confidence_threshold)
+        self._record_scenario(final_scenario)
+
+        llm_triggers = {RerankScenario.COMPARISON, RerankScenario.REFINEMENT, RerankScenario.LOW_CONFIDENCE}
+        if final_scenario in llm_triggers and self.llm is not None:
+            return self.llm.rerank(query, cross_result, top_k=top_k, scenario=final_scenario)
+        return cross_result
+
+    def _record_scenario(self, scenario: RerankScenario) -> None:
+        if self.metrics is None:
+            return
+        self.metrics.increment(f"retrieval.reranker.scenario.{scenario.value}")

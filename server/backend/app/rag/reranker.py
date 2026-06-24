@@ -17,7 +17,7 @@ _LOG = logging.getLogger(__name__)
 
 @runtime_checkable
 class Reranker(Protocol):
-    def rerank(
+    async def rerank(
         self,
         query: str,
         candidates: list[ProductRetrievalResult],
@@ -30,7 +30,7 @@ class Reranker(Protocol):
 class NoOpReranker:
     """Returns input order, truncated to top_k. Used when rerank is disabled."""
 
-    def rerank(
+    async def rerank(
         self,
         query: str,
         candidates: list[ProductRetrievalResult],

@@ -47,6 +47,15 @@ class Settings(BaseModel):
     session_ttl_days: int = 7
     server_base_url: str = ""
     feedback_path: str = ""
+
+    # --- Evaluation switches (spec 2026-06-24-long-session-eval) ---
+    # 生产默认全部 False/25000，等价于当前 C4 全开行为；评测 CLI 通过环境变量临时覆盖。
+    eval_disable_window_truncation: bool = False
+    eval_disable_structured_snapshot: bool = False
+    eval_disable_recommendation_memory: bool = False
+    eval_disable_rank_cache: bool = False
+    eval_force_trim_token_budget: int = 25000
+
     user_profile_dir: str = ""
 
     # Operational limits
@@ -234,6 +243,13 @@ def _retrieval_strategy(value: str) -> str:
     return value
 
 
+def _parse_bool_env(key: str, default: bool = False) -> bool:
+    raw = os.getenv(key)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings(
@@ -323,4 +339,9 @@ def get_settings() -> Settings:
         rerank_llm_enabled=os.getenv("RERANK_LLM_ENABLED", "true").lower() not in {"0", "false"},
         rerank_llm_top_n=int(os.getenv("RERANK_LLM_TOP_N", "8")),
         rerank_low_confidence_threshold=float(os.getenv("RERANK_LOW_CONFIDENCE_THRESHOLD", "0.05")),
+        eval_disable_window_truncation=_parse_bool_env("SHOPGUIDE_EVAL_DISABLE_WINDOW_TRUNCATION"),
+        eval_disable_structured_snapshot=_parse_bool_env("SHOPGUIDE_EVAL_DISABLE_STRUCTURED_SNAPSHOT"),
+        eval_disable_recommendation_memory=_parse_bool_env("SHOPGUIDE_EVAL_DISABLE_RECOMMENDATION_MEMORY"),
+        eval_disable_rank_cache=_parse_bool_env("SHOPGUIDE_EVAL_DISABLE_RANK_CACHE"),
+        eval_force_trim_token_budget=int(os.getenv("SHOPGUIDE_EVAL_FORCE_TRIM_TOKEN_BUDGET", "25000")),
     )

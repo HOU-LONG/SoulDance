@@ -55,3 +55,15 @@ def test_duplicate_user_session_pair_raises_integrity(db_session) -> None:
     db_session.add(SessionState(user_id="u", session_id="s", state_json={}))
     with pytest.raises(IntegrityError):
         db_session.commit()
+
+
+def test_cart_repository_isolates_by_user(db_session) -> None:
+    from backend.app.repositories.cart_repository import CartRepository
+    repo = CartRepository(db_session)
+    repo.add("user_a", "s1", "prod_x", 2)
+    repo.add("user_b", "s1", "prod_y", 3)
+    db_session.commit()
+    cart_a = repo.get("user_a", "s1")
+    cart_b = repo.get("user_b", "s1")
+    assert {i["product_id"] for i in cart_a["items"]} == {"prod_x"}
+    assert {i["product_id"] for i in cart_b["items"]} == {"prod_y"}

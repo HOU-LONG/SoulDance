@@ -15,8 +15,8 @@ class CartRepository:
     def _now(self) -> datetime:
         return datetime.now(timezone.utc)
 
-    def get(self, session_id: str) -> dict:
-        cart = self.db.query(Cart).filter_by(session_id=session_id).first()
+    def get(self, user_id: str, session_id: str) -> dict:
+        cart = self.db.query(Cart).filter_by(user_id=user_id, session_id=session_id).first()
         if cart is None:
             return {"session_id": session_id, "items": [], "total_amount": 0.0}
         items = []
@@ -30,10 +30,10 @@ class CartRepository:
             # total 由 service 层计算
         return {"session_id": session_id, "items": items, "total_amount": total}
 
-    def add(self, session_id: str, product_id: str, quantity: int) -> dict:
-        cart = self.db.query(Cart).filter_by(session_id=session_id).first()
+    def add(self, user_id: str, session_id: str, product_id: str, quantity: int) -> dict:
+        cart = self.db.query(Cart).filter_by(user_id=user_id, session_id=session_id).first()
         if cart is None:
-            cart = Cart(session_id=session_id)
+            cart = Cart(user_id=user_id, session_id=session_id)
             self.db.add(cart)
             self.db.flush()
         item = next((i for i in cart.items if i.product_id == product_id), None)
@@ -44,12 +44,12 @@ class CartRepository:
             item.quantity += quantity
         cart.updated_at = self._now()
         self.db.flush()
-        return self.get(session_id)
+        return self.get(user_id, session_id)
 
-    def update_quantity(self, session_id: str, product_id: str, quantity: int) -> dict:
-        cart = self.db.query(Cart).filter_by(session_id=session_id).first()
+    def update_quantity(self, user_id: str, session_id: str, product_id: str, quantity: int) -> dict:
+        cart = self.db.query(Cart).filter_by(user_id=user_id, session_id=session_id).first()
         if cart is None:
-            return self.get(session_id)
+            return self.get(user_id, session_id)
         item = next((i for i in cart.items if i.product_id == product_id), None)
         if quantity == 0:
             if item:
@@ -63,12 +63,12 @@ class CartRepository:
             self.db.add(item)
         cart.updated_at = self._now()
         self.db.flush()
-        return self.get(session_id)
+        return self.get(user_id, session_id)
 
-    def remove(self, session_id: str, product_id: str) -> dict:
-        cart = self.db.query(Cart).filter_by(session_id=session_id).first()
+    def remove(self, user_id: str, session_id: str, product_id: str) -> dict:
+        cart = self.db.query(Cart).filter_by(user_id=user_id, session_id=session_id).first()
         if cart is None:
-            return self.get(session_id)
+            return self.get(user_id, session_id)
         item = next((i for i in cart.items if i.product_id == product_id), None)
         if item:
             self.db.delete(item)
@@ -76,10 +76,10 @@ class CartRepository:
             self.db.expire(cart, ["items"])
         cart.updated_at = self._now()
         self.db.flush()
-        return self.get(session_id)
+        return self.get(user_id, session_id)
 
-    def clear(self, session_id: str) -> dict:
-        cart = self.db.query(Cart).filter_by(session_id=session_id).first()
+    def clear(self, user_id: str, session_id: str) -> dict:
+        cart = self.db.query(Cart).filter_by(user_id=user_id, session_id=session_id).first()
         if cart:
             for item in list(cart.items):
                 self.db.delete(item)
@@ -87,7 +87,7 @@ class CartRepository:
             self.db.expire(cart, ["items"])
             cart.updated_at = self._now()
             self.db.flush()
-        return self.get(session_id)
+        return self.get(user_id, session_id)
 
-    def checkout(self, session_id: str) -> dict:
-        return self.clear(session_id)
+    def checkout(self, user_id: str, session_id: str) -> dict:
+        return self.clear(user_id, session_id)

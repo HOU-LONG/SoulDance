@@ -149,10 +149,10 @@ def test_websocket_recommendation_event_order_and_quick_actions():
 
 
 def test_websocket_chat_uses_agent_stream_message(monkeypatch):
-    async def explode_handle_message(self, request):
+    async def explode_handle_message(self, user_id, request):
         raise AssertionError("websocket should stream events instead of awaiting handle_message")
 
-    async def fake_stream_message(self, request, compiled_ir=None):
+    async def fake_stream_message(self, user_id, request, compiled_ir=None):
         yield {"type": "assistant_state", "message_id": "assistant_test", "phase": "retrieving", "label": "streaming"}
         yield {"type": "done", "message_id": "assistant_test"}
 
@@ -258,7 +258,7 @@ def test_websocket_explicit_cart_action_updates_agent_cart_memory():
         cart_event = websocket.receive_json()
         done_event = websocket.receive_json()
 
-    context = app.state.agent.sessions.get("demo_ws_explicit_cart")
+    context = app.state.agent.sessions.get("anonymous", "demo_ws_explicit_cart")
     assert ack_event["type"] == "ack"
     assert cart_event["type"] == "cart_update"
     assert cart_event["product_id"] == product_id

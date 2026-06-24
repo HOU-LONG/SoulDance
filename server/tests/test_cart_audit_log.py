@@ -14,7 +14,7 @@ class TestCartAuditLog:
             image_path="img.jpg",
         )
         cart = CartService([product])
-        cart.add("s1", "p1", 2)
+        cart.add("anonymous", "s1", "p1", 2)
 
         log = cart.get_audit_log("s1")
         assert len(log) == 1
@@ -34,8 +34,8 @@ class TestCartAuditLog:
             image_path="img.jpg",
         )
         cart = CartService([product])
-        cart.add("s1", "p1", 1)
-        cart.update_quantity("s1", "p1", 5)
+        cart.add("anonymous", "s1", "p1", 1)
+        cart.update_quantity("anonymous", "s1", "p1", 5)
 
         log = cart.get_audit_log("s1")
         assert len(log) == 2
@@ -53,8 +53,8 @@ class TestCartAuditLog:
             image_path="img.jpg",
         )
         cart = CartService([product])
-        cart.add("s1", "p1", 1)
-        cart.update_quantity("s1", "p1", 0)
+        cart.add("anonymous", "s1", "p1", 1)
+        cart.update_quantity("anonymous", "s1", "p1", 0)
 
         log = cart.get_audit_log("s1")
         assert len(log) == 2
@@ -71,8 +71,8 @@ class TestCartAuditLog:
             image_path="img.jpg",
         )
         cart = CartService([product])
-        cart.add("s1", "p1", 1)
-        cart.remove("s1", "p1")
+        cart.add("anonymous", "s1", "p1", 1)
+        cart.remove("anonymous", "s1", "p1")
 
         log = cart.get_audit_log("s1")
         assert len(log) == 2
@@ -90,8 +90,8 @@ class TestCartAuditLog:
             image_path="img.jpg",
         )
         cart = CartService([product])
-        cart.add("s1", "p1", 1)
-        cart.checkout("s1")
+        cart.add("anonymous", "s1", "p1", 1)
+        cart.checkout("anonymous", "s1")
 
         log = cart.get_audit_log("s1")
         assert len(log) >= 2
@@ -108,8 +108,8 @@ class TestCartAuditLog:
             image_path="img.jpg",
         )
         cart = CartService([product])
-        cart.add("s1", "p1", 1)
-        cart.clear("s1")
+        cart.add("anonymous", "s1", "p1", 1)
+        cart.clear("anonymous", "s1")
 
         log = cart.get_audit_log("s1")
         assert any(entry["action"] == "clear" for entry in log)
@@ -126,7 +126,7 @@ class TestCartAuditLog:
         )
         cart = CartService([product])
         for i in range(105):
-            cart.add("s1", "p1", 1)
+            cart.add("anonymous", "s1", "p1", 1)
 
         log = cart.get_audit_log("s1")
         assert len(log) == 100
@@ -142,8 +142,8 @@ class TestCartAuditLog:
             image_path="img.jpg",
         )
         cart = CartService([product])
-        cart.add("s1", "p1", 1)
-        cart.add("s2", "p1", 2)
+        cart.add("anonymous", "s1", "p1", 1)
+        cart.add("anonymous", "s2", "p1", 2)
 
         assert len(cart.get_audit_log("s1")) == 1
         assert len(cart.get_audit_log("s2")) == 1

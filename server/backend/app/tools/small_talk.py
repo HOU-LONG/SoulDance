@@ -13,6 +13,7 @@ class SmallTalkTool:
         self._agent = agent
 
     async def execute(self, request: ChatRequest, context: SessionContext, **kwargs) -> AsyncIterator[dict]:
+        user_id = kwargs.get("user_id", "anonymous")
         intent = kwargs.get("intent", "small_talk")
-        async for event in self._agent._stream_no_retrieval_events(request, intent):
+        async for event in self._agent._stream_no_retrieval_events(user_id, request, intent):
             yield event

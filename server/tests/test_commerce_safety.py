@@ -20,8 +20,8 @@ def _product() -> Product:
 def test_cart_add_idempotency_key_does_not_double_add():
     cart = CartService([_product()])
 
-    first = cart.add("s1", "p1", 2, idempotency_key="idem-add-1")
-    second = cart.add("s1", "p1", 2, idempotency_key="idem-add-1")
+    first = cart.add("anonymous", "s1", "p1", 2, idempotency_key="idem-add-1")
+    second = cart.add("anonymous", "s1", "p1", 2, idempotency_key="idem-add-1")
 
     assert first == second
     assert second["items"][0]["quantity"] == 2
@@ -32,13 +32,13 @@ def test_cart_rejects_invalid_add_quantity():
     cart = CartService([_product()])
 
     try:
-        cart.add("s1", "p1", 0)
+        cart.add("anonymous", "s1", "p1", 0)
     except ValueError as exc:
         assert "quantity" in str(exc)
     else:
         raise AssertionError("quantity=0 should be rejected for add")
 
-    assert cart.get("s1")["items"] == []
+    assert cart.get("anonymous", "s1")["items"] == []
 
 
 def test_cart_rest_returns_400_for_invalid_quantity():
@@ -122,10 +122,10 @@ def test_order_persistence_stays_out_of_session_store_root(tmp_path):
     from backend.app.order_service import OrderService
 
     cart = CartService([_product()])
-    cart.add("s1", "p1", 1)
+    cart.add("anonymous", "s1", "p1", 1)
     order_service = OrderService(cart, tmp_path)
 
-    order_service.initiate_checkout("s1")
+    order_service.initiate_checkout("anonymous", "s1")
 
     assert (tmp_path / "orders" / "orders.json").exists()
     assert not (tmp_path / "orders.json").exists()

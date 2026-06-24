@@ -46,7 +46,7 @@ def test_agent_stream_returns_fallback_text_when_llm_stream_times_out(monkeypatc
     monkeypatch.setattr("backend.app.agent.DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS", 0.01, raising=False)
 
     events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="timeout_demo", message="推荐防晒霜"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="timeout_demo", message="推荐防晒霜"))
     )
 
     texts = [event.get("text", "") for event in events if event.get("type") == "text_delta"]

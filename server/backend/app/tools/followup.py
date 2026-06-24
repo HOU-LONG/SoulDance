@@ -13,6 +13,7 @@ class ProductFollowupTool:
         self._agent = agent
 
     async def execute(self, request: ChatRequest, context: SessionContext, **kwargs) -> AsyncIterator[dict]:
+        user_id = kwargs.get("user_id", "anonymous")
         compiled_ir = kwargs.get("compiled_ir")
-        async for event in self._agent._stream_followup(request, compiled_ir):
+        async for event in self._agent._stream_followup(user_id, request, compiled_ir):
             yield event

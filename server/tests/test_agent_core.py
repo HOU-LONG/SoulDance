@@ -2,6 +2,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+
 from backend.app.agent import ShopGuideAgent
 from backend.app.cart import CartService
 from backend.app.constraint_filter import explain_filter, hard_filter
@@ -290,7 +292,7 @@ def test_specific_food_product_request_builds_retrieval_plan():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     plan = asyncio.run(
-        agent.plan(ChatRequest(type="user_message", session_id="demo_dongpeng", message="\u6211\u8981\u4e00\u74f6\u4e1c\u9e4f\u7279\u996e"))
+        agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_dongpeng", message="\u6211\u8981\u4e00\u74f6\u4e1c\u9e4f\u7279\u996e"))
     )
 
     assert plan.intent == "recommend_product"
@@ -337,13 +339,7 @@ def test_planner_extracts_budget_and_negative_constraints():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     plan = asyncio.run(
-        agent.plan(
-            ChatRequest(
-                type="user_message",
-                session_id="demo",
-                message="推荐防晒霜，但不要含酒精的，也不要日系品牌，100以内",
-            )
-        )
+        agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo", message="推荐防晒霜，但不要含酒精的，也不要日系品牌，100以内"))
     )
 
     assert plan.intent == "recommend_product"
@@ -353,20 +349,18 @@ def test_planner_extracts_budget_and_negative_constraints():
     assert plan.category in {"防晒", "美妆护肤"}
 
 
-def test_hard_constraints_filter_forbidden_products():
+@pytest.mark.asyncio
+async def test_hard_constraints_filter_forbidden_products():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
-    plan = asyncio.run(
-        agent.plan(
-                ChatRequest(
-                    type="user_message",
-                    session_id="demo",
-                    message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
-                )
-            )
+    plan = await agent.plan("anonymous", ChatRequest(
+            type="user_message",
+            session_id="demo",
+            message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
         )
+    )
 
-    candidates = agent.retrieve_and_rank(plan)
+    candidates = await agent.retrieve_and_rank(plan, user_id="anonymous")
 
     assert candidates
     for ranked in candidates:
@@ -379,6 +373,7 @@ def test_negative_brand_apple_is_enforced_before_product_cards():
 
     events = asyncio.run(
         agent.handle_message(
+            "anonymous",
             ChatRequest(
                 type="user_message",
                 session_id="demo_no_apple",
@@ -401,6 +396,7 @@ def test_subcategory_query_keeps_essence_results_strict():
 
     events = asyncio.run(
         agent.handle_message(
+            "anonymous",
             ChatRequest(
                 type="user_message",
                 session_id="demo_essence_budget",
@@ -421,6 +417,7 @@ def test_unknown_taxonomy_request_returns_recovery_without_cross_category_cards(
 
     events = asyncio.run(
         agent.handle_message(
+            "anonymous",
             ChatRequest(
                 type="user_message",
                 session_id="demo_unknown_taxonomy",
@@ -438,12 +435,13 @@ def test_greeting_does_not_recommend_products():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     plan = asyncio.run(
-        agent.plan(ChatRequest(type="user_message", session_id="demo_greeting_plan", message="你好?"))
+        agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_greeting_plan", message="你好?"))
     )
     assert plan.intent == "small_talk"
 
     events = asyncio.run(
         agent.handle_message(
+            "anonymous",
             ChatRequest(
                 type="user_message",
                 session_id="demo_greeting",
@@ -467,6 +465,7 @@ def test_small_talk_variants_do_not_trigger_retrieval():
     for index, message in enumerate(["hello", "halo", "hallo", "在吗", "谢谢", "你是谁"]):
         events = asyncio.run(
             agent.handle_message(
+                "anonymous",
                 ChatRequest(type="user_message", session_id=f"demo_small_talk_{index}", message=message)
             )
         )
@@ -488,6 +487,7 @@ def test_small_talk_identity_combo_stays_small_talk():
     for index, message in enumerate(["你好，你是谁", "你好，你能做什么", "你是谁呀"]):
         plan = asyncio.run(
             agent.plan(
+                "anonymous",
                 ChatRequest(type="user_message", session_id=f"demo_small_talk_combo_plan_{index}", message=message)
             )
         )
@@ -495,6 +495,7 @@ def test_small_talk_identity_combo_stays_small_talk():
 
         events = asyncio.run(
             agent.handle_message(
+                "anonymous",
                 ChatRequest(type="user_message", session_id=f"demo_small_talk_combo_{index}", message=message)
             )
         )
@@ -515,6 +516,7 @@ def test_shopping_request_overrides_llm_small_talk_intent():
 
     plan = asyncio.run(
         agent.plan(
+            "anonymous",
             ChatRequest(
                 type="user_message",
                 session_id="demo_shopping_guard_plan",
@@ -526,6 +528,7 @@ def test_shopping_request_overrides_llm_small_talk_intent():
 
     events = asyncio.run(
         agent.handle_message(
+            "anonymous",
             ChatRequest(
                 type="user_message",
                 session_id="demo_shopping_guard",
@@ -545,11 +548,11 @@ def test_llm_small_talk_intent_is_honored_for_unlisted_greeting():
     llm = SemanticFrameLLM({"intent": "small_talk"}, {"intent": "small_talk"})
     agent = ShopGuideAgent(products, llm, retriever)
 
-    plan = asyncio.run(agent.plan(ChatRequest(type="user_message", session_id="demo_halo_plan", message="halo")))
+    plan = asyncio.run(agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_halo_plan", message="halo")))
     assert plan.intent == "small_talk"
 
     events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_halo", message="halo"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_halo", message="halo"))
     )
 
     event_types = [event["type"] for event in events]
@@ -608,8 +611,7 @@ def test_semantic_parser_normalizes_empty_list_constraint_patches_from_llm():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_empty_list_patch",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -617,8 +619,7 @@ def test_semantic_parser_normalizes_empty_list_constraint_patches_from_llm():
         )
     )
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_empty_list_patch",
                 message="刚刚那个是什么？",
@@ -637,8 +638,7 @@ def test_unclear_input_does_not_trigger_retrieval_or_product_cards():
 
     for index, message in enumerate(["sdfghjhgfdg", "我是猪"]):
         plan = asyncio.run(
-            agent.plan(
-                ChatRequest(
+            agent.plan("anonymous", ChatRequest(
                     type="user_message",
                     session_id=f"demo_unclear_plan_{index}",
                     message=message,
@@ -649,8 +649,7 @@ def test_unclear_input_does_not_trigger_retrieval_or_product_cards():
         assert plan.retrieval_mode == "no_retrieval"
 
         events = asyncio.run(
-            agent.handle_message(
-                ChatRequest(type="user_message", session_id=f"demo_unclear_{index}", message=message)
+            agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=f"demo_unclear_{index}", message=message)
             )
         )
 
@@ -675,13 +674,13 @@ def test_backend_admission_gate_blocks_llm_false_recommend_product_intent():
     agent = ShopGuideAgent(products, llm, retriever)
 
     plan = asyncio.run(
-        agent.plan(ChatRequest(type="user_message", session_id="demo_llm_false_positive_plan", message="我是猪"))
+        agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_llm_false_positive_plan", message="我是猪"))
     )
     assert plan.intent == "unclear_input"
     assert plan.retrieval_mode == "no_retrieval"
 
     events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_llm_false_positive", message="我是猪"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_llm_false_positive", message="我是猪"))
     )
 
     event_types = [event["type"] for event in events]
@@ -695,15 +694,13 @@ def test_greeting_with_product_request_still_recommends():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     plan = asyncio.run(
-        agent.plan(
-            ChatRequest(type="user_message", session_id="demo_greeting_product_plan", message="你好，推荐防晒霜")
+        agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_greeting_product_plan", message="你好，推荐防晒霜")
         )
     )
     assert plan.intent == "recommend_product"
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_greeting_product", message="你好，推荐防晒霜")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_greeting_product", message="你好，推荐防晒霜")
         )
     )
 
@@ -718,8 +715,7 @@ def test_llm_compare_misclassification_is_guarded_for_fresh_recommendation():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_cat_food",
                 message="想找一款猫粮，家里猫肠胃比较敏感，预算300左右，优先看口碑好的",
@@ -739,10 +735,9 @@ def test_structured_memory_cache_reuses_ranked_results_for_same_plan():
     agent = ShopGuideAgent(products, FakeLLMClient(), retriever, memory_cache=cache)
     request = ChatRequest(type="user_message", session_id="demo_cache", message="推荐防晒霜")
 
-    first_events = asyncio.run(agent.handle_message(request))
+    first_events = asyncio.run(agent.handle_message("anonymous", request))
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_cache_2", message="推荐防晒霜")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_cache_2", message="推荐防晒霜")
         )
     )
 
@@ -760,13 +755,11 @@ def test_structured_memory_cache_does_not_cross_hard_constraints():
     agent = ShopGuideAgent(products, FakeLLMClient(), retriever, memory_cache=cache)
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_cache_100", message="推荐精华，预算100以内")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_cache_100", message="推荐精华，预算100以内")
         )
     )
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_cache_800", message="推荐精华，预算800以内")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_cache_800", message="推荐精华，预算800以内")
         )
     )
 
@@ -774,24 +767,20 @@ def test_structured_memory_cache_does_not_cross_hard_constraints():
     assert cache.stats()["misses"] == 2
 
 
-def test_recommendation_memory_exact_hit_skips_retriever_and_llm_selection():
+@pytest.mark.asyncio
+async def test_recommendation_memory_exact_hit_skips_retriever_and_llm_selection():
     products = load_products("ecommerce_agent_dataset")
     retriever = CountingRetriever(products)
     probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
-    probe_plan = asyncio.run(
-        probe_agent.plan(ChatRequest(type="user_message", session_id="demo_rec_memory_probe", message="推荐防晒霜"))
-    )
-    selected_ids = [item.product.product_id for item in probe_agent.retrieve_and_rank(probe_plan)[:2]]
+    probe_plan = await probe_agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_rec_memory_probe", message="推荐防晒霜"))
+    probe_ranked = await probe_agent.retrieve_and_rank(probe_plan, user_id="anonymous")
+    selected_ids = [item.product.product_id for item in probe_ranked[:2]]
     llm = ProductSelectionLLM(selected_ids)
     memory = RecommendationMemoryCache()
     agent = ShopGuideAgent(products, llm, retriever, recommendation_memory=memory)
 
-    first_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_memory_1", message="推荐防晒霜"))
-    )
-    second_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_memory_2", message="推荐防晒霜"))
-    )
+    first_events = await agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_memory_1", message="推荐防晒霜"))
+    second_events = await agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_memory_2", message="推荐防晒霜"))
 
     first_products = [event["product"]["product_id"] for event in first_events if event["type"] == "product_item"]
     second_products = [event["product"]["product_id"] for event in second_events if event["type"] == "product_item"]
@@ -810,10 +799,10 @@ def test_recommendation_memory_does_not_cross_hard_constraints():
     agent = ShopGuideAgent(products, ProductSelectionLLM([]), retriever, recommendation_memory=memory)
 
     asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_constraint_1", message="推荐防晒霜"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_constraint_1", message="推荐防晒霜"))
     )
     asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_constraint_2", message="推荐防晒霜，预算1元以内"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_constraint_2", message="推荐防晒霜，预算1元以内"))
     )
 
     assert memory.stats()["exact_hits"] == 0
@@ -821,24 +810,20 @@ def test_recommendation_memory_does_not_cross_hard_constraints():
     assert memory.stats()["misses"] >= 2
 
 
-def test_recommendation_memory_semantic_hit_for_compatible_query():
+@pytest.mark.asyncio
+async def test_recommendation_memory_semantic_hit_for_compatible_query():
     products = load_products("ecommerce_agent_dataset")
     retriever = CountingRetriever(products)
     probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
-    probe_plan = asyncio.run(
-        probe_agent.plan(ChatRequest(type="user_message", session_id="demo_rec_sem_probe", message="推荐防晒霜"))
-    )
-    selected_ids = [item.product.product_id for item in probe_agent.retrieve_and_rank(probe_plan)[:1]]
+    probe_plan = await probe_agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_rec_sem_probe", message="推荐防晒霜"))
+    probe_ranked = await probe_agent.retrieve_and_rank(probe_plan, user_id="anonymous")
+    selected_ids = [item.product.product_id for item in probe_ranked[:1]]
     llm = ProductSelectionLLM(selected_ids)
     memory = RecommendationMemoryCache()
     agent = ShopGuideAgent(products, llm, retriever, recommendation_memory=memory)
 
-    asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_1", message="推荐防晒霜"))
-    )
-    second_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_2", message="想买一款防晒霜"))
-    )
+    await agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_sem_1", message="推荐防晒霜"))
+    second_events = await agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_sem_2", message="想买一款防晒霜"))
 
     second_products = [event["product"]["product_id"] for event in second_events if event["type"] == "product_item"]
     assert second_products == selected_ids
@@ -855,10 +840,10 @@ def test_recommendation_memory_semantic_hit_requires_soft_preference_compatibili
     agent = ShopGuideAgent(products, ProductSelectionLLM(["p_beauty_001"]), retriever, recommendation_memory=memory)
 
     asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_strict_1", message="推荐防晒霜"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_sem_strict_1", message="推荐防晒霜"))
     )
     second_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_sem_strict_2", message="推荐清爽防晒"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_sem_strict_2", message="推荐清爽防晒"))
     )
 
     assert memory.stats()["semantic_hits"] == 0
@@ -873,7 +858,7 @@ def test_recommendation_memory_is_not_used_for_unclear_input():
     agent = ShopGuideAgent(products, FakeLLMClient(), retriever, recommendation_memory=memory)
 
     events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_rec_unclear", message="我是猪"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_rec_unclear", message="我是猪"))
     )
 
     assert retriever.calls == 0
@@ -890,7 +875,7 @@ def test_product_followup_inherits_original_constraints():
         session_id="demo",
         message="推荐一款适合油皮的洗面奶，不要含酒精",
     )
-    events = asyncio.run(agent.handle_message(initial))
+    events = asyncio.run(agent.handle_message("anonymous", initial))
     product_events = [event for event in events if event["type"] == "product_item"]
     assert product_events
     focus_id = product_events[0]["product"]["product_id"]
@@ -901,7 +886,7 @@ def test_product_followup_inherits_original_constraints():
         focus_product_id=focus_id,
         message="这个有点贵，有没有100以内的？",
     )
-    followup_events = asyncio.run(agent.handle_message(followup))
+    followup_events = asyncio.run(agent.handle_message("anonymous", followup))
     replacement = next(event for event in followup_events if event["type"] == "replacement_product")
 
     assert replacement["product"]["price"] <= 100
@@ -913,8 +898,7 @@ def test_no_match_followup_does_not_emit_replacement_product():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_no_match",
                 message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
@@ -924,8 +908,7 @@ def test_no_match_followup_does_not_emit_replacement_product():
     primary = next(event for event in events if event["type"] == "product_item")
 
     followup_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="product_followup",
                 session_id="demo_no_match",
                 focus_product_id=primary["product"]["product_id"],
@@ -953,8 +936,7 @@ def test_followup_uses_semantic_constraint_edits_to_remove_old_constraints():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_semantic_followup",
                 message="推荐一款适合油皮的洗面奶，不要含酒精",
@@ -963,8 +945,7 @@ def test_followup_uses_semantic_constraint_edits_to_remove_old_constraints():
     )
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="product_followup",
                 session_id="demo_semantic_followup",
                 message="酒精可以接受，但要100以内",
@@ -972,7 +953,7 @@ def test_followup_uses_semantic_constraint_edits_to_remove_old_constraints():
         )
     )
 
-    updated_plan = agent.sessions.get("demo_semantic_followup").last_plan
+    updated_plan = agent.sessions.get("anonymous", "demo_semantic_followup").last_plan
     assert updated_plan.hard_constraints.price_max == 100
     assert "酒精" not in updated_plan.hard_constraints.exclude_terms
     assert updated_plan.hard_constraints.sub_category == "洁面"
@@ -992,8 +973,7 @@ def test_llm_product_followup_from_user_message_is_not_downgraded_to_unclear_inp
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_followup_cheaper",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -1003,8 +983,7 @@ def test_llm_product_followup_from_user_message_is_not_downgraded_to_unclear_inp
     primary = next(event for event in first_events if event["type"] == "product_item")
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_followup_cheaper",
                 message="换个更便宜的",
@@ -1038,8 +1017,7 @@ def test_llm_product_followup_can_explain_focus_product_without_new_card():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_followup_explain",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -1049,8 +1027,7 @@ def test_llm_product_followup_can_explain_focus_product_without_new_card():
     primary = next(event for event in first_events if event["type"] == "product_item")
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_followup_explain",
                 message="刚刚那个是什么？",
@@ -1086,8 +1063,7 @@ def test_no_match_followup_preserves_focus_for_later_explanation():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_preserve_focus_after_no_match",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -1097,8 +1073,7 @@ def test_no_match_followup_preserves_focus_for_later_explanation():
     primary = next(event for event in first_events if event["type"] == "product_item")
 
     no_match_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_preserve_focus_after_no_match",
                 message="换个更便宜的",
@@ -1106,14 +1081,13 @@ def test_no_match_followup_preserves_focus_for_later_explanation():
         )
     )
     assert "filter_recovery_options" in [event["type"] for event in no_match_events]
-    context_after_no_match = agent.sessions.get("demo_preserve_focus_after_no_match")
+    context_after_no_match = agent.sessions.get("anonymous", "demo_preserve_focus_after_no_match")
     assert context_after_no_match.focus_product_id == primary["product"]["product_id"]
     assert context_after_no_match.last_recommendations
     assert context_after_no_match.last_recommendations[0]["product_id"] == primary["product"]["product_id"]
 
     explain_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_preserve_focus_after_no_match",
                 message="刚刚那个是什么？",
@@ -1143,8 +1117,7 @@ def test_llm_product_followup_can_exclude_current_brand_from_user_message():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_followup_brand",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -1154,8 +1127,7 @@ def test_llm_product_followup_can_exclude_current_brand_from_user_message():
     primary = next(event for event in first_events if event["type"] == "product_item")
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_followup_brand",
                 message="不要这个品牌",
@@ -1177,8 +1149,7 @@ def test_contextual_short_cheaper_followup_keeps_product_context():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_short_cheaper_followup",
                 message="我想要华为手机，预算8000，拍照优先",
@@ -1188,8 +1159,7 @@ def test_contextual_short_cheaper_followup_keeps_product_context():
     primary = next(event for event in first_events if event["type"] == "product_item")
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_short_cheaper_followup",
                 message="再便宜点的呢？",
@@ -1200,7 +1170,7 @@ def test_contextual_short_cheaper_followup_keeps_product_context():
     states = [event for event in second_events if event["type"] == "assistant_state"]
     product_events = [event for event in second_events if event["type"] == "product_item"]
     assert states[0]["intent"] == "product_followup"
-    assert agent.sessions.get("demo_short_cheaper_followup").last_plan.hard_constraints.include_brands == ["华为"]
+    assert agent.sessions.get("anonymous", "demo_short_cheaper_followup").last_plan.hard_constraints.include_brands == ["华为"]
     if product_events:
         assert all(event["product"]["sub_category"] == primary["product"]["sub_category"] for event in product_events)
         assert all(event["product"]["price"] < primary["product"]["price"] for event in product_events)
@@ -1219,8 +1189,7 @@ def test_short_cheaper_followup_without_context_does_not_recommend_random_produc
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_short_cheaper_no_context",
                 message="再便宜点的呢？",
@@ -1240,8 +1209,7 @@ def test_contextual_followup_except_nike_excludes_nike_aliases():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_except_nike_followup",
                 message="我要跑鞋，预算1500",
@@ -1251,8 +1219,7 @@ def test_contextual_followup_except_nike_excludes_nike_aliases():
     assert any(event["type"] == "product_item" for event in first_events)
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_except_nike_followup",
                 message="除了耐克还有什么？",
@@ -1284,19 +1251,18 @@ def test_followup_more_expensive_filters_primary_above_focus_price():
     session_id = "demo_followup_more_expensive"
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
         )
     )
     first_primary = _primary_product_event(first_events)["product"]
 
     second_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
     )
 
     second_primary = _primary_product_event(second_events)["product"]
     assert second_primary["price"] > first_primary["price"]
-    assert agent.sessions.get(session_id).focus_product_id == second_primary["product_id"]
+    assert agent.sessions.get("anonymous", session_id).focus_product_id == second_primary["product_id"]
 
 
 def test_followup_text_primary_matches_product_card_when_llm_drifts_to_alternative():
@@ -1312,12 +1278,11 @@ def test_followup_text_primary_matches_product_card_when_llm_drifts_to_alternati
     session_id = "demo_followup_primary_drift_guard"
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
         )
     )
     followup_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
     )
 
     primary = _primary_product_event(followup_events)["product"]
@@ -1335,16 +1300,15 @@ def test_followup_primary_role_focus_and_recommendation_memory_are_same_product(
     session_id = "demo_followup_primary_state_consistency"
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="想要一个面霜，送给妈妈")
         )
     )
     followup_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
     )
 
     primary = _primary_product_event(followup_events)["product"]
-    context = agent.sessions.get(session_id)
+    context = agent.sessions.get("anonymous", session_id)
     assert context.focus_product_id == primary["product_id"]
     assert context.last_product_ids[0] == primary["product_id"]
     assert context.last_recommendations[0]["product_id"] == primary["product_id"]
@@ -1367,8 +1331,7 @@ def test_chat_followup_recommendation_emits_standard_product_item_card():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_chat_followup_product_item",
                 message="推荐一款笔记本电脑，预算10000以内，轻薄便携",
@@ -1379,8 +1342,7 @@ def test_chat_followup_recommendation_emits_standard_product_item_card():
     assert "Apple" in primary["product"]["brand"] or "苹果" in primary["product"]["brand"]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_chat_followup_product_item",
                 message="不要 Apple，换一款",
@@ -1411,8 +1373,7 @@ def test_chat_followup_explicit_huawei_exclusion_filters_alias_brand():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_chat_followup_huawei",
                 message="我想要华为手机，预算8000，拍照优先",
@@ -1423,8 +1384,7 @@ def test_chat_followup_explicit_huawei_exclusion_filters_alias_brand():
     assert "华为" in primary["product"]["brand"] or "HUAWEI" in primary["product"]["name"]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_chat_followup_huawei",
                 message="不要华为，换一款",
@@ -1454,8 +1414,7 @@ def test_brand_quick_action_names_primary_brand_instead_of_this_brand():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_brand_action_names_primary",
                 message="推荐一款笔记本电脑，预算10000以内，轻薄便携",
@@ -1486,8 +1445,7 @@ def test_semantic_llm_receives_focus_product_and_recommendation_summaries():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_context_payload",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -1495,8 +1453,7 @@ def test_semantic_llm_receives_focus_product_and_recommendation_summaries():
         )
     )
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_llm_context_payload",
                 message="刚刚那个是什么？",
@@ -1528,8 +1485,7 @@ def test_contextual_llm_judge_recovers_followup_when_primary_semantic_parse_is_u
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_contextual_judge",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -1539,8 +1495,7 @@ def test_contextual_llm_judge_recovers_followup_when_primary_semantic_parse_is_u
     assert any(event["type"] == "product_item" for event in first_events)
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_contextual_judge",
                 message="换个更便宜的",
@@ -1566,15 +1521,15 @@ def test_response_prompt_mentions_primary_and_alternative_differences():
     assert "备选差异" in RESPONSE_SYSTEM_PROMPT
 
 
-def test_response_evidence_payload_includes_four_allowed_products():
+@pytest.mark.asyncio
+async def test_response_evidence_payload_includes_four_allowed_products():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
-    plan = asyncio.run(
-        agent.plan(ChatRequest(type="user_message", session_id="demo_payload_four", message="推荐数码电子产品，预算20000"))
-    )
+    plan = await agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_payload_four", message="推荐数码电子产品，预算20000"))
+    retrieved = await agent.retrieve_and_rank(plan, user_id="anonymous")
     ranked = [
         RankedProduct(product=item.product, score=item.score, reason=item.reason, evidence=item.evidence, tier=item.tier)
-        for item in agent.retrieve_and_rank(plan)[:4]
+        for item in retrieved[:4]
     ]
 
     payload = _response_evidence_payload(plan, ranked)
@@ -1615,8 +1570,7 @@ def test_recommendation_uses_single_intent_compiler_without_llm_plan():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_single_parse",
                 message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
@@ -1625,7 +1579,7 @@ def test_recommendation_uses_single_intent_compiler_without_llm_plan():
     )
 
     assert any(event["type"] == "product_item" for event in events)
-    context = agent.sessions.get("demo_single_parse")
+    context = agent.sessions.get("anonymous", "demo_single_parse")
     assert context.state.constraint_state.hard.sub_category == "防晒"
     assert "酒精" in context.state.constraint_state.hard.exclude_terms
     assert context.state.recommendation_memory.items[0].index == 0
@@ -1662,8 +1616,7 @@ def test_session_state_is_authoritative_for_followup_constraint_edits():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_state_followup",
                 message="推荐一款适合油皮的洗面奶，不要含酒精",
@@ -1671,8 +1624,7 @@ def test_session_state_is_authoritative_for_followup_constraint_edits():
         )
     )
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="product_followup",
                 session_id="demo_state_followup",
                 message="酒精可以接受，但要100以内",
@@ -1680,7 +1632,7 @@ def test_session_state_is_authoritative_for_followup_constraint_edits():
         )
     )
 
-    context = agent.sessions.get("demo_state_followup")
+    context = agent.sessions.get("anonymous", "demo_state_followup")
     hard = context.state.constraint_state.hard
     assert hard.sub_category == "洁面"
     assert hard.price_max == 100
@@ -1709,7 +1661,8 @@ def test_cart_reference_resolver_ignores_hallucinated_product_id():
 
     result = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_hallucinated_cart",
                 message="把刚才那款加入购物车",
@@ -1728,8 +1681,7 @@ def test_recommendation_streams_understanding_before_products_and_quick_actions(
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_stream_order",
                 message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
@@ -1758,8 +1710,7 @@ def test_recovery_without_products_does_not_emit_product_focus_quick_actions():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_no_product_actions",
                 message="我想给大学生买一台轻薄笔记本，预算1元以内，不要苹果",
@@ -1778,30 +1729,25 @@ def test_unknown_taxonomy_recovery_does_not_emit_quick_actions():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id="demo_towel_no_actions", message="推荐毛巾"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_towel_no_actions", message="推荐毛巾"))
     )
 
     assert "filter_recovery_options" in [event["type"] for event in events]
     assert "quick_actions" not in [event["type"] for event in events]
 
 
-def test_llm_selection_controls_single_product_card_count():
+@pytest.mark.asyncio
+async def test_llm_selection_controls_single_product_card_count():
     products = load_products("ecommerce_agent_dataset")
     probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
-    probe_plan = asyncio.run(
-        probe_agent.plan(
-            ChatRequest(type="user_message", session_id="demo_select_one_probe", message="推荐数码电子产品，预算20000")
-        )
+    probe_plan = await probe_agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_select_one_probe", message="推荐数码电子产品，预算20000")
     )
-    first_id = probe_agent.retrieve_and_rank(probe_plan)[0].product.product_id
+    probe_ranked = await probe_agent.retrieve_and_rank(probe_plan, user_id="anonymous")
+    first_id = probe_ranked[0].product.product_id
     llm = ProductSelectionLLM([first_id])
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
-    events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_select_one", message="推荐数码电子产品，预算20000")
-        )
-    )
+    events = await agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_select_one", message="推荐数码电子产品，预算20000"))
 
     product_events = [event for event in events if event["type"] == "product_item"]
     assert [event["product"]["product_id"] for event in product_events] == [first_id]
@@ -1813,23 +1759,18 @@ def test_llm_selection_controls_single_product_card_count():
     assert selection_state["selected_count"] == 1
 
 
-def test_llm_selection_can_emit_four_relevant_product_cards():
+@pytest.mark.asyncio
+async def test_llm_selection_can_emit_four_relevant_product_cards():
     products = load_products("ecommerce_agent_dataset")
     probe_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
-    probe_plan = asyncio.run(
-        probe_agent.plan(
-            ChatRequest(type="user_message", session_id="demo_select_four_probe", message="推荐数码电子产品，预算20000")
-        )
+    probe_plan = await probe_agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_select_four_probe", message="推荐数码电子产品，预算20000")
     )
-    selected_ids = [item.product.product_id for item in probe_agent.retrieve_and_rank(probe_plan)[:4]]
+    probe_ranked = await probe_agent.retrieve_and_rank(probe_plan, user_id="anonymous")
+    selected_ids = [item.product.product_id for item in probe_ranked[:4]]
     llm = ProductSelectionLLM(selected_ids)
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
-    events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_select_four", message="推荐数码电子产品，预算20000")
-        )
-    )
+    events = await agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_select_four", message="推荐数码电子产品，预算20000"))
 
     product_ids = [event["product"]["product_id"] for event in events if event["type"] == "product_item"]
     assert product_ids == selected_ids
@@ -1843,8 +1784,7 @@ def test_llm_selection_rejects_out_of_pool_and_hard_constraint_violations():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_select_safe", message="推荐精华，预算100以内")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_select_safe", message="推荐精华，预算100以内")
         )
     )
 
@@ -1858,8 +1798,7 @@ def test_recommendation_explanation_streams_before_product_cards():
     agent = ShopGuideAgent(products, llm, FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_stream_chunks",
                 message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
@@ -1883,8 +1822,7 @@ def test_recommendation_stream_waits_for_llm_explanation_before_product_cards():
         products = load_products("ecommerce_agent_dataset")
         llm = BlockingResponseLLM()
         agent = ShopGuideAgent(products, llm, FakeRetriever())
-        stream = agent.stream_message(
-            ChatRequest(
+        stream = agent.stream_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_true_stream",
                 message="推荐防晒霜，但不要含酒精的，也不要日系品牌",
@@ -1927,8 +1865,7 @@ def test_small_talk_and_unclear_input_use_llm_humanized_text_without_products():
 
     for index, message in enumerate(["你好", "我是猪"]):
         events = asyncio.run(
-            agent.handle_message(
-                ChatRequest(type="user_message", session_id=f"demo_human_chitchat_{index}", message=message)
+            agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=f"demo_human_chitchat_{index}", message=message)
             )
         )
         event_types = [event["type"] for event in events]
@@ -1945,8 +1882,7 @@ def test_ambiguous_phone_request_asks_clarification_without_products():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_clarify", message="推荐一款手机")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_clarify", message="推荐一款手机")
         )
     )
 
@@ -1962,8 +1898,7 @@ def test_phone_request_with_budget_and_priority_recommends_without_clarification
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_phone_ready",
                 message="推荐一款手机，预算4000，拍照优先",
@@ -1984,15 +1919,13 @@ def test_clarification_answer_reuses_session_category_and_soft_preference():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_clarify_answer", message="推荐一款手机")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_clarify_answer", message="推荐一款手机")
         )
     )
     assert "clarification_request" in [event["type"] for event in first_events]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_clarify_answer", message="拍照优先，预算4000")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_clarify_answer", message="拍照优先，预算4000")
         )
     )
 
@@ -2001,7 +1934,7 @@ def test_clarification_answer_reuses_session_category_and_soft_preference():
     product_events = [event for event in second_events if event["type"] == "product_item"]
     assert product_events
     assert all(event["product"]["sub_category"] == "智能手机" for event in product_events)
-    plan = agent.sessions.get("demo_clarify_answer").last_plan
+    plan = agent.sessions.get("anonymous", "demo_clarify_answer").last_plan
     assert plan.soft_preferences["priority"] == "拍照"
 
 
@@ -2010,15 +1943,13 @@ def test_new_taxonomy_request_replaces_pending_clarification_category():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_switch_pending", message="推荐一台笔记本")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_switch_pending", message="推荐一台笔记本")
         )
     )
     assert "clarification_request" in [event["type"] for event in first_events]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_switch_pending", message="我想要手机")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_switch_pending", message="我想要手机")
         )
     )
 
@@ -2028,7 +1959,7 @@ def test_new_taxonomy_request_replaces_pending_clarification_category():
     question = next(event["question"] for event in second_events if event["type"] == "clarification_request")
     assert "拍照" in question
     assert "笔记本" not in question
-    plan = agent.sessions.get("demo_switch_pending").last_plan
+    plan = agent.sessions.get("anonymous", "demo_switch_pending").last_plan
     assert plan.hard_constraints.sub_category == "智能手机"
 
 
@@ -2037,15 +1968,13 @@ def test_clarification_preference_answer_inherits_pending_category():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_pending_answer", message="推荐一台笔记本")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_pending_answer", message="推荐一台笔记本")
         )
     )
     assert "clarification_request" in [event["type"] for event in first_events]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_pending_answer", message="性价比优先，预算5000以内")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_pending_answer", message="性价比优先，预算5000以内")
         )
     )
 
@@ -2057,7 +1986,7 @@ def test_clarification_preference_answer_inherits_pending_category():
         assert all(event["product"]["price"] <= 5000 for event in product_events)
     else:
         assert "filter_recovery_options" in event_types
-    plan = agent.sessions.get("demo_pending_answer").last_plan
+    plan = agent.sessions.get("anonymous", "demo_pending_answer").last_plan
     assert plan.hard_constraints.sub_category == "笔记本电脑"
     assert plan.soft_preferences["priority"] == "性价比"
 
@@ -2067,8 +1996,7 @@ def test_clarification_option_preference_does_not_add_hidden_budget():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_pending_no_hidden_budget", message="我要一个笔记本电脑")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_pending_no_hidden_budget", message="我要一个笔记本电脑")
         )
     )
     clarification = next(event for event in first_events if event["type"] == "clarification_request")
@@ -2077,8 +2005,7 @@ def test_clarification_option_preference_does_not_add_hidden_budget():
     assert "5000" not in value_option["message"]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_pending_no_hidden_budget",
                 message=value_option["message"],
@@ -2087,7 +2014,7 @@ def test_clarification_option_preference_does_not_add_hidden_budget():
     )
 
     assert "clarification_request" not in [event["type"] for event in second_events]
-    plan = agent.sessions.get("demo_pending_no_hidden_budget").last_plan
+    plan = agent.sessions.get("anonymous", "demo_pending_no_hidden_budget").last_plan
     assert plan.hard_constraints.sub_category == "笔记本电脑"
     assert plan.hard_constraints.price_max is None
     assert plan.soft_preferences["priority"] == "性价比"
@@ -2098,17 +2025,15 @@ def test_explicit_budget_in_clarification_answer_is_still_hard_constraint():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_pending_explicit_budget", message="我要一个笔记本电脑")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_pending_explicit_budget", message="我要一个笔记本电脑")
         )
     )
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_pending_explicit_budget", message="性价比优先，预算5000以内")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_pending_explicit_budget", message="性价比优先，预算5000以内")
         )
     )
 
-    plan = agent.sessions.get("demo_pending_explicit_budget").last_plan
+    plan = agent.sessions.get("anonymous", "demo_pending_explicit_budget").last_plan
     assert plan.hard_constraints.price_max == 5000
     assert plan.soft_preferences["priority"] == "性价比"
 
@@ -2118,8 +2043,7 @@ def test_ambiguous_laptop_request_asks_clarification_without_products():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_laptop_clarify", message="推荐一台笔记本")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_laptop_clarify", message="推荐一台笔记本")
         )
     )
 
@@ -2135,8 +2059,7 @@ def test_ambiguous_computer_request_asks_clarification_without_products():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_computer_clarify", message="我要一个电脑")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_computer_clarify", message="我要一个电脑")
         )
     )
 
@@ -2145,7 +2068,7 @@ def test_ambiguous_computer_request_asks_clarification_without_products():
     assert "product_item" not in event_types
     question = next(event["question"] for event in events if event["type"] == "clarification_request")
     assert "轻薄" in question
-    plan = agent.sessions.get("demo_computer_clarify").last_plan
+    plan = agent.sessions.get("anonymous", "demo_computer_clarify").last_plan
     assert plan.hard_constraints.sub_category == "笔记本电脑"
 
 
@@ -2154,15 +2077,13 @@ def test_generic_shoe_request_after_computer_pending_switches_task():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_computer_to_shoe", message="我要一个电脑")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_computer_to_shoe", message="我要一个电脑")
         )
     )
     assert "clarification_request" in [event["type"] for event in first_events]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_computer_to_shoe", message="我想要个鞋")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_computer_to_shoe", message="我想要个鞋")
         )
     )
 
@@ -2177,7 +2098,7 @@ def test_generic_shoe_request_after_computer_pending_switches_task():
     option_labels = [option["label"] for option in options]
     assert any("跑步" in label for label in option_labels)
     assert any("篮球" in label for label in option_labels)
-    plan = agent.sessions.get("demo_computer_to_shoe").last_plan
+    plan = agent.sessions.get("anonymous", "demo_computer_to_shoe").last_plan
     assert plan.hard_constraints.category == "服饰运动"
     assert plan.hard_constraints.sub_category is None
 
@@ -2187,15 +2108,13 @@ def test_rejecting_computer_then_requesting_shoes_clears_pending_computer():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_reject_computer_to_shoe", message="我要一个电脑")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_reject_computer_to_shoe", message="我要一个电脑")
         )
     )
     assert "clarification_request" in [event["type"] for event in first_events]
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_reject_computer_to_shoe",
                 message="我不想要笔记本了，我想要个鞋",
@@ -2208,7 +2127,7 @@ def test_rejecting_computer_then_requesting_shoes_clears_pending_computer():
     question = next(event["question"] for event in second_events if event["type"] == "clarification_request")
     assert "笔记本" not in question
     assert "电脑" not in question
-    plan = agent.sessions.get("demo_reject_computer_to_shoe").last_plan
+    plan = agent.sessions.get("anonymous", "demo_reject_computer_to_shoe").last_plan
     assert plan.hard_constraints.category == "服饰运动"
     assert plan.hard_constraints.sub_category is None
 
@@ -2218,8 +2137,7 @@ def test_explicit_running_shoes_request_uses_running_shoes_not_generic_shoe_clar
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_running_shoes", message="我要跑鞋")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_running_shoes", message="我要跑鞋")
         )
     )
 
@@ -2235,8 +2153,7 @@ def test_generic_gift_request_asks_clarification_without_cross_category_cards():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_gift_clarify", message="送女朋友礼物")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_gift_clarify", message="送女朋友礼物")
         )
     )
 
@@ -2252,16 +2169,14 @@ def test_generic_skincare_request_asks_clarification_but_specific_essence_does_n
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     generic_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_skincare_clarify", message="推荐护肤品")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_skincare_clarify", message="推荐护肤品")
         )
     )
     assert "clarification_request" in [event["type"] for event in generic_events]
     assert not any(event["type"] == "product_item" for event in generic_events)
 
     specific_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_skincare_specific", message="推荐精华，预算100以内")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_skincare_specific", message="推荐精华，预算100以内")
         )
     )
     assert "clarification_request" not in [event["type"] for event in specific_events]
@@ -2276,8 +2191,7 @@ def test_no_match_returns_filter_recovery_options():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_recovery",
                 message="推荐防晒霜，但不要含酒精的，也不要日系品牌，1元以内",
@@ -2296,8 +2210,7 @@ def test_compare_products_uses_last_recommendations_without_hallucinating():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     initial_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_compare", message="推荐防晒霜")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_compare", message="推荐防晒霜")
         )
     )
     product_ids = [
@@ -2306,8 +2219,7 @@ def test_compare_products_uses_last_recommendations_without_hallucinating():
     assert len(product_ids) >= 2
 
     compare_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_compare", message="第一款和第二款哪个更适合油皮？")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_compare", message="第一款和第二款哪个更适合油皮？")
         )
     )
 
@@ -2322,8 +2234,7 @@ def test_compare_three_products_returns_structured_dimensions():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     initial_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_compare_three", message="推荐防晒霜")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_compare_three", message="推荐防晒霜")
         )
     )
     product_ids = [
@@ -2332,8 +2243,7 @@ def test_compare_three_products_returns_structured_dimensions():
     assert len(product_ids) >= 3
 
     compare_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_compare_three", message="这三款对比一下")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_compare_three", message="这三款对比一下")
         )
     )
 
@@ -2352,8 +2262,7 @@ def test_reference_can_resolve_first_product_from_previous_previous_recommendati
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     laptop_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_reference_history",
                 message="推荐笔记本电脑，预算15000，轻薄便携",
@@ -2363,8 +2272,7 @@ def test_reference_can_resolve_first_product_from_previous_previous_recommendati
     laptop_primary = next(event for event in laptop_events if event["type"] == "product_item")["product"]
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_reference_history",
                 message="推荐一款手机，预算8000，拍照优先",
@@ -2373,8 +2281,7 @@ def test_reference_can_resolve_first_product_from_previous_previous_recommendati
     )
 
     explain_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_reference_history",
                 message="上上轮第一款是什么？",
@@ -2395,8 +2302,7 @@ def test_unknown_taxonomy_recovery_click_uses_pending_recovery_context():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_pending_recovery", message="我想要飞机")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_pending_recovery", message="我想要飞机")
         )
     )
 
@@ -2405,8 +2311,7 @@ def test_unknown_taxonomy_recovery_click_uses_pending_recovery_context():
     assert any(option.get("payload", {}).get("recovery_id") for option in recovery["options"])
 
     recovered = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_pending_recovery",
                 message="换个相近需求重新筛",
@@ -2429,8 +2334,7 @@ def test_price_min_request_uses_recovery_instead_of_generic_phone_clarification(
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_price_min_phone",
                 message="我想要华为手机，10000元以上的",
@@ -2439,7 +2343,7 @@ def test_price_min_request_uses_recovery_instead_of_generic_phone_clarification(
     )
 
     event_types = [event["type"] for event in events]
-    context = agent.sessions.get("demo_price_min_phone")
+    context = agent.sessions.get("anonymous", "demo_price_min_phone")
     assert context.last_plan.hard_constraints.price_min == 10000
     assert context.last_plan.hard_constraints.price_max is None
     assert "product_item" not in event_types
@@ -2455,20 +2359,18 @@ def test_price_min_and_price_max_parse_separately():
     low_agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     asyncio.run(
-        high_agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_price_min_parse", message="推荐手机，预算10000以上")
+        high_agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_price_min_parse", message="推荐手机，预算10000以上")
         )
     )
-    high_plan = high_agent.sessions.get("demo_price_min_parse").last_plan
+    high_plan = high_agent.sessions.get("anonymous", "demo_price_min_parse").last_plan
     assert high_plan.hard_constraints.price_min == 10000
     assert high_plan.hard_constraints.price_max is None
 
     asyncio.run(
-        low_agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_price_max_parse", message="推荐手机，预算4000以内")
+        low_agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_price_max_parse", message="推荐手机，预算4000以内")
         )
     )
-    low_plan = low_agent.sessions.get("demo_price_max_parse").last_plan
+    low_plan = low_agent.sessions.get("anonymous", "demo_price_max_parse").last_plan
     assert low_plan.hard_constraints.price_min is None
     assert low_plan.hard_constraints.price_max == 4000
 
@@ -2487,11 +2389,10 @@ def test_price_max_parse_common_upper_bound_phrases():
     for index, message in enumerate(phrases):
         agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
         asyncio.run(
-            agent.handle_message(
-                ChatRequest(type="user_message", session_id=f"demo_price_max_phrase_{index}", message=message)
+            agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=f"demo_price_max_phrase_{index}", message=message)
             )
         )
-        plan = agent.sessions.get(f"demo_price_max_phrase_{index}").last_plan
+        plan = agent.sessions.get("anonymous", f"demo_price_max_phrase_{index}").last_plan
         assert plan.hard_constraints.price_min is None
         assert plan.hard_constraints.price_max == 30
 
@@ -2501,8 +2402,7 @@ def test_budget_limited_coffee_never_returns_over_budget_products():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_coffee_under_30", message="我想要一杯不超过30元的咖啡")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_coffee_under_30", message="我想要一杯不超过30元的咖啡")
         )
     )
 
@@ -2519,15 +2419,13 @@ def test_product_followup_excludes_named_brand_from_recommendations():
     session_id = "demo_followup_no_nestle"
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="推荐一款咖啡")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="推荐一款咖啡")
         )
     )
     primary = next(event["product"] for event in first_events if event["type"] == "product_item")
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="product_followup",
                 session_id=session_id,
                 focus_product_id=primary["product_id"],
@@ -2543,7 +2441,7 @@ def test_product_followup_excludes_named_brand_from_recommendations():
     ]
     assert products_after_followup
     assert all("雀巢" not in product["brand"] for product in products_after_followup)
-    context = agent.sessions.get(session_id)
+    context = agent.sessions.get("anonymous", session_id)
     assert "雀巢" in context.last_plan.hard_constraints.exclude_brands
 
 
@@ -2553,23 +2451,22 @@ def test_cheaper_followup_does_not_persist_focus_price_as_budget_cap():
     session_id = "demo_cheaper_not_budget"
 
     initial_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
         )
     )
     visible_products = [event["product"] for event in initial_events if event["type"] == "product_item"]
     assert visible_products
     focus_product = max(visible_products, key=lambda product: product["price"])
     focus_price = focus_product["price"]
-    context = agent.sessions.get(session_id)
+    context = agent.sessions.get("anonymous", session_id)
     context.focus_product_id = focus_product["product_id"]
     context.state.active_focus.product_id = focus_product["product_id"]
 
     followup_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="换个更便宜的"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="换个更便宜的"))
     )
 
-    context = agent.sessions.get(session_id)
+    context = agent.sessions.get("anonymous", session_id)
     assert context.last_plan.hard_constraints.price_max == 8000
     assert context.state.constraint_state.hard.price_max == 8000
     product_prices = [event["product"]["price"] for event in followup_events if event["type"] == "product_item"]
@@ -2584,15 +2481,14 @@ def test_compare_index_question_uses_recommendation_event_memory():
     session_id = "demo_compare_index_question"
 
     initial_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
         )
     )
     product_ids = [event["product"]["product_id"] for event in initial_events if event["type"] == "product_item"]
     assert len(product_ids) >= 3
 
     compare_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="第一款和第三款怎么选？"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="第一款和第三款怎么选？"))
     )
 
     comparison = next(event for event in compare_events if event["type"] == "comparison_result")
@@ -2608,17 +2504,16 @@ def test_compare_previous_products_survives_last_product_ids_single_focus_overri
     session_id = "demo_compare_previous_visible_set"
 
     initial_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机，预算8000，拍照优先")
         )
     )
     product_ids = [event["product"]["product_id"] for event in initial_events if event["type"] == "product_item"]
     assert len(product_ids) >= 3
-    context = agent.sessions.get(session_id)
+    context = agent.sessions.get("anonymous", session_id)
     context.last_product_ids = product_ids[:1]
 
     compare_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="对比一下之前的手机"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="对比一下之前的手机"))
     )
 
     comparison = next(event for event in compare_events if event["type"] == "comparison_result")
@@ -2631,8 +2526,7 @@ def test_compare_above_products_uses_recent_recommendation_set_and_structured_fi
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     initial_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_compare_above", message="推荐防晒霜")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_compare_above", message="推荐防晒霜")
         )
     )
     product_ids = [
@@ -2641,8 +2535,7 @@ def test_compare_above_products_uses_recent_recommendation_set_and_structured_fi
     assert len(product_ids) >= 2
 
     compare_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_compare_above", message="对比以上几款我看看呢？")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_compare_above", message="对比以上几款我看看呢？")
         )
     )
 
@@ -2682,8 +2575,7 @@ def test_scenario_bundle_streams_grouped_items():
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_bundle",
                 message="下周去三亚度假，帮我搭配一套从防晒到穿搭的方案",
@@ -2705,13 +2597,13 @@ def test_natural_language_cart_actions_resolve_recent_product():
     cart = CartService(products)
 
     initial_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_nl_cart", message="推荐适合油皮的洗面奶")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_nl_cart", message="推荐适合油皮的洗面奶")
         )
     )
     primary = next(event for event in initial_events if event["type"] == "product_item")
 
     add_result = agent.handle_cart_message(
+        "anonymous",
         ChatRequest(type="user_message", session_id="demo_nl_cart", message="把刚才那款加到购物车"),
         cart,
     )
@@ -2719,6 +2611,7 @@ def test_natural_language_cart_actions_resolve_recent_product():
     assert add_result["action"] == "add_to_cart"
 
     update_result = agent.handle_cart_message(
+        "anonymous",
         ChatRequest(type="user_message", session_id="demo_nl_cart", message="数量改成2"),
         cart,
     )
@@ -2745,11 +2638,10 @@ def test_semantic_cart_operation_targets_cheapest_recent_recommendation():
     cart = CartService(products)
 
     asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_semantic_cart", message="推荐防晒霜")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_semantic_cart", message="推荐防晒霜")
         )
     )
-    context = agent.sessions.get("demo_semantic_cart")
+    context = agent.sessions.get("anonymous", "demo_semantic_cart")
     expected_product_id = min(
         (agent.product_map[product_id] for product_id in context.last_product_ids),
         key=lambda product: product.price,
@@ -2757,7 +2649,8 @@ def test_semantic_cart_operation_targets_cheapest_recent_recommendation():
 
     result = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_semantic_cart",
                 message="把刚才推荐里最便宜的加两件到购物车",
@@ -2777,16 +2670,16 @@ def test_cart_service_add_update_checkout():
     cart = CartService(products)
     product_id = products[0].product_id
 
-    cart.add("demo", product_id, 1)
-    cart.update_quantity("demo", product_id, 2)
-    snapshot = cart.get("demo")
+    cart.add("anonymous", "demo", product_id, 1)
+    cart.update_quantity("anonymous", "demo", product_id, 2)
+    snapshot = cart.get("anonymous", "demo")
 
     assert snapshot["items"][0]["quantity"] == 2
     assert snapshot["total_amount"] == products[0].price * 2
 
-    checkout = cart.checkout("demo")
+    checkout = cart.checkout("anonymous", "demo")
     assert checkout["status"] == "ok"
-    assert cart.get("demo")["items"] == []
+    assert cart.get("anonymous", "demo")["items"] == []
 
 
 def test_cart_checkout_order_id_is_unique_per_checkout():
@@ -2794,10 +2687,10 @@ def test_cart_checkout_order_id_is_unique_per_checkout():
     cart = CartService(products)
     product_id = products[0].product_id
 
-    cart.add("demo_unique_order", product_id, 1)
-    first = cart.checkout("demo_unique_order")
-    cart.add("demo_unique_order", product_id, 1)
-    second = cart.checkout("demo_unique_order")
+    cart.add("anonymous", "demo_unique_order", product_id, 1)
+    first = cart.checkout("anonymous", "demo_unique_order")
+    cart.add("anonymous", "demo_unique_order", product_id, 1)
+    second = cart.checkout("anonymous", "demo_unique_order")
 
     assert first["order_id"] != second["order_id"]
 
@@ -2929,8 +2822,7 @@ def test_recommendation_product_card_uses_browser_accessible_image_url():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_product_image_url",
                 message="推荐一款手机，预算8000，拍照优先",
@@ -2950,8 +2842,7 @@ def test_brand_phone_request_recommends_without_clarification():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_huawei_direct_recommend",
                 message="我要华为手机",
@@ -2982,18 +2873,18 @@ def test_pending_clarification_answer_wins_over_llm_followup_misroute():
     session_id = "demo_pending_answer_priority"
 
     first_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="推荐一款手机"))
     )
     assert "clarification_request" in [event["type"] for event in first_events]
 
     second_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="拍照优先"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="拍照优先"))
     )
 
     text = "".join(event.get("text", "") for event in second_events if event["type"] == "text_delta")
     assert "缺少可追问商品" not in text
     assert any(event["type"] == "product_item" for event in second_events)
-    assert agent.sessions.get(session_id).last_plan.soft_preferences.get("priority") == "拍照"
+    assert agent.sessions.get("anonymous", session_id).last_plan.soft_preferences.get("priority") == "拍照"
 
 
 def test_specific_category_gift_recommends_without_generic_gift_clarification():
@@ -3001,8 +2892,7 @@ def test_specific_category_gift_recommends_without_generic_gift_clarification():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_cream_for_mom",
                 message="想要一个面霜，送给妈妈",
@@ -3015,7 +2905,7 @@ def test_specific_category_gift_recommends_without_generic_gift_clarification():
     product_events = [event for event in events if event["type"] == "product_item"]
     assert product_events
     assert all(event["product"]["sub_category"] == "面霜" for event in product_events)
-    plan = agent.sessions.get("demo_cream_for_mom").last_plan
+    plan = agent.sessions.get("anonymous", "demo_cream_for_mom").last_plan
     assert plan.soft_preferences.get("recipient") == "长辈"
     assert plan.soft_preferences.get("occasion") == "送礼"
 
@@ -3025,8 +2915,7 @@ def test_generic_makeup_gift_uses_beauty_category_not_food_or_clothing():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_makeup_for_mom",
                 message="想要一个化妆的，送给妈妈",
@@ -3039,7 +2928,7 @@ def test_generic_makeup_gift_uses_beauty_category_not_food_or_clothing():
     product_events = [event for event in events if event["type"] == "product_item"]
     assert product_events
     assert all(event["product"]["category"] == "美妆护肤" for event in product_events)
-    plan = agent.sessions.get("demo_makeup_for_mom").last_plan
+    plan = agent.sessions.get("anonymous", "demo_makeup_for_mom").last_plan
     assert plan.hard_constraints.category == "美妆护肤"
     assert plan.hard_constraints.sub_category is None
     assert plan.soft_preferences.get("recipient") == "长辈"
@@ -3052,22 +2941,21 @@ def test_makeup_aliases_resolve_to_beauty_category():
 
     for index, message in enumerate(["想买化妆品送妈妈", "彩妆送女朋友"]):
         events = asyncio.run(
-            agent.handle_message(
-                ChatRequest(type="user_message", session_id=f"demo_makeup_alias_{index}", message=message)
+            agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=f"demo_makeup_alias_{index}", message=message)
             )
         )
 
         product_events = [event for event in events if event["type"] == "product_item"]
         assert product_events
         assert all(event["product"]["category"] == "美妆护肤" for event in product_events)
-        plan = agent.sessions.get(f"demo_makeup_alias_{index}").last_plan
+        plan = agent.sessions.get("anonymous", f"demo_makeup_alias_{index}").last_plan
         assert plan.hard_constraints.category == "美妆护肤"
 
 
 def test_makeup_gift_clarification_answer_keeps_beauty_category():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
-    context = agent.sessions.get("demo_makeup_gift_pending")
+    context = agent.sessions.get("anonymous", "demo_makeup_gift_pending")
     context.state.pending_clarification = PendingClarification(
         category="美妆护肤",
         sub_category=None,
@@ -3077,8 +2965,7 @@ def test_makeup_gift_clarification_answer_keeps_beauty_category():
     context.state.constraint_state.soft = {"recipient": "长辈", "occasion": "送礼"}
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_makeup_gift_pending", message="更有惊喜感")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_makeup_gift_pending", message="更有惊喜感")
         )
     )
 
@@ -3087,7 +2974,7 @@ def test_makeup_gift_clarification_answer_keeps_beauty_category():
     product_events = [event for event in events if event["type"] == "product_item"]
     assert product_events
     assert all(event["product"]["category"] == "美妆护肤" for event in product_events)
-    plan = agent.sessions.get("demo_makeup_gift_pending").last_plan
+    plan = agent.sessions.get("anonymous", "demo_makeup_gift_pending").last_plan
     assert plan.hard_constraints.category == "美妆护肤"
 
 
@@ -3097,14 +2984,13 @@ def test_makeup_followup_more_expensive_stays_in_beauty_category():
     session_id = "demo_makeup_followup_category_lock"
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="想要一个化妆的，送给妈妈")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="想要一个化妆的，送给妈妈")
         )
     )
     first_primary = _primary_product_event(first_events)["product"]
 
     second_events = asyncio.run(
-        agent.handle_message(ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="更贵一点的"))
     )
 
     product_events = [event for event in second_events if event["type"] == "product_item"]
@@ -3113,7 +2999,7 @@ def test_makeup_followup_more_expensive_stays_in_beauty_category():
         assert product_events[0]["product"]["price"] > first_primary["price"]
     else:
         assert "filter_recovery_options" in [event["type"] for event in second_events]
-    plan = agent.sessions.get(session_id).last_plan
+    plan = agent.sessions.get("anonymous", session_id).last_plan
     assert plan.hard_constraints.category == "美妆护肤"
 
 
@@ -3122,8 +3008,7 @@ def test_generic_gift_without_category_still_clarifies():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id="demo_generic_gift", message="送妈妈礼物")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id="demo_generic_gift", message="送妈妈礼物")
         )
     )
 
@@ -3136,8 +3021,7 @@ def test_brand_preference_survives_direct_recommendation():
     session_id = "demo_huawei_direct_brand"
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id=session_id,
                 message="我要一款华为手机",
@@ -3148,7 +3032,7 @@ def test_brand_preference_survives_direct_recommendation():
     assert "clarification_request" not in [event["type"] for event in events]
     product_events = [event for event in events if event["type"] == "product_item"]
     assert product_events
-    assert agent.sessions.get(session_id).last_plan.hard_constraints.include_brands == ["华为"]
+    assert agent.sessions.get("anonymous", session_id).last_plan.hard_constraints.include_brands == ["华为"]
     for event in product_events:
         product = event["product"]
         brand = product["brand"]
@@ -3162,8 +3046,7 @@ def test_product_item_does_not_expose_raw_evidence_by_default():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_no_card_evidence",
                 message="推荐一款手机，预算8000，拍照优先",
@@ -3176,13 +3059,13 @@ def test_product_item_does_not_expose_raw_evidence_by_default():
     assert product["reason"]
 
 
-def test_response_payload_uses_review_summary_not_raw_evidence():
+@pytest.mark.asyncio
+async def test_response_payload_uses_review_summary_not_raw_evidence():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
-    plan = asyncio.run(
-        agent.plan(ChatRequest(type="user_message", session_id="demo_review_summary_payload", message="推荐手机，拍照优先"))
-    )
-    ranked = agent.retrieve_and_rank(plan)[:2]
+    plan = await agent.plan("anonymous", ChatRequest(type="user_message", session_id="demo_review_summary_payload", message="推荐手机，拍照优先"))
+    retrieved = await agent.retrieve_and_rank(plan, user_id="anonymous")
+    ranked = retrieved[:2]
 
     payload = _response_evidence_payload(plan, ranked)
 
@@ -3253,8 +3136,7 @@ def test_explain_followup_can_still_use_internal_evidence_text():
     session_id = "demo_explain_internal_evidence"
 
     first_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id=session_id,
                 message="推荐一款手机，预算8000，拍照优先",
@@ -3264,8 +3146,7 @@ def test_explain_followup_can_still_use_internal_evidence_text():
     assert any(event["type"] == "product_item" and "evidence" not in event["product"] for event in first_events)
 
     second_events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(type="user_message", session_id=session_id, message="为什么推荐刚刚那个？")
+        agent.handle_message("anonymous", ChatRequest(type="user_message", session_id=session_id, message="为什么推荐刚刚那个？")
         )
     )
 
@@ -3280,8 +3161,7 @@ def test_default_recommendation_text_starts_with_understanding():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_conclusion_first_text",
                 message="推荐一款手机，预算8000，拍照优先",
@@ -3304,7 +3184,8 @@ def test_named_product_cart_command_resolves_catalog_product():
 
     event = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_named_product_cart",
                 message="将两份雀巢咖啡加入购物车",
@@ -3326,7 +3207,8 @@ def test_unique_short_product_name_cart_command_adds_dongpeng_directly():
 
     event = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_dongpeng_cart",
                 message="将东鹏特饮加入购物车",
@@ -3349,7 +3231,8 @@ def test_unique_brand_cart_command_adds_product_directly():
 
     event = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_redbull_cart",
                 message="将红牛加入购物车",
@@ -3372,7 +3255,8 @@ def test_multi_product_brand_cart_command_still_requires_disambiguation():
 
     event = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_xiaomi_brand_only_cart",
                 message="将小米加入购物车",
@@ -3391,7 +3275,7 @@ def test_named_alternative_phone_cart_command_uses_mentioned_product_not_focus()
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
     cart = CartService(products)
-    context = agent.sessions.get("demo_phone_cart_binding")
+    context = agent.sessions.get("anonymous", "demo_phone_cart_binding")
     context.focus_product_id = "p_digital_016"
     context.last_product_ids = ["p_digital_016", "p_digital_008"]
     context.state.recommendation_memory.items = [
@@ -3401,7 +3285,8 @@ def test_named_alternative_phone_cart_command_uses_mentioned_product_not_focus()
 
     event = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_phone_cart_binding",
                 message="将小米17ultra加入购物车",
@@ -3423,7 +3308,8 @@ def test_named_phone_cart_command_resolves_compact_model_alias():
 
     event = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_phone_compact_alias",
                 message="将OPPO Reno16加入购物车",
@@ -3441,13 +3327,14 @@ def test_ambiguous_named_cart_command_does_not_fallback_to_focus_product():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
     cart = CartService(products)
-    context = agent.sessions.get("demo_ambiguous_named_phone")
+    context = agent.sessions.get("anonymous", "demo_ambiguous_named_phone")
     context.focus_product_id = "p_digital_016"
     context.last_product_ids = ["p_digital_016", "p_digital_008"]
 
     event = asyncio.run(
         agent.try_handle_cart_message(
-            ChatRequest(
+            "anonymous",
+ChatRequest(
                 type="user_message",
                 session_id="demo_ambiguous_named_phone",
                 message="将小米手机加入购物车",
@@ -3468,8 +3355,7 @@ def test_product_card_includes_dynamic_generated_tags():
     agent = ShopGuideAgent(products, FakeLLMClient())
 
     events = asyncio.run(
-        agent.handle_message(
-            ChatRequest(
+        agent.handle_message("anonymous", ChatRequest(
                 type="user_message",
                 session_id="demo_dynamic_product_tags",
                 message="推荐一款雀巢咖啡",

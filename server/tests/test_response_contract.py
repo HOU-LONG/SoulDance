@@ -72,7 +72,7 @@ def test_no_match_text_uses_response_contract_sections():
 def test_clarification_text_uses_response_contract_sections():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
-    context = agent.sessions.get("contract_clarification")
+    context = agent.sessions.get("anonymous", "contract_clarification")
     plan = RetrievalPlan(
         intent="clarification",
         retrieval_mode="clarification",
@@ -91,19 +91,23 @@ def test_clarification_text_uses_response_contract_sections():
 def test_comparison_and_bundle_intro_use_response_contract_sections():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())
-    context = agent.sessions.get("contract_compare")
+    context = agent.sessions.get("anonymous", "contract_compare")
     context.last_product_ids = [products[0].product_id, products[1].product_id]
 
     compare_events = asyncio.run(
         agent._build_comparison_events(
+            "anonymous",
             ChatRequest(type="user_message", session_id="contract_compare", message="对比一下这两款")
         )
     )
     compare_text = "".join(event.get("text", "") for event in compare_events if event.get("type") == "text_delta")
 
-    bundle_events = agent._build_bundle_events(
-        ChatRequest(type="user_message", session_id="contract_bundle", message="下周去三亚度假，帮我搭配一套"),
-        RetrievalPlan(intent="scenario_bundle", retrieval_mode="decompose_parallel", retrieval_query="三亚度假搭配"),
+    bundle_events = asyncio.run(
+        agent._build_bundle_events(
+            "anonymous",
+            ChatRequest(type="user_message", session_id="contract_bundle", message="下周去三亚度假，帮我搭配一套"),
+            RetrievalPlan(intent="scenario_bundle", retrieval_mode="decompose_parallel", retrieval_query="三亚度假搭配"),
+        )
     )
     bundle_text = "".join(event.get("text", "") for event in bundle_events if event.get("type") == "text_delta")
 

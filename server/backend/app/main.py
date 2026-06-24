@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +17,7 @@ from .embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
 from .feedback_aggregator import FeedbackAggregator
 from .feedback_ranker import FeedbackAwareRanker
 from .feedback_store import FeedbackStore
+from .identity import get_current_user_id, is_valid_user_id, ANONYMOUS_USER_ID
 from .image_assets import product_image_url_auto as product_image_url
 from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
@@ -174,58 +175,83 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         return product.model_dump(mode="json")
 
     @app.post("/api/debug/retrieval_plan")
-    async def debug_plan(request: ChatRequest):
-        plan = await agent.plan(request)
+    async def debug_plan(request: ChatRequest, user_id: str = Depends(get_current_user_id)):
+        plan = await agent.plan(user_id, request)
         return plan.model_dump(mode="json")
 
     @app.get("/api/debug/session")
-    def debug_session(session_id: str):
-        ctx = agent.sessions.get(session_id)
+    def debug_session(session_id: str, user_id: str = Depends(get_current_user_id)):
+        ctx = agent.sessions.get(user_id, session_id)
         return ctx.model_dump(mode="json")
 
     @app.get("/api/debug/sessions")
     def debug_sessions():
         return [
             {
+                "user_id": uid,
                 "session_id": sid,
                 "schema_version": ctx.schema_version,
                 "last_activity_at": ctx.last_activity_at,
                 "turn_index": ctx.state.dialog_state.turn_index,
             }
-            for sid, ctx in agent.sessions._sessions.items()
+            for (uid, sid), ctx in agent.sessions._sessions.items()
         ]
+
+    @app.get("/api/sessions/latest")
+    def get_latest_session(user_id: str = Depends(get_current_user_id)):
+        """获取用户最近使用的会话 ID；如果不存在则返回新的会话 ID。"""
+        latest_session_id = session_store.get_latest_session_id(user_id)
+        if latest_session_id is None:
+            latest_session_id = f"{user_id}_session_default"
+        return {"session_id": latest_session_id}
+
+    @app.post("/api/chat")
+    async def chat_json(request: ChatRequest, user_id: str = Depends(get_current_user_id)):
+        events = [event async for event in agent.stream_message(user_id, request)]
+        session_store.save(user_id, request.session_id)
+        return events
 
     @app.websocket("/ws/chat")
     async def chat_ws(websocket: WebSocket):
         await websocket.accept()
         guard.connection_enter()
-        active_sessions: set[str] = set()
+        active_sessions: set[tuple[str, str]] = set()
         envelope: RealtimeEnvelope | None = None
+        # Get user_id from header
+        raw_user_id = websocket.headers.get("X-User-Id")
+        if raw_user_id is None:
+            user_id = ANONYMOUS_USER_ID
+        elif not is_valid_user_id(raw_user_id):
+            await websocket.close(code=4400)
+            return
+        else:
+            user_id = raw_user_id
         try:
             while True:
                 payload = await websocket.receive_json()
                 metrics.increment("ws.messages.received")
                 request = ChatRequest.model_validate(payload)
-                active_sessions.add(request.session_id)
+                active_sessions.add((user_id, request.session_id))
                 envelope = RealtimeEnvelope(session_id=request.session_id)
                 await websocket.send_json(envelope.ack())
                 metrics.increment("ws.events.sent")
 
                 async def send_cart_tool_events(compiled_ir=None) -> bool:
                     handled = False
-                    context = agent.sessions.get(request.session_id)
+                    context = agent.sessions.get(user_id, request.session_id)
                     async for event in agent.tool_registry.execute(
                         "cart_operation",
                         request,
                         context,
                         cart_service=cart,
                         compiled_ir=compiled_ir,
+                        user_id=user_id,
                     ):
                         handled = True
                         await websocket.send_json(envelope.wrap(event))
                         metrics.increment("ws.events.sent")
                     if handled:
-                        session_store.save(request.session_id)
+                        session_store.save(user_id, request.session_id)
                     return handled
 
                 if request.type == "cart_action":
@@ -239,20 +265,20 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                         if await send_cart_tool_events(rule_frame):
                             continue
                     else:
-                        compiled_ir = await agent.compile_intent(request)
+                        compiled_ir = await agent.compile_intent(user_id, request)
                         if (
                             compiled_ir.intent == "cart_operation"
                             and compiled_ir.cart_operation is not None
                             and await send_cart_tool_events(compiled_ir)
                         ):
                             continue
-                async for event in agent.stream_message(request, compiled_ir):
+                async for event in agent.stream_message(user_id, request, compiled_ir):
                     await websocket.send_json(envelope.wrap(event))
                     metrics.increment("ws.events.sent")
-                session_store.save(request.session_id)
+                session_store.save(user_id, request.session_id)
         except WebSocketDisconnect:
-            for sid in active_sessions:
-                session_store.save(sid)
+            for uid, sid in active_sessions:
+                session_store.save(uid, sid)
             return
         except Exception as exc:
             if envelope is not None:
@@ -269,14 +295,15 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
             guard.connection_exit()
 
     @app.get("/api/cart")
-    def get_cart(session_id: str):
-        return _cart_success(cart.get(session_id))
+    def get_cart(session_id: str, user_id: str = Depends(get_current_user_id)):
+        return _cart_success(cart.get(user_id, session_id))
 
     @app.post("/api/cart/add")
-    def cart_add(request: CartActionRequest):
+    def cart_add(request: CartActionRequest, user_id: str = Depends(get_current_user_id)):
         return _cart_or_http(
             lambda: _cart_success(
                 cart.add(
+                    user_id,
                     request.session_id,
                     request.product_id or "",
                     request.quantity,
@@ -286,25 +313,25 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         )
 
     @app.post("/api/cart/update_quantity")
-    def cart_update(request: CartActionRequest):
+    def cart_update(request: CartActionRequest, user_id: str = Depends(get_current_user_id)):
         return _cart_or_http(
-            lambda: _cart_success(cart.update_quantity(request.session_id, request.product_id or "", request.quantity))
+            lambda: _cart_success(cart.update_quantity(user_id, request.session_id, request.product_id or "", request.quantity))
         )
 
     @app.post("/api/cart/remove")
-    def cart_remove(request: CartActionRequest):
-        return _cart_or_http(lambda: _cart_success(cart.remove(request.session_id, request.product_id or "")))
+    def cart_remove(request: CartActionRequest, user_id: str = Depends(get_current_user_id)):
+        return _cart_or_http(lambda: _cart_success(cart.remove(user_id, request.session_id, request.product_id or "")))
 
     @app.post("/api/cart/clear")
-    def cart_clear(request: CartActionRequest):
-        return _cart_success(cart.clear(request.session_id))
+    def cart_clear(request: CartActionRequest, user_id: str = Depends(get_current_user_id)):
+        return _cart_success(cart.clear(user_id, request.session_id))
 
     @app.post("/api/cart/checkout")
-    def cart_checkout(request: CartActionRequest):
-        snapshot = cart.get(request.session_id)
+    def cart_checkout(request: CartActionRequest, user_id: str = Depends(get_current_user_id)):
+        snapshot = cart.get(user_id, request.session_id)
         if not snapshot.get("items"):
             raise HTTPException(status_code=400, detail="购物车为空，无法结算。")
-        result = cart.checkout(request.session_id, idempotency_key=request.idempotency_key)
+        result = cart.checkout(user_id, request.session_id, idempotency_key=request.idempotency_key)
         return {
             **result,
             "success": True,
@@ -344,6 +371,8 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         return STTResponse(**result)
 
     # ---- 反馈闭环 API ----
+    # Feedback endpoints are OUT OF SCOPE for user_id threading per spec.
+    # They remain session-only for now.
 
     @app.post("/api/feedback")
     def submit_feedback(request: FeedbackEvent):
@@ -373,23 +402,24 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     order_service = OrderService(cart, settings.session_dir or None, db_session=db_session)
 
     @app.post("/api/order/initiate")
-    def order_initiate(request: CartActionRequest):
-        return _order_or_http(lambda: order_service.initiate_checkout(request.session_id).model_dump(mode="json"))
+    def order_initiate(request: CartActionRequest, user_id: str = Depends(get_current_user_id)):
+        return _order_or_http(lambda: order_service.initiate_checkout(user_id, request.session_id).model_dump(mode="json"))
 
     @app.get("/api/order/addresses")
     def order_addresses():
         return {"addresses": [a.model_dump(mode="json") for a in order_service.get_addresses()]}
 
     @app.post("/api/order/select_address")
-    def order_select_address(request: OrderActionRequest):
+    def order_select_address(request: OrderActionRequest, user_id: str = Depends(get_current_user_id)):
         return _order_or_http(
             lambda: order_service.select_address(request.order_id, request.address_id or "").model_dump(mode="json")
         )
 
     @app.post("/api/order/confirm")
-    def order_confirm(request: OrderActionRequest):
+    def order_confirm(request: OrderActionRequest, user_id: str = Depends(get_current_user_id)):
         return _order_or_http(
             lambda: order_service.confirm_order(
+                user_id,
                 request.order_id,
                 request.confirmation_token,
                 request.idempotency_key,
@@ -399,23 +429,23 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     return app
 
 
-def _handle_cart_action(cart: CartService, request: ChatRequest) -> dict:
+def _handle_cart_action(cart: CartService, user_id: str, request: ChatRequest) -> dict:
     action = request.action or "add_to_cart"
     if action == "add_to_cart":
-        return _cart_success(cart.add(request.session_id, request.product_id or "", request.quantity))
+        return _cart_success(cart.add(user_id, request.session_id, request.product_id or "", request.quantity))
     if action == "update_quantity":
-        return _cart_success(cart.update_quantity(request.session_id, request.product_id or "", request.quantity))
+        return _cart_success(cart.update_quantity(user_id, request.session_id, request.product_id or "", request.quantity))
     if action == "remove":
-        return _cart_success(cart.remove(request.session_id, request.product_id or ""))
+        return _cart_success(cart.remove(user_id, request.session_id, request.product_id or ""))
     if action == "clear_cart":
-        return _cart_success(cart.clear(request.session_id))
+        return _cart_success(cart.clear(user_id, request.session_id))
     if action == "checkout":
-        snapshot = cart.get(request.session_id)
+        snapshot = cart.get(user_id, request.session_id)
         if not snapshot.get("items"):
             return {**_cart_success(snapshot), "success": False, "message": "购物车为空，无法结算。"}
-        result = cart.checkout(request.session_id)
+        result = cart.checkout(user_id, request.session_id)
         return {**result, "success": True, "message": "结算成功。", "total": result.get("paid_amount", 0.0)}
-    return _cart_success(cart.get(request.session_id))
+    return _cart_success(cart.get(user_id, request.session_id))
 
 
 def _cart_or_http(operation):

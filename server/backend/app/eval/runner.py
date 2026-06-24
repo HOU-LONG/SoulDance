@@ -158,7 +158,7 @@ def _build_retrieval_attribution(app: FastAPI, scenario: EvalScenario, events: l
     agent = getattr(app.state, "agent", None)
     if agent is None:
         return {}
-    context = agent.sessions.get(scenario.session_id)
+    context = agent.sessions.get("anonymous", scenario.session_id)
     plan = getattr(context, "last_plan", None)
     final_top5 = _event_product_ids(events)[:5]
     gold_ids = _scenario_gold_ids(scenario)

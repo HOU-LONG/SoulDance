@@ -173,7 +173,8 @@ def _build_simple_products() -> list[Product]:
     ]
 
 
-def test_memory_cache_hit_still_applies_feedback_ranker_per_session():
+@pytest.mark.asyncio
+async def test_memory_cache_hit_still_applies_feedback_ranker_per_session():
     """关键断言：cache 命中后必须按当前 session_id 重新走 feedback_ranker。
 
     场景：session A 先查 → cache miss → 写入基础排序，A 的反馈把顺序反转
@@ -198,9 +199,9 @@ def test_memory_cache_hit_still_applies_feedback_ranker_per_session():
     )
 
     # Session A 先查：cache miss → 写入 → A 的 ranker 反转
-    ranked_a = agent.retrieve_and_rank(plan, session_id="A_session")
+    ranked_a = await agent.retrieve_and_rank(plan, user_id="A", session_id="A_session")
     # Session B 后查（相同 plan）：cache 命中 → B 的 ranker 不反转
-    ranked_b = agent.retrieve_and_rank(plan, session_id="B_session")
+    ranked_b = await agent.retrieve_and_rank(plan, user_id="B", session_id="B_session")
 
     # ranker 必须被两个 session 各调用一次
     assert ranker.calls == ["A_session", "B_session"]
@@ -210,7 +211,8 @@ def test_memory_cache_hit_still_applies_feedback_ranker_per_session():
     assert [r.product.product_id for r in ranked_a] == ["p_2", "p_1", "p_0"]
 
 
-def test_memory_cache_stores_base_ranking_not_personalized():
+@pytest.mark.asyncio
+async def test_memory_cache_stores_base_ranking_not_personalized():
     """cache 内部存的应该是未被 feedback_ranker 处理过的基础结果。"""
     products = _build_simple_products()
     ranker = _RecordingFeedbackRanker()
@@ -229,7 +231,7 @@ def test_memory_cache_stores_base_ranking_not_personalized():
         retrieval_query="防晒",
     )
     # 触发一次写入
-    agent.retrieve_and_rank(plan, session_id="A_session")
+    await agent.retrieve_and_rank(plan, user_id="A", session_id="A_session")
     # 直接从 cache 读出来，应该是基础顺序，与 ranker 的反转无关
     cached = agent.memory_cache.get(plan, agent.product_map)
     assert cached is not None

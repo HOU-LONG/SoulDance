@@ -18,5 +18,6 @@ class ScenarioBundleTool:
             retrieval_mode="decompose_parallel",
             retrieval_query=request.message,
         )
-        for event in await self._agent._build_bundle_events(request, plan):
+        user_id = kwargs.get("user_id", "anonymous")
+        for event in await self._agent._build_bundle_events(user_id, request, plan):
             yield event

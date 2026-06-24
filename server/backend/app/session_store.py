@@ -148,6 +148,38 @@ class SessionStore:
             except OSError:
                 pass
 
+    def get_latest_session_id(self, user_id: str) -> str | None:
+        """获取用户最近使用的会话 ID。"""
+        if self._repo is not None:
+            return self._repo.get_latest_session_id(user_id)
+        # Check in-memory sessions first (covers non-persistent / test mode)
+        in_memory_latest = None
+        in_memory_latest_time = None
+        for (uid, sid), ctx in self._sessions.items():
+            if uid == user_id:
+                ctx_time = ctx.last_activity_at
+                if ctx_time and (in_memory_latest_time is None or ctx_time > in_memory_latest_time):
+                    in_memory_latest_time = ctx_time
+                    in_memory_latest = sid
+        if in_memory_latest is not None:
+            return in_memory_latest
+        if not self.persist_dir:
+            return None
+        # For file mode, find the most recently modified session for the user
+        user_dir = self.persist_dir / user_id.replace("/", "_").replace("\\", "_")
+        if not user_dir.exists():
+            return None
+        latest_path = None
+        latest_mtime = 0.0
+        for path in user_dir.glob("*.json"):
+            mtime = path.stat().st_mtime
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+                latest_path = path
+        if latest_path:
+            return latest_path.stem
+        return None
+
     def _migrate_if_needed(self, ctx: SessionContext) -> SessionContext:
         # v1→current: no structural changes yet. When schema changes, add per-version
         # migration steps here before bumping CURRENT_SCHEMA_VERSION.

@@ -30,10 +30,10 @@ class _MockCartService:
     def __init__(self):
         self._items = {}
 
-    def get(self, session_id: str) -> dict:
+    def get(self, user_id: str, session_id: str) -> dict:
         items = []
         total = 0.0
-        for pid, qty in self._items.get(session_id, {}).items():
+        for pid, qty in self._items.get((user_id, session_id), {}).items():
             items.append({
                 "product_id": pid,
                 "name": f"Product {pid}",
@@ -44,15 +44,16 @@ class _MockCartService:
             total += 100.0 * qty
         return {"session_id": session_id, "items": items, "total_amount": total}
 
-    def checkout(self, session_id: str, idempotency_key: str | None = None) -> dict:
-        self._items[session_id] = {}
+    def checkout(self, user_id: str, session_id: str, idempotency_key: str | None = None) -> dict:
+        self._items[(user_id, session_id)] = {}
         return {"status": "ok"}
 
-    def add(self, session_id: str, product_id: str, quantity: int = 1, idempotency_key: str | None = None) -> dict:
-        if session_id not in self._items:
-            self._items[session_id] = {}
-        self._items[session_id][product_id] = self._items[session_id].get(product_id, 0) + quantity
-        return self.get(session_id)
+    def add(self, user_id: str, session_id: str, product_id: str, quantity: int = 1, idempotency_key: str | None = None) -> dict:
+        key = (user_id, session_id)
+        if key not in self._items:
+            self._items[key] = {}
+        self._items[key][product_id] = self._items[key].get(product_id, 0) + quantity
+        return self.get(user_id, session_id)
 
 
 @pytest.fixture
@@ -88,9 +89,9 @@ def test_user_profile_store_roundtrip(db):
 
 def test_order_service_checkout(db, mock_cart):
     # 先往 mock cart 里加商品
-    mock_cart.add("s1", "p1", 2)
+    mock_cart.add("anonymous", "s1", "p1", 2)
     service = OrderService(mock_cart, db_session=db)
-    order = service.initiate_checkout("s1")
+    order = service.initiate_checkout("anonymous", "s1")
     assert order.status == "address_required"
     assert order.total_amount == 200.0
     assert len(order.items) == 1
@@ -104,6 +105,7 @@ def test_order_service_checkout(db, mock_cart):
 
     # 确认订单
     confirmed = service.confirm_order(
+        "anonymous",
         order.order_id,
         confirmation_token=updated.confirmation_token,
         idempotency_key="key_1",
@@ -112,6 +114,7 @@ def test_order_service_checkout(db, mock_cart):
 
     # 幂等测试
     same = service.confirm_order(
+        "anonymous",
         order.order_id,
         confirmation_token=updated.confirmation_token,
         idempotency_key="key_1",

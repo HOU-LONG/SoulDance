@@ -94,8 +94,9 @@ async def test_cart_tool_handles_explicit_cart_action_without_message_text():
         async for event in agent.tool_registry.execute(
             "cart_operation",
             request,
-            agent.sessions.get(request.session_id),
+            agent.sessions.get("anonymous", request.session_id),
             cart_service=cart,
+            user_id="anonymous",
         )
     ]
 

@@ -72,8 +72,8 @@ class OrderService:
             self.persist_dir.mkdir(parents=True, exist_ok=True)
             self._load()
 
-    def initiate_checkout(self, session_id: str) -> Order:
-        cart = self._cart.get(session_id)
+    def initiate_checkout(self, user_id: str, session_id: str) -> Order:
+        cart = self._cart.get(user_id, session_id)
         if not cart["items"]:
             raise OrderError("购物车为空，无法创建订单预览。")
         now = _now()
@@ -115,6 +115,7 @@ class OrderService:
 
     def confirm_order(
         self,
+        user_id: str,
         order_id: str,
         confirmation_token: str | None,
         idempotency_key: str | None,
@@ -129,7 +130,7 @@ class OrderService:
             raise OrderError("订单还未进入确认状态。")
         if not confirmation_token or confirmation_token != order.confirmation_token:
             raise OrderError("confirmation_token invalid")
-        self._cart.checkout(order.session_id, idempotency_key=f"order:{order.order_id}")
+        self._cart.checkout(user_id, order.session_id, idempotency_key=f"order:{order.order_id}")
         order.status = ORDER_STATUS_COMPLETED
         order.idempotency_key = idempotency_key
         order.updated_at = _now()

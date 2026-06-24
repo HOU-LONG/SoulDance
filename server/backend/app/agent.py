@@ -132,8 +132,8 @@ class ShopGuideAgent:
         )
         self.feedback_store.record(event)
 
-    async def plan(self, request: ChatRequest) -> RetrievalPlan:
-        context = self.sessions.get(request.session_id)
+    async def plan(self, user_id: str, request: ChatRequest) -> RetrievalPlan:
+        context = self.sessions.get(user_id, request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
         ir = await self.intent_compiler.compile(request, context)
         if _is_pending_clarification_answer(context, request, ir):
@@ -149,7 +149,7 @@ class ShopGuideAgent:
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         return plan
 
-    async def retrieve_and_rank(self, plan: RetrievalPlan, limit: int = 8, session_id: str = "") -> list[RankedProduct]:
+    async def retrieve_and_rank(self, plan: RetrievalPlan, user_id: str, limit: int = 8, session_id: str = "") -> list[RankedProduct]:
         # memory_cache 存的是"未个性化"的基础排序（cross-session 共享是安全的，因为 key
         # 完全由 plan 内容决定）。命中后必须再走 feedback_ranker 才能注入当前 session 的反馈，
         # 否则会出现"session A 的偏好被 cache 走，session B 拿到 A 的个性化结果"的数据泄漏。
@@ -185,16 +185,16 @@ class ShopGuideAgent:
             ranked = self.feedback_ranker.apply(ranked, session_id)
         return ranked
 
-    async def handle_message(self, request: ChatRequest) -> list[dict]:
-        return [event async for event in self.stream_message(request)]
+    async def handle_message(self, user_id: str, request: ChatRequest) -> list[dict]:
+        return [event async for event in self.stream_message(user_id, request)]
 
-    async def compile_intent(self, request: ChatRequest):
-        context = self.sessions.get(request.session_id)
+    async def compile_intent(self, user_id: str, request: ChatRequest):
+        context = self.sessions.get(user_id, request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
         return await self.intent_compiler.compile(request, context)
 
-    async def stream_message(self, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
-        context = self.sessions.get(request.session_id)
+    async def stream_message(self, user_id: str, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
+        context = self.sessions.get(user_id, request.session_id)
         recovery_events = self._build_pending_recovery_events(context, request)
         if recovery_events is not None:
             for event in recovery_events:
@@ -215,6 +215,7 @@ class ShopGuideAgent:
                 request,
                 context,
                 compiled_ir=ir,
+                user_id=user_id,
             ):
                 yield event
             return
@@ -223,6 +224,7 @@ class ShopGuideAgent:
                 ir.intent,
                 request,
                 context,
+                user_id=user_id,
             ):
                 yield event
             return
@@ -239,6 +241,7 @@ class ShopGuideAgent:
                 plan.intent,
                 request,
                 context,
+                user_id=user_id,
             ):
                 yield event
             return
@@ -249,6 +252,7 @@ class ShopGuideAgent:
                 context,
                 plan=plan,
                 context_action=context_action,
+                user_id=user_id,
             ):
                 yield event
             return
@@ -258,6 +262,7 @@ class ShopGuideAgent:
                 request,
                 context,
                 plan=plan,
+                user_id=user_id,
             ):
                 yield event
             return
@@ -267,6 +272,7 @@ class ShopGuideAgent:
                 request,
                 context,
                 plan=plan,
+                user_id=user_id,
             ):
                 yield event
             return
@@ -290,6 +296,7 @@ class ShopGuideAgent:
             compiled_ir=ir,
             context_action=context_action,
             memory_hit=memory_hit,
+            user_id=user_id,
         ):
             yield event
 
@@ -352,11 +359,11 @@ class ShopGuideAgent:
             {"type": "done", "message_id": message_id},
         ]
 
-    async def _handle_followup(self, request: ChatRequest) -> list[dict]:
-        return [event async for event in self._stream_followup(request)]
+    async def _handle_followup(self, user_id: str, request: ChatRequest) -> list[dict]:
+        return [event async for event in self._stream_followup(user_id, request)]
 
-    async def _stream_followup(self, request: ChatRequest, ir=None) -> AsyncIterator[dict]:
-        context = self.sessions.get(request.session_id)
+    async def _stream_followup(self, user_id: str, request: ChatRequest, ir=None) -> AsyncIterator[dict]:
+        context = self.sessions.get(user_id, request.session_id)
         if request.focus_product_id:
             context.focus_product_id = request.focus_product_id
             context.state.active_focus.type = "product"
@@ -446,7 +453,7 @@ class ShopGuideAgent:
             ):
                 yield event
             return
-        ranked_raw = await self.retrieve_and_rank(plan, session_id=request.session_id)
+        ranked_raw = await self.retrieve_and_rank(plan, user_id=user_id, session_id=request.session_id)
         ranked = [item for item in ranked_raw if hard_filter(item.product, plan.hard_constraints)]
         if cheaper_than_price is not None:
             ranked = [item for item in ranked if item.product.price < cheaper_than_price]
@@ -502,9 +509,9 @@ class ShopGuideAgent:
             yield event
 
     async def _build_recommendation_events(
-        self, request: ChatRequest, plan: RetrievalPlan, ranked: list[RankedProduct]
+        self, user_id: str, request: ChatRequest, plan: RetrievalPlan, ranked: list[RankedProduct]
     ) -> list[dict]:
-        return [event async for event in self._stream_recommendation_events(request, plan, ranked)]
+        return [event async for event in self._stream_recommendation_events(user_id, request, plan, ranked)]
 
     def _get_recommendation_memory_hit(self, plan: RetrievalPlan, message: str) -> RecommendationMemoryHit | None:
         if not self.recommendation_memory or plan.intent != "recommend_product":
@@ -513,6 +520,7 @@ class ShopGuideAgent:
 
     async def _stream_recommendation_events(
         self,
+        user_id: str,
         request: ChatRequest,
         plan: RetrievalPlan,
         ranked: list[RankedProduct],
@@ -548,7 +556,7 @@ class ShopGuideAgent:
             memory_mode=memory_mode,
         )
         if not selected:
-            context = self.sessions.get(request.session_id)
+            context = self.sessions.get(user_id, request.session_id)
             context.state.pending_clarification = None
             text = _no_match_text(plan)
             for event in _text_delta_events(message_id, text):
@@ -565,7 +573,7 @@ class ShopGuideAgent:
             ):
                 yield event
             return
-        context = self.sessions.get(request.session_id)
+        context = self.sessions.get(user_id, request.session_id)
         self._remember_recommendations(context, plan, selected)
         if self.recommendation_memory and selected_override is None:
             self.recommendation_memory.put(plan, request.message, selected)
@@ -755,7 +763,7 @@ class ShopGuideAgent:
         events.append({"type": "done", "message_id": message_id})
         return events
 
-    async def _stream_no_retrieval_events(self, request: ChatRequest, intent: str = "small_talk") -> AsyncIterator[dict]:
+    async def _stream_no_retrieval_events(self, user_id: str, request: ChatRequest, intent: str = "small_talk") -> AsyncIterator[dict]:
         message_id = _message_id()
         if intent == "unclear_input":
             label = "未识别到明确购物需求"
@@ -773,7 +781,7 @@ class ShopGuideAgent:
         # 首块超时 + 后续 chunk 间超时双重保护：避免 LLM 卡死把整条 ws 拖住。
         # 同一个 stream 实例从首块开始一路迭代到底，不重新建 stream，避免 LLM 重复计费/输出重复。
         stream = self.llm_client.stream_chitchat_response(
-            request.message, intent, self.sessions.get(request.session_id)
+            request.message, intent, self.sessions.get(user_id, request.session_id)
         )
         got_any_chunk = False
         try:
@@ -868,8 +876,8 @@ class ShopGuideAgent:
             memory_mode=memory_mode,
         )
 
-    async def _build_comparison_events(self, request: ChatRequest) -> list[dict]:
-        context = self.sessions.get(request.session_id)
+    async def _build_comparison_events(self, user_id: str, request: ChatRequest) -> list[dict]:
+        context = self.sessions.get(user_id, request.session_id)
         product_ids = _resolve_comparison_product_ids(request.message, context)
         products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
         if context.last_plan:
@@ -930,8 +938,8 @@ class ShopGuideAgent:
             {"type": "done", "message_id": message_id},
         ]
 
-    async def _build_bundle_events(self, request: ChatRequest, plan: RetrievalPlan) -> list[dict]:
-        context = self.sessions.get(request.session_id)
+    async def _build_bundle_events(self, user_id: str, request: ChatRequest, plan: RetrievalPlan) -> list[dict]:
+        context = self.sessions.get(user_id, request.session_id)
         message_id = _message_id()
         bundle_id = "bundle_" + uuid.uuid4().hex[:8]
         slots = [
@@ -966,7 +974,7 @@ class ShopGuideAgent:
                 soft_preferences={"scene": "海边度假"},
                 retrieval_query=query,
             )
-            ranked = await self.retrieve_and_rank(slot_plan, session_id=request.session_id)
+            ranked = await self.retrieve_and_rank(slot_plan, user_id=user_id, session_id=request.session_id)
             if not ranked:
                 continue
             item = ranked[0]
@@ -1002,35 +1010,35 @@ class ShopGuideAgent:
             context.focus_product_id = used_product_ids[0]
         return events
 
-    def handle_cart_message(self, request: ChatRequest, cart: CartService) -> dict:
-        context = self.sessions.get(request.session_id)
+    def handle_cart_message(self, user_id: str, request: ChatRequest, cart: CartService) -> dict:
+        context = self.sessions.get(user_id, request.session_id)
         action = _normalize_cart_action(request.action or _detect_cart_action(request.message))
-        product_id = request.product_id or _resolve_cart_product_id(request.message, context, cart.get(request.session_id))
+        product_id = request.product_id or _resolve_cart_product_id(request.message, context, cart.get(user_id, request.session_id))
         quantity = request.quantity
         detected_quantity = _detect_quantity(request.message)
         if detected_quantity is not None:
             quantity = detected_quantity
         if action == "clear_cart":
-            snapshot = cart.clear(request.session_id)
+            snapshot = cart.clear(user_id, request.session_id)
             context.recent_cart_product_id = None
             context.state.cart_memory.recent_product_id = None
             return {"action": action, "product_id": None, "cart": snapshot, "success": True, "message": _cart_message(action, "")}
         if action == "get_cart":
-            snapshot = cart.get(request.session_id)
+            snapshot = cart.get(user_id, request.session_id)
             return {"action": action, "product_id": None, "cart": snapshot, "success": True, "message": "这是当前购物车。"}
         if action == "checkout":
-            snapshot = cart.checkout(request.session_id)
+            snapshot = cart.checkout(user_id, request.session_id)
             return {"action": action, "product_id": product_id, "cart": snapshot, "message": "已为你模拟下单。"}
         if not product_id:
-            snapshot = cart.get(request.session_id)
+            snapshot = cart.get(user_id, request.session_id)
             return {"action": "get_cart", "product_id": None, "cart": snapshot, "message": "我还没找到要操作的商品。"}
         if action == "update_quantity":
-            snapshot = cart.update_quantity(request.session_id, product_id, quantity)
+            snapshot = cart.update_quantity(user_id, request.session_id, product_id, quantity)
         elif action == "remove":
-            snapshot = cart.remove(request.session_id, product_id)
+            snapshot = cart.remove(user_id, request.session_id, product_id)
         else:
             action = "add_to_cart"
-            snapshot = cart.add(request.session_id, product_id, quantity)
+            snapshot = cart.add(user_id, request.session_id, product_id, quantity)
         context.recent_cart_product_id = product_id
         return {"action": action, "product_id": product_id, "cart": snapshot, "message": _cart_message(action, product_id)}
 
@@ -1101,8 +1109,8 @@ class ShopGuideAgent:
         )
         _update_profile(context, plan)
 
-    async def try_handle_cart_message(self, request: ChatRequest, cart: CartService, compiled_ir=None) -> dict | None:
-        context = self.sessions.get(request.session_id)
+    async def try_handle_cart_message(self, user_id: str, request: ChatRequest, cart: CartService, compiled_ir=None) -> dict | None:
+        context = self.sessions.get(user_id, request.session_id)
         frame = compiled_ir or await self.intent_compiler.compile(request, context)
         if compiled_ir is None and (frame.intent != "cart_operation" or frame.cart_operation is None):
             frame = rule_semantic_frame(request)
@@ -1112,21 +1120,21 @@ class ShopGuideAgent:
         quantity = max(frame.cart_operation.quantity, 0)
         product_id = None
         if action in {"get_cart", "clear_cart", "checkout"}:
-            return self._execute_cart_action(request.session_id, action, None, quantity, cart)
+            return self._execute_cart_action(user_id, request.session_id, action, None, quantity, cart)
         has_named_product_hint = False
         if action in {"add_to_cart", "update_quantity"}:
             has_named_product_hint = _has_explicit_product_hint(request.message, self.products)
             product_id = self._resolve_product_mention_for_cart(request.message)
             if not product_id and has_named_product_hint:
-                return self._named_product_not_resolved_event(request.session_id, action, request.message, cart)
+                return self._named_product_not_resolved_event(user_id, request.session_id, action, request.message, cart)
         if not product_id:
             resolution = self.reference_resolver.resolve(
                 frame.cart_operation.target,
                 context,
-                cart.get(request.session_id),
+                cart.get(user_id, request.session_id),
             )
             product_id = resolution.product_id
-        return self._execute_cart_action(request.session_id, action, product_id, quantity, cart)
+        return self._execute_cart_action(user_id, request.session_id, action, product_id, quantity, cart)
 
     def _resolve_product_mention_for_cart(self, message: str) -> str | None:
         scored = self._cart_product_candidates(message)
@@ -1160,6 +1168,7 @@ class ShopGuideAgent:
 
     def _named_product_not_resolved_event(
         self,
+        user_id: str,
         session_id: str,
         action: str,
         message: str,
@@ -1189,7 +1198,7 @@ class ShopGuideAgent:
         return {
             "action": action,
             "product_id": None,
-            "cart": cart.get(session_id),
+            "cart": cart.get(user_id, session_id),
             "success": False,
             "reason": "named_product_not_resolved",
             "candidates": candidate_payload,
@@ -1198,16 +1207,18 @@ class ShopGuideAgent:
 
     def execute_cart_action(
         self,
+        user_id: str,
         session_id: str,
         action: str,
         product_id: str | None,
         quantity: int,
         cart: CartService,
     ) -> dict:
-        return self._execute_cart_action(session_id, action, product_id, quantity, cart)
+        return self._execute_cart_action(user_id, session_id, action, product_id, quantity, cart)
 
     def _execute_cart_action(
         self,
+        user_id: str,
         session_id: str,
         action: str,
         product_id: str | None,
@@ -1215,9 +1226,9 @@ class ShopGuideAgent:
         cart: CartService,
     ) -> dict:
         action = _normalize_cart_action(action)
-        context = self.sessions.get(session_id)
+        context = self.sessions.get(user_id, session_id)
         if action == "get_cart":
-            snapshot = cart.get(session_id)
+            snapshot = cart.get(user_id, session_id)
             return {
                 "action": action,
                 "product_id": None,
@@ -1226,7 +1237,7 @@ class ShopGuideAgent:
                 "message": "这是当前购物车。",
             }
         if action == "clear_cart":
-            snapshot = cart.clear(session_id)
+            snapshot = cart.clear(user_id, session_id)
             context.recent_cart_product_id = None
             context.state.cart_memory.recent_product_id = None
             return {
@@ -1237,7 +1248,7 @@ class ShopGuideAgent:
                 "message": _cart_message(action, ""),
             }
         if action == "checkout":
-            current = cart.get(session_id)
+            current = cart.get(user_id, session_id)
             if not current.get("items"):
                 return {
                     "action": action,
@@ -1246,7 +1257,7 @@ class ShopGuideAgent:
                     "success": False,
                     "message": "购物车为空，无法结算。",
                 }
-            snapshot = cart.checkout(session_id)
+            snapshot = cart.checkout(user_id, session_id)
             return {
                 "action": action,
                 "product_id": product_id,
@@ -1255,15 +1266,15 @@ class ShopGuideAgent:
                 "message": "已为你模拟下单。",
             }
         if not product_id:
-            snapshot = cart.get(session_id)
+            snapshot = cart.get(user_id, session_id)
             return {"action": "get_cart", "product_id": None, "cart": snapshot, "message": action_message("我还没找到要操作的商品。")}
         if action == "update_quantity":
-            snapshot = cart.update_quantity(session_id, product_id, quantity)
+            snapshot = cart.update_quantity(user_id, session_id, product_id, quantity)
         elif action == "remove":
-            snapshot = cart.remove(session_id, product_id)
+            snapshot = cart.remove(user_id, session_id, product_id)
         else:
             action = "add_to_cart"
-            snapshot = cart.add(session_id, product_id, quantity)
+            snapshot = cart.add(user_id, session_id, product_id, quantity)
         context.recent_cart_product_id = product_id
         context.state.cart_memory.recent_product_id = product_id
         return {

@@ -31,7 +31,7 @@ CATEGORY_TEMPLATES: dict[str, list[tuple[str, str, str]]] = {
         ("cart_action", "这个我想买", "购物意向"),
         ("retrieval", "{prefix}防晒产品推荐", "需求明确"),
     ],
-    "食品饮料": [
+    "食品生活": [
         ("retrieval", "{prefix}{title}好吃吗？", "商品询问"),
         ("retrieval", "{prefix}推荐一款{category}", "类目推荐"),
         ("followup_factual", "这个热量高吗？", "热量询问"),
@@ -81,7 +81,9 @@ CATEGORY_TEMPLATES: dict[str, list[tuple[str, str, str]]] = {
     ],
 }
 
-CATEGORY_ORDER = ["美妆护肤", "食品饮料", "服饰运动", "数码电子"]
+# 商品按 4 个真实类目交替穿插（实际数据集只有这 4 类，各 25 商品共 100）；
+# plan/spec 中提到的"家居日用"未在数据集中存在，CATEGORY_TEMPLATES 中保留兜底模板。
+CATEGORY_ORDER = ["美妆护肤", "食品生活", "服饰运动", "数码电子"]
 
 # 对抗样本模板：D1-D6
 ADVERSARIAL_TEMPLATES: dict[str, list[str]] = {

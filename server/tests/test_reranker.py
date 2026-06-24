@@ -168,3 +168,86 @@ class TestCrossEncoderReranker:
         rer.rerank("q", [self._result_with_title("p1", "a", 0.5)], top_k=5)
         # Just confirm latency counter was touched at least once
         assert any(name.startswith("retrieval.reranker.cross.calls") for name in metrics.counters)
+
+
+class FakeLLMClient:
+    """Stub LLM client. `responses` queue feeds chat_json_sync return values."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls: list[list[dict]] = []
+
+    def chat_json_sync(self, messages, **kwargs):
+        self.calls.append(messages)
+        if not self.responses:
+            raise RuntimeError("no fake response queued")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+class TestLLMReranker:
+    def _result(self, pid: str) -> ProductRetrievalResult:
+        return ProductRetrievalResult(product=_product(pid), score=0.5, evidence_chunks=[])
+
+    def test_reorders_using_llm_output(self):
+        from backend.app.rag.reranker import LLMReranker
+
+        c1, c2, c3 = self._result("p1"), self._result("p2"), self._result("p3")
+        llm = FakeLLMClient(responses=[
+            [
+                {"product_id": "p3", "rank": 1},
+                {"product_id": "p1", "rank": 2},
+                {"product_id": "p2", "rank": 3},
+            ]
+        ])
+        rer = LLMReranker(llm, top_n=8)
+        result = rer.rerank("query", [c1, c2, c3], top_k=8)
+        assert [r.product.product_id for r in result] == ["p3", "p1", "p2"]
+
+    def test_invalid_product_id_falls_back_to_input_order(self):
+        from backend.app.rag.reranker import LLMReranker
+
+        c1, c2 = self._result("p1"), self._result("p2")
+        llm = FakeLLMClient(responses=[
+            [{"product_id": "p99", "rank": 1}, {"product_id": "p100", "rank": 2}]
+        ])
+        metrics = StubMetrics()
+        rer = LLMReranker(llm, metrics=metrics, top_n=8)
+        result = rer.rerank("q", [c1, c2], top_k=8)
+        assert [r.product.product_id for r in result] == ["p1", "p2"]
+        assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
+
+    def test_parse_error_falls_back(self):
+        from backend.app.rag.reranker import LLMReranker
+
+        c1 = self._result("p1")
+        llm = FakeLLMClient(responses=[{"unexpected": "shape"}])
+        metrics = StubMetrics()
+        rer = LLMReranker(llm, metrics=metrics, top_n=8)
+        result = rer.rerank("q", [c1], top_k=8)
+        assert [r.product.product_id for r in result] == ["p1"]
+        assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
+
+    def test_llm_exception_falls_back(self):
+        from backend.app.rag.reranker import LLMReranker
+
+        c1 = self._result("p1")
+        llm = FakeLLMClient(responses=[RuntimeError("boom")])
+        metrics = StubMetrics()
+        rer = LLMReranker(llm, metrics=metrics, top_n=8)
+        result = rer.rerank("q", [c1], top_k=8)
+        assert [r.product.product_id for r in result] == ["p1"]
+        assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
+
+    def test_partial_coverage_appends_remaining_in_input_order(self):
+        from backend.app.rag.reranker import LLMReranker
+
+        c1, c2, c3 = self._result("p1"), self._result("p2"), self._result("p3")
+        llm = FakeLLMClient(responses=[
+            [{"product_id": "p3", "rank": 1}]  # only p3 ranked
+        ])
+        rer = LLMReranker(llm, top_n=8)
+        result = rer.rerank("q", [c1, c2, c3], top_k=8)
+        assert [r.product.product_id for r in result] == ["p3", "p1", "p2"]

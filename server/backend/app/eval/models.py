@@ -13,7 +13,12 @@ class EvalExpectation(BaseModel):
     forbidden_product_ids: list[str] = Field(default_factory=list)
     forbid_terms: list[str] = Field(default_factory=list)
     price_max: float | None = None
+    price_min: float | None = None
     event_types: list[str] = Field(default_factory=list)
+    expected_brands: list[str] = Field(default_factory=list)
+    forbidden_brands: list[str] = Field(default_factory=list)
+    expect_clarification: bool = False
+    expect_product_ids_subset_of: list[str] = Field(default_factory=list)
     expected_gate: str | None = None
     require_cart_success: bool = False
     require_order_completed: bool = False
@@ -25,6 +30,8 @@ class EvalScenario(BaseModel):
     session_id: str
     type: str = "user_message"
     expect: EvalExpectation = Field(default_factory=EvalExpectation)
+    tags: list[str] = Field(default_factory=list)
+    golden_id: str | None = None
 
 
 class EvalScenarioResult(BaseModel):

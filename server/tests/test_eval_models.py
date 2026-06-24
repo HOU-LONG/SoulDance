@@ -28,3 +28,19 @@ def test_eval_scenario_model_accepts_retrieval_gold_labels():
     assert scenario.expect.gold_product_ids == ["p1", "p2"]
     assert scenario.expect.gold_primary_ids == ["p1"]
     assert scenario.expect.expected_gate == "recommend"
+
+
+def test_eval_expectation_accepts_recommend_ablation_fields():
+    expectation = EvalExpectation(
+        price_min=100,
+        expected_brands=["BrandA"],
+        forbidden_brands=["BrandB"],
+        expect_clarification=True,
+        expect_product_ids_subset_of=["p1", "p2"],
+    )
+
+    assert expectation.price_min == 100
+    assert expectation.expected_brands == ["BrandA"]
+    assert expectation.forbidden_brands == ["BrandB"]
+    assert expectation.expect_clarification is True
+    assert expectation.expect_product_ids_subset_of == ["p1", "p2"]

@@ -1,0 +1,123 @@
+{
+  "_meta": {
+    "description": "Phase 3 答辩级评测金标。基于 ecommerce_agent_dataset/ 100 个商品自动推断后人工 review。",
+    "fields": {
+      "query": "用户原始 query（仅作可读说明，runner 不使用）",
+      "ideal_top": "最理想的 top-K product_id（有序，靠前的 NDCG 权重更高）",
+      "acceptable": "Recall@K 计算时认可的全集（无序，覆盖 ideal_top）",
+      "forbidden": "明确不该出现的 product_id（违反硬约束的商品）"
+    },
+    "selection_basis": {
+      "ideal_top": "根据 query 的核心约束（类目+价格+品牌+成分）筛出最匹配的；同条件下取性价比/评分高的优先",
+      "acceptable": "包含 ideal_top + 同类目下次优商品；用于宽松 Recall（任一命中即认可）",
+      "forbidden": "完全违反硬约束（如查防晒返回手机、要求不含酒精却推含酒精商品）"
+    }
+  },
+
+  "recommend_sunscreen_basic": {
+    "query": "推荐一款防晒霜",
+    "ideal_top": ["p_beauty_006", "p_beauty_010", "p_beauty_023"],
+    "acceptable": ["p_beauty_006", "p_beauty_010", "p_beauty_023"],
+    "forbidden": []
+  },
+
+  "recommend_sunscreen_no_alcohol": {
+    "query": "推荐一款防晒霜，不要含酒精",
+    "ideal_top": ["p_beauty_006"],
+    "acceptable": ["p_beauty_006"],
+    "forbidden": ["p_beauty_010", "p_beauty_023"]
+  },
+
+  "recommend_sunscreen_no_jp_brand": {
+    "query": "推荐防晒霜，不要日系品牌",
+    "ideal_top": ["p_beauty_006", "p_beauty_023"],
+    "acceptable": ["p_beauty_006", "p_beauty_023"],
+    "forbidden": ["p_beauty_010"]
+  },
+
+  "recommend_sunscreen_under_200": {
+    "query": "推荐 200 元以内的防晒霜",
+    "ideal_top": ["p_beauty_006"],
+    "acceptable": ["p_beauty_006"],
+    "forbidden": ["p_beauty_010", "p_beauty_023"]
+  },
+
+  "recommend_phone_huawei": {
+    "query": "推荐一款华为手机",
+    "ideal_top": ["p_digital_002"],
+    "acceptable": ["p_digital_002"],
+    "forbidden": ["p_digital_001", "p_digital_003", "p_digital_008", "p_digital_014", "p_digital_017"]
+  },
+
+  "recommend_phone_budget_5000_8000": {
+    "query": "推荐 5000-8000 元的智能手机",
+    "ideal_top": ["p_digital_002", "p_digital_015", "p_digital_017", "p_digital_009"],
+    "acceptable": [
+      "p_digital_002",
+      "p_digital_015",
+      "p_digital_017",
+      "p_digital_009",
+      "p_digital_008"
+    ],
+    "forbidden": ["p_digital_001", "p_digital_003", "p_digital_010", "p_digital_016"]
+  },
+
+  "recommend_phone_no_apple": {
+    "query": "推荐手机，不要苹果",
+    "ideal_top": ["p_digital_002", "p_digital_008", "p_digital_015"],
+    "acceptable": [
+      "p_digital_002",
+      "p_digital_008",
+      "p_digital_009",
+      "p_digital_010",
+      "p_digital_014",
+      "p_digital_015",
+      "p_digital_016",
+      "p_digital_017"
+    ],
+    "forbidden": ["p_digital_001", "p_digital_003"]
+  },
+
+  "recommend_running_shoes_cheaper": {
+    "query": "推荐一款便宜的跑步鞋",
+    "ideal_top": ["p_clothes_007", "p_clothes_010"],
+    "acceptable": ["p_clothes_007", "p_clothes_010", "p_clothes_009"],
+    "forbidden": []
+  },
+
+  "recommend_running_shoes_budget_under_1200": {
+    "query": "推荐 1200 元以内的跑步鞋",
+    "ideal_top": ["p_clothes_007", "p_clothes_009", "p_clothes_010"],
+    "acceptable": ["p_clothes_007", "p_clothes_009", "p_clothes_010"],
+    "forbidden": ["p_clothes_008"]
+  },
+
+  "recommend_drink_no_sugar": {
+    "query": "推荐一款无糖饮料",
+    "ideal_top": ["p_food_003", "p_food_004", "p_food_014", "p_food_015", "p_food_024"],
+    "acceptable": [
+      "p_food_003",
+      "p_food_004",
+      "p_food_014",
+      "p_food_015",
+      "p_food_024",
+      "p_food_022",
+      "p_food_023"
+    ],
+    "forbidden": []
+  },
+
+  "recommend_drink_no_carbonated": {
+    "query": "推荐一款无糖饮料，不要碳酸",
+    "ideal_top": ["p_food_003", "p_food_014"],
+    "acceptable": ["p_food_003", "p_food_014", "p_food_022", "p_food_023"],
+    "forbidden": ["p_food_004", "p_food_015", "p_food_024"]
+  },
+
+  "recommend_coffee_under_100": {
+    "query": "推荐 100 元以内的咖啡",
+    "ideal_top": ["p_food_022", "p_food_023", "p_food_002"],
+    "acceptable": ["p_food_022", "p_food_023", "p_food_002"],
+    "forbidden": ["p_food_001"]
+  }
+}

@@ -151,3 +151,168 @@ def load_scenarios_from_dict(raw: dict):
     from backend.app.eval.models import EvalScenario
 
     return EvalScenario.model_validate(raw)
+
+
+def test_eval_loader_populates_gold_ids_from_adjacent_golden_products(tmp_path: Path):
+    scenarios_path = tmp_path / "recommend.json"
+    golden_path = tmp_path / "golden_products.json"
+    scenarios_path.write_text(
+        """
+        [
+          {
+            "id": "case_gold",
+            "message": "recommend sunscreen",
+            "session_id": "eval_gold",
+            "golden_id": "gold_sunscreen",
+            "expect": {"min_product_items": 1}
+          }
+        ]
+        """,
+        encoding="utf-8",
+    )
+    golden_path.write_text(
+        """
+        {
+          "_meta": {},
+          "gold_sunscreen": {
+            "ideal_top": ["p1", "p2"],
+            "acceptable": ["p1", "p2", "p3"]
+          }
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    scenarios = load_scenarios(scenarios_path)
+
+    assert scenarios[0].golden_id == "gold_sunscreen"
+    assert scenarios[0].expect.gold_product_ids == ["p1", "p2"]
+    assert scenarios[0].expect.gold_primary_ids == ["p1", "p2"]
+
+
+def test_attribution_summary_uses_fractional_gold_recall():
+    from backend.app.eval.models import EvalScenarioResult
+    from backend.app.eval.runner import _summarize_attribution
+
+    summary = _summarize_attribution(
+        [
+            EvalScenarioResult(
+                id="case_partial",
+                passed=True,
+                planner_ok=True,
+                gold_ids=["p1", "p2"],
+                final_top5=["p2", "p3"],
+                pre_filter_top20=["p1", "p2"],
+                post_filter_top20=["p2"],
+            )
+        ]
+    )
+
+    assert summary.pre_filter_recall_at_20 == 1.0
+    assert summary.post_filter_recall_at_20 == 0.5
+    assert summary.final_recall_at_5 == 0.5
+
+
+def test_evaluate_events_enforces_recommend_ablation_expectations():
+    from backend.app.eval.metrics import evaluate_events
+    from backend.app.eval.models import EvalExpectation, EvalScenario
+
+    scenario = EvalScenario(
+        id="case_metrics",
+        message="recommend",
+        session_id="eval_metrics",
+        expect=EvalExpectation(
+            min_product_items=1,
+            price_min=100,
+            expected_brands=["BrandA"],
+            forbidden_brands=["BrandB"],
+            expect_product_ids_subset_of=["p1", "p2"],
+        ),
+    )
+    events = [
+        {
+            "type": "product_item",
+            "product": {
+                "product_id": "p3",
+                "name": "Product",
+                "description": "",
+                "price": 50,
+                "brand": "BrandB",
+            },
+        }
+    ]
+
+    result = evaluate_events(scenario, events)
+
+    assert result.passed is False
+    assert any("below min" in failure for failure in result.failures)
+    assert any("missing expected brand" in failure for failure in result.failures)
+    assert any("forbidden brand" in failure for failure in result.failures)
+    assert any("outside expected subset" in failure for failure in result.failures)
+
+
+def test_evaluate_events_accepts_clarification_request():
+    from backend.app.eval.metrics import evaluate_events
+    from backend.app.eval.models import EvalExpectation, EvalScenario
+
+    scenario = EvalScenario(
+        id="case_clarify",
+        message="recommend phone",
+        session_id="eval_clarify",
+        expect=EvalExpectation(expect_clarification=True),
+    )
+
+    result = evaluate_events(scenario, [{"type": "clarification_request"}])
+
+    assert result.passed is True
+
+
+def test_miss_reason_marks_gold_constraint_conflict_before_filter_removed():
+    from backend.app.eval.runner import _classify_miss_reason
+    from backend.app.models import HardConstraints, Product
+
+    products = {
+        "gold": Product(
+            product_id="gold",
+            title="Gold",
+            brand="Brand",
+            category="cat",
+            sub_category="sub",
+            price=1000,
+            image_path="",
+            search_text="gold",
+        )
+    }
+
+    reason = _classify_miss_reason(
+        gold_ids=["gold"],
+        product_ids=set(products),
+        product_map=products,
+        hard_constraints=HardConstraints(price_max=500),
+        planner_ok=True,
+        clarification_blocked=False,
+        pre_filter_top20=["gold"],
+        post_filter_top20=[],
+        final_top5=[],
+    )
+
+    assert reason == "gold_conflicts_with_constraints"
+
+
+def test_miss_reason_marks_empty_final_emission_after_retrieval_hit():
+    from backend.app.eval.runner import _classify_miss_reason
+    from backend.app.models import HardConstraints
+
+    reason = _classify_miss_reason(
+        gold_ids=["gold"],
+        product_ids={"gold"},
+        product_map={},
+        hard_constraints=HardConstraints(),
+        planner_ok=True,
+        clarification_blocked=False,
+        pre_filter_top20=["gold"],
+        post_filter_top20=["gold"],
+        final_top5=[],
+    )
+
+    assert reason == "final_emission_empty"

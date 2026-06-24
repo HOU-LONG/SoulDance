@@ -1,0 +1,115 @@
+[
+  {
+    "id": "recommend_basic_sunscreen",
+    "session_id": "eval_recommend_basic_sunscreen",
+    "tags": ["recommend", "explicit"],
+    "golden_id": "recommend_sunscreen_basic",
+    "message": "推荐一款防晒霜",
+    "expect": {
+      "min_product_items": 1,
+      "event_types": ["ack", "products_start", "product_item", "done"],
+      "expect_product_ids_subset_of": ["p_beauty_006", "p_beauty_010", "p_beauty_023"]
+    }
+  },
+  {
+    "id": "recommend_ambiguous_phone",
+    "session_id": "eval_recommend_ambiguous_phone",
+    "tags": ["recommend", "ambiguous"],
+    "message": "推荐一款手机",
+    "expect": {
+      "event_types": ["ack"],
+      "expect_clarification": true
+    }
+  },
+  {
+    "id": "recommend_phone_brand_include",
+    "session_id": "eval_recommend_phone_brand_include",
+    "tags": ["recommend", "brand_include"],
+    "golden_id": "recommend_phone_huawei",
+    "message": "推荐一款华为手机",
+    "expect": {
+      "min_product_items": 1,
+      "expected_brands": ["华为"],
+      "forbidden_brands": ["Apple 苹果", "小米", "OPPO", "vivo"]
+    }
+  },
+  {
+    "id": "recommend_phone_brand_exclude_apple",
+    "session_id": "eval_recommend_phone_brand_exclude_apple",
+    "tags": ["recommend", "brand_exclude"],
+    "golden_id": "recommend_phone_no_apple",
+    "message": "推荐手机，不要苹果，预算 6000",
+    "expect": {
+      "min_product_items": 1,
+      "price_max": 6000,
+      "forbidden_brands": ["Apple 苹果", "苹果"]
+    }
+  },
+  {
+    "id": "recommend_sunscreen_no_alcohol",
+    "session_id": "eval_recommend_sunscreen_no_alcohol",
+    "tags": ["recommend", "exclude_term"],
+    "golden_id": "recommend_sunscreen_no_alcohol",
+    "message": "推荐一款防晒霜，不要含酒精",
+    "expect": {
+      "min_product_items": 1,
+      "forbid_terms": ["酒精", "alcohol"],
+      "forbidden_product_ids": ["p_beauty_010", "p_beauty_023"],
+      "expected_product_ids": ["p_beauty_006"]
+    }
+  },
+  {
+    "id": "recommend_drink_no_carbonated",
+    "session_id": "eval_recommend_drink_no_carbonated",
+    "tags": ["recommend", "exclude_term"],
+    "golden_id": "recommend_drink_no_sugar",
+    "message": "推荐一款无糖饮料",
+    "expect": {
+      "min_product_items": 1,
+      "expect_product_ids_subset_of": [
+        "p_food_003",
+        "p_food_004",
+        "p_food_014",
+        "p_food_015",
+        "p_food_022",
+        "p_food_023",
+        "p_food_024"
+      ]
+    }
+  },
+  {
+    "id": "recommend_phone_budget_range",
+    "session_id": "eval_recommend_phone_budget_range",
+    "tags": ["recommend", "budget"],
+    "golden_id": "recommend_phone_budget_5000_8000",
+    "message": "推荐 5000 到 8000 元的智能手机",
+    "expect": {
+      "min_product_items": 1,
+      "price_min": 5000,
+      "price_max": 8000,
+      "expect_product_ids_subset_of": [
+        "p_digital_002",
+        "p_digital_009",
+        "p_digital_015",
+        "p_digital_017",
+        "p_digital_008"
+      ]
+    }
+  },
+  {
+    "id": "recommend_cheaper_running_shoes",
+    "session_id": "eval_recommend_cheaper_running_shoes",
+    "tags": ["recommend", "cheaper"],
+    "golden_id": "recommend_running_shoes_cheaper",
+    "message": "推荐一款便宜的跑步鞋",
+    "expect": {
+      "min_product_items": 1,
+      "expect_product_ids_subset_of": [
+        "p_clothes_007",
+        "p_clothes_009",
+        "p_clothes_010"
+      ],
+      "forbidden_product_ids": ["p_clothes_008"]
+    }
+  }
+]

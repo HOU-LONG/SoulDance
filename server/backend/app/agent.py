@@ -76,12 +76,13 @@ class ShopGuideAgent:
         user_profile_store=None,
         *,
         hybrid_retriever=None,
+        reranker=None,
     ):
         self.products = products
         self.product_map = {product.product_id: product for product in products}
         self.llm_client = llm_client or FakeLLMClient()
         self.retriever = retriever or BM25OnlyRetriever(products)
-        self.adaptive_retriever = AdaptiveRetriever(self.retriever, hybrid_retriever=hybrid_retriever)
+        self.adaptive_retriever = AdaptiveRetriever(self.retriever, hybrid_retriever=hybrid_retriever, reranker=reranker)
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent()
         self.semantic_parser = SemanticParser(self.llm_client)

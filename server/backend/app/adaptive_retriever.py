@@ -45,12 +45,14 @@ class AdaptiveRetriever:
         metrics=None,
         *,
         hybrid_retriever=None,
+        reranker=None,
     ):
         self.retriever = retriever
         self.policy = policy or RelaxationPolicy()
         self.metrics = metrics
         self.last_evidence_by_product: dict[str, list[str]] = {}
         self.hybrid_retriever = hybrid_retriever
+        self.reranker = reranker
 
     def search(self, plan: RetrievalPlan, top_k: int = 30) -> list[tuple[Product, float]]:
         """执行多轮自适应检索，返回合并后的候选商品及其分数。
@@ -79,6 +81,15 @@ class AdaptiveRetriever:
                         return raw_results
                     hybrid_results = []
                 if hybrid_results:
+                    if self.reranker is not None:
+                        from .rag.reranker_scenarios import detect_pre_scenario
+                        pre_scenario = detect_pre_scenario(plan)
+                        hybrid_results = self.reranker.rerank(
+                            plan.retrieval_query or "",
+                            hybrid_results,
+                            top_k=top_k,
+                            scenario=pre_scenario,
+                        )
                     self.last_evidence_by_product = {
                         result.product.product_id: [
                             text

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Protocol, Sequence, runtime_checkable
+from typing import Protocol, Sequence, runtime_checkable, Optional
+
+from ..timeout_policy import TimeoutBudget
 
 from .reranker_scenarios import RerankScenario
 from .types import ProductRetrievalResult
@@ -289,7 +291,7 @@ def _load_cross_encoder(model_dir: str, device: str):
     return CrossEncoder(model_dir, device=device)
 
 
-def build_reranker(settings, *, llm_client=None, metrics=None) -> Reranker:
+def build_reranker(settings, *, llm_client=None, metrics=None, timeout_budget: Optional[TimeoutBudget] = None) -> Reranker:
     """Construct the configured reranker, with silent fallback to NoOp."""
     if not getattr(settings, "rerank_enabled", False):
         return NoOpReranker()
@@ -305,16 +307,22 @@ def build_reranker(settings, *, llm_client=None, metrics=None) -> Reranker:
             metrics.increment("retrieval.reranker.fallback.no_model")
         return NoOpReranker()
 
+    # Use default timeout budget if not provided
+    if timeout_budget is None:
+        timeout_budget = TimeoutBudget()
+
     cross = CrossEncoderReranker(
         model,
         metrics=metrics,
         output_top_k=getattr(settings, "rerank_output_top_k", 15),
+        timeout_seconds=timeout_budget.rerank_cross_seconds,
     )
     if getattr(settings, "rerank_llm_enabled", False) and llm_client is not None:
         llm = LLMReranker(
             llm_client,
             metrics=metrics,
             top_n=getattr(settings, "rerank_llm_top_n", 8),
+            timeout_seconds=timeout_budget.rerank_llm_seconds,
         )
         return HybridReranker(
             cross,

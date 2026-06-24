@@ -11,6 +11,8 @@ T = TypeVar("T")
 class TimeoutBudget:
     intent_seconds: float = 3.0
     retrieval_seconds: float = 2.0
+    rerank_cross_seconds: float = 0.5
+    rerank_llm_seconds: float = 4.0
     selection_seconds: float = 4.0
     response_first_chunk_seconds: float = 12.0
     tts_seconds: float = 10.0

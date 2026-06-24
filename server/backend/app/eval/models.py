@@ -1,11 +1,17 @@
+"""Evaluation DSL models.
+
+Supports legacy single-message scenarios, multi-step scenarios, and attribution diagnostics.
+"""
+
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class EvalExpectation(BaseModel):
+    # ---- Legacy-compatible assertions ----
     min_product_items: int = 0
     expected_product_ids: list[str] = Field(default_factory=list)
     gold_product_ids: list[str] = Field(default_factory=list)
@@ -23,15 +29,79 @@ class EvalExpectation(BaseModel):
     require_cart_success: bool = False
     require_order_completed: bool = False
 
+    # ---- Phase 2 assertions ----
+    expect_no_match: bool = False
+    expect_comparison: bool = False
+    expect_order_status: str | None = None
+    expect_cart_quantity: dict[str, int] = Field(default_factory=dict)
+    expect_error_kind: str | None = None
+    forbidden_terms_in_explanation: list[str] = Field(default_factory=list)
+    expected_focus_product: str | None = None
+
+
+class EvalStep(BaseModel):
+    """One scenario step with an action, assertions, and optional bindings."""
+
+    message: str = ""
+    action: Literal[
+        "user_message",
+        "cart_action",
+        "order_action",
+        "websocket_disconnect",
+        "wait",
+    ] = "user_message"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    expect: EvalExpectation = Field(default_factory=EvalExpectation)
+    bind: dict[str, str] = Field(default_factory=dict)
+
 
 class EvalScenario(BaseModel):
     id: str
-    message: str
     session_id: str
+    # Top-level message / expect / type is expanded into steps[0].
+    message: str = ""
     type: str = "user_message"
     expect: EvalExpectation = Field(default_factory=EvalExpectation)
+    steps: list[EvalStep] = Field(default_factory=list)
+    # Optional fault injection before a scenario starts.
+    fault: str | None = None
+    # Free-form tags for filtering and ablation runs.
     tags: list[str] = Field(default_factory=list)
+    # golden_id points to data/eval/golden_products.json for Recall/NDCG.
+    # Scenarios without golden_id are skipped for IR metrics.
     golden_id: str | None = None
+
+    @model_validator(mode="after")
+    def _expand_legacy_shortcut(self) -> "EvalScenario":
+        """Expand legacy message / type / expect fields into steps[0]."""
+        if self.steps:
+            return self
+        if self.type == "cart_action":
+            action = "cart_action"
+        elif self.type == "order_flow":
+            action = "order_action"
+        else:
+            action = "user_message"
+        self.steps = [
+            EvalStep(
+                message=self.message,
+                action=action,
+                expect=self.expect,
+                payload={"legacy_type": self.type},
+            )
+        ]
+        return self
+
+
+class EvalStepResult(BaseModel):
+    """Per-step execution result."""
+
+    step_index: int
+    passed: bool
+    failures: list[str] = Field(default_factory=list)
+    event_count: int = 0
+    product_ids: list[str] = Field(default_factory=list)
+    metrics: dict[str, float] = Field(default_factory=dict)
 
 
 class EvalScenarioResult(BaseModel):
@@ -40,6 +110,10 @@ class EvalScenarioResult(BaseModel):
     failures: list[str] = Field(default_factory=list)
     event_count: int = 0
     product_ids: list[str] = Field(default_factory=list)
+    # Phase 2 step results and aggregate metrics.
+    steps: list[EvalStepResult] = Field(default_factory=list)
+    metrics: dict[str, float] = Field(default_factory=dict)
+    # attribution diagnostics
     planner_ok: bool | None = None
     clarification_blocked: bool = False
     retrieval_query: str | None = None

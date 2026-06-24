@@ -30,6 +30,7 @@ import com.example.shopguideagent.ui.theme.TextPrimary
 @Composable
 fun AiMessageBlock(
     message: ChatMessageUiModel,
+    firePoints: Int,
     onProductClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onQuickAction: (String) -> Unit,
@@ -56,6 +57,7 @@ fun AiMessageBlock(
             ProductCarousel(
                 products = message.products,
                 expectedCount = message.expectedProductCount,
+                firePoints = firePoints,
                 onProductClick = onProductClick,
                 onAddToCart = onAddToCart,
                 onQuickAction = onQuickAction,

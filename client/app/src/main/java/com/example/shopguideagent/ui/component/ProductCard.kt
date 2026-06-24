@@ -7,12 +7,14 @@ import com.example.shopguideagent.data.model.ProductUiModel
 @Composable
 fun ProductCard(
     product: ProductUiModel,
+    firePoints: Int,
     onClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     HeroProductCard(
         product = product,
+        firePoints = firePoints,
         onClick = onClick,
         onAddToCart = onAddToCart,
         onRefine = {},

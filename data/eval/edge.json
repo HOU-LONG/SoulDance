@@ -1,0 +1,43 @@
+[
+  {
+    "id": "edge_no_match_extreme_budget",
+    "session_id": "eval_edge_no_match_extreme_budget",
+    "tags": ["edge", "no_match"],
+    "message": "推荐一款 5 元以内的智能手机",
+    "expect": {
+      "expect_no_match": true
+    }
+  },
+  {
+    "id": "edge_invalid_category",
+    "session_id": "eval_edge_invalid_category",
+    "tags": ["edge", "invalid_category"],
+    "message": "推荐一辆汽车",
+    "expect": {
+      "min_product_items": 0,
+      "event_types": ["ack", "done"]
+    }
+  },
+  {
+    "id": "edge_duplicate_add_to_cart",
+    "session_id": "eval_edge_duplicate_add",
+    "tags": ["edge", "duplicate"],
+    "steps": [
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_beauty_006", "action": "add_to_cart", "quantity": 1},
+        "expect": {
+          "require_cart_success": true,
+          "expect_cart_quantity": {"p_beauty_006": 1}
+        }
+      },
+      {
+        "action": "cart_action",
+        "payload": {"product_id": "p_beauty_006", "action": "add_to_cart", "quantity": 1},
+        "expect": {
+          "expect_cart_quantity": {"p_beauty_006": 2}
+        }
+      }
+    ]
+  }
+]

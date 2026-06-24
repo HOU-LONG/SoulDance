@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.CartUiState
 import com.example.shopguideagent.data.model.OrderFlowState
+import com.example.shopguideagent.ui.home.FireRewardCalculator
 import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.BorderColor
 import com.example.shopguideagent.ui.theme.BrandPrimary
@@ -45,6 +46,7 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 @Composable
 fun CheckoutBottomSheet(
     state: CartUiState,
+    firePoints: Int,
     orderFlowState: OrderFlowState = OrderFlowState.Idle,
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
@@ -155,12 +157,22 @@ fun CheckoutBottomSheet(
                         color = TextSecondary,
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    Text(
-                        "¥${"%.2f".format(totalAmount)}",
-                        color = PriceColor,
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            "¥${"%.2f".format(totalAmount)}",
+                            color = PriceColor,
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.headlineSmall,
+                        )
+                        val discount = FireRewardCalculator.discountAmount(firePoints, totalAmount)
+                        if (discount > 0) {
+                            Text(
+                                "抵扣后 ¥${"%.2f".format(totalAmount - discount)}",
+                                color = PriceColor.copy(alpha = 0.8f),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
+                    }
                 }
             }
 

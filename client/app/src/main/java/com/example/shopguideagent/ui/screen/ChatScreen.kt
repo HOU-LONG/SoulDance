@@ -1,5 +1,6 @@
 package com.example.shopguideagent.ui.screen
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -102,6 +103,7 @@ object ChatDrawerBackBehavior {
 fun ChatScreen(
     chatViewModel: ChatViewModel,
     cartBadgeCount: Int,
+    firePoints: Int,
     onCartClick: () -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onVoiceRecordingStarted: () -> Unit = {},
@@ -343,6 +345,7 @@ fun ChatScreen(
                                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                             AiMessageBlock(
                                                 message = message,
+                                                firePoints = firePoints,
                                                 onProductClick = { selectedProduct = it },
                                                 onAddToCart = ::addToCartWithFeedback,
                                                 onQuickAction = { action ->
@@ -499,6 +502,7 @@ private fun ChatEmptyState(modifier: Modifier = Modifier) {
     }
 }
 
+@SuppressLint("ViewModelConstructorInComposable")
 @Preview(showBackground = true)
 @Composable
 private fun ChatScreenPreview() {
@@ -506,6 +510,7 @@ private fun ChatScreenPreview() {
         ChatScreen(
             chatViewModel = ChatViewModel(),
             cartBadgeCount = 0,
+            firePoints = 886,
             onCartClick = {},
             onAddToCart = {},
         )

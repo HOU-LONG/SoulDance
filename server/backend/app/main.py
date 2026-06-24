@@ -22,6 +22,8 @@ from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
 from .order_service import OrderError, OrderService
+from .rag.fusion import HybridRetriever
+from .rag.vector_search import DenseIndex, build_dense_index
 from .semantic_layer import rule_semantic_frame
 from .realtime_envelope import RealtimeEnvelope
 from .session_store import SessionStore
@@ -40,14 +42,22 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     if not isinstance(llm_client, FakeLLMClient):
         llm_client = LLMClientWithBreaker(llm_client)
     retriever = (
-        BM25OnlyRetriever(products)
+        BM25OnlyRetriever(products, config=settings.retrieval_config)
         if use_fake_retriever
         else EmbeddingRetriever(
             products,
             settings.embedding_path,
             settings.embedding_device,
             use_embedding=settings.use_embedding,
+            config=settings.retrieval_config,
         )
+    )
+    # 启动时一次性构建 dense index，由所有检索器共享，避免每次查询循环反序列化。
+    dense_index = build_dense_index(products, getattr(retriever, "embeddings", None))
+    hybrid_retriever = HybridRetriever(
+        retriever,
+        config=settings.retrieval_config,
+        dense_index=dense_index,
     )
     memory_cache = StructuredMemoryCache(settings.memory_cache_path or None)
     recommendation_memory = RecommendationMemoryCache(_recommendation_memory_path(settings.memory_cache_path))
@@ -79,6 +89,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         feedback_ranker=feedback_ranker,
         feedback_store=feedback_store,
         user_profile_store=user_profile_store,
+        hybrid_retriever=hybrid_retriever,
     )
     cart = CartService(products, settings.cart_path or None, db_session=db_session)
     product_map = {product.product_id: product for product in products}

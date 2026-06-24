@@ -44,6 +44,7 @@ fun ProductPresentationSheet(
     receivedCount: Int,
     completed: Boolean,
     quickActions: List<QuickActionUiModel>,
+    firePoints: Int,
     onProductClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onQuickAction: (String) -> Unit,
@@ -83,6 +84,7 @@ fun ProductPresentationSheet(
                 primaryProduct?.let { product ->
                     HeroProductCard(
                         product = product,
+                        firePoints = firePoints,
                         onClick = onProductClick,
                         onAddToCart = onAddToCart,
                         onRefine = onQuickAction,
@@ -127,6 +129,7 @@ private fun ProductPresentationSheetPreview() {
             receivedCount = 0,
             completed = false,
             quickActions = emptyList(),
+            firePoints = 886,
             onProductClick = {},
             onAddToCart = {},
             onQuickAction = {},

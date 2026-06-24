@@ -74,8 +74,22 @@ def build_checks(health_port: str = "18083") -> list[AcceptanceCheck]:
                 backend_python,
                 "scripts/run_eval.py",
                 "--scenarios",
-                "../data/eval/shopguide_core_scenarios.json",
+                "../data/eval/core.json",
+                "--fake-llm",
             ],
+        ),
+        AcceptanceCheck(
+            name="eval-full",
+            cwd=REPO_ROOT / "server",
+            command=[
+                backend_python,
+                "scripts/run_eval.py",
+                "--scenarios",
+                "../data/eval/",
+                "--min-pass-rate",
+                "0.80",
+            ],
+            kind="eval-full",
         ),
         AcceptanceCheck(
             name="android-build",
@@ -180,10 +194,46 @@ def _run_health_smoke(check: AcceptanceCheck, health_timeout_seconds: int) -> in
                 process.wait(timeout=10)
 
 
+def _run_eval_full(check: AcceptanceCheck, timeout_seconds: int) -> int:
+    """eval-full 需要真 LLM API key；没配就 skip，避免 CI 离线环境失败。
+
+    判断顺序：
+    - 显式从 REPO_ROOT/.env 读 LLM_API_KEY / ARK_API_KEY（不污染本进程其他 env）
+    - 都为空 → skip（exit 0，不阻塞 release）
+    - 任一非空 → 真跑
+    """
+    if not _has_llm_credentials():
+        print(f"== {check.name} == (skipped: no LLM_API_KEY / ARK_API_KEY in .env or env)", flush=True)
+        return 0
+    return _run_command(check, timeout_seconds)
+
+
+def _has_llm_credentials() -> bool:
+    """检查环境变量或 .env 中是否有可用的 LLM key。"""
+    if os.getenv("LLM_API_KEY") or os.getenv("ARK_API_KEY"):
+        return True
+    env_path = REPO_ROOT / ".env"
+    if not env_path.exists():
+        return False
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            if key.strip() in {"LLM_API_KEY", "ARK_API_KEY"} and value.strip():
+                return True
+    except OSError:
+        return False
+    return False
+
+
 def run_checks(checks: list[AcceptanceCheck], timeout_seconds: int, health_timeout_seconds: int) -> int:
     for check in checks:
         if check.kind == "health-smoke":
             code = _run_health_smoke(check, health_timeout_seconds)
+        elif check.kind == "eval-full":
+            code = _run_eval_full(check, timeout_seconds)
         else:
             code = _run_command(check, timeout_seconds)
         if code != 0:

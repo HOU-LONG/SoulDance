@@ -47,7 +47,7 @@ fun DailyTaskBar(
         modifier = modifier
             .fillMaxWidth()
             .testTag("daily_task_bar")
-            .clickableWithScale { onAction(SpriteHomeAction.DailyTaskClicked) },
+            .clickableWithScale { onAction(SpriteHomeAction.EarnFireClicked) },
         shape = RoundedCornerShape(34.dp),
         color = Color.White.copy(alpha = 0.72f),
         border = BorderStroke(1.dp, Color.White.copy(alpha = 0.78f)),
@@ -91,7 +91,7 @@ fun DailyTaskBar(
             Spacer(Modifier.width(12.dp))
             Button(
                 enabled = !state.claimed,
-                onClick = { onAction(SpriteHomeAction.DailyTaskClicked) },
+                onClick = { onAction(SpriteHomeAction.EarnFireClicked) },
                 colors = ButtonDefaults.buttonColors(containerColor = SpriteHomeTokens.PrimaryButton, contentColor = TextOnBrand),
                 shape = RoundedCornerShape(999.dp),
             ) {

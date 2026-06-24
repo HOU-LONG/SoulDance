@@ -60,9 +60,13 @@ class SpriteHomeViewModel(
             }
             SpriteHomeAction.EarnFireClicked -> {
                 setSpeech("完成导购任务就能赚火星")
-                emitEffect(SpriteHomeEffect.NavigateToTasks)
+                emitEffect(SpriteHomeEffect.ShowTaskCenter)
             }
-            SpriteHomeAction.DailyTaskClicked -> handleDailyTaskClicked()
+            is SpriteHomeAction.TaskClaimed -> handleTaskClaimed(action.taskId)
+            SpriteHomeAction.TaskCenterOpened -> emitEffect(SpriteHomeEffect.ShowTaskCenter)
+            SpriteHomeAction.TaskCenterClosed -> emitEffect(SpriteHomeEffect.HideTaskCenter)
+            SpriteHomeAction.ProductViewedForTask -> incrementTask("browse_recommendations")
+            SpriteHomeAction.ProductShared -> incrementTask("share_good_product")
             SpriteHomeAction.ProfileClicked -> emitEffect(SpriteHomeEffect.ShowMessage("用户资料暂未开放"))
             SpriteHomeAction.SpeechBubbleClicked -> Unit
             SpriteHomeAction.ProductClicked -> {
@@ -142,7 +146,7 @@ class SpriteHomeViewModel(
     }
 
     fun onDailyTaskClicked() {
-        onAction(SpriteHomeAction.DailyTaskClicked)
+        onAction(SpriteHomeAction.EarnFireClicked)
     }
 
     fun onStageAnimationFinished() {
@@ -154,6 +158,23 @@ class SpriteHomeViewModel(
                 animationSequence = current.animationSequence + 1,
             )
         }
+    }
+
+    private fun handleTaskClaimed(taskId: String) {
+        val task = uiState.value.tasks.find { it.taskId == taskId }
+        if (task == null || !task.claimable) return
+        val reward = FireRewardCalculator.reward(task.baseFireReward, uiState.value.spiritProgress.level)
+        _uiState.update { current ->
+            current.copy(
+                tasks = current.tasks.map { t ->
+                    if (t.taskId == taskId) t.copy(claimed = true) else t
+                },
+                userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + reward),
+                speechBubble = SpeechBubbleUiState("任务奖励已领取", style = SpeechBubbleStyle.SUCCESS),
+                animationSequence = current.animationSequence + 1,
+            )
+        }
+        emitEffect(SpriteHomeEffect.ShowClaimedReward(taskId, reward))
     }
 
     private fun onProductsStart(expectedCount: Int) {
@@ -210,7 +231,7 @@ class SpriteHomeViewModel(
             current.copy(
                 baseAvatarState = nextBase,
                 productPresentation = current.productPresentation.copy(completed = true),
-                dailyTask = current.dailyTask.incrementProgress(),
+                tasks = current.tasks.incrementById("daily_guide_chat"),
                 speechBubble = SpriteHomeStateMapper.speechFor(current.transientAvatarState ?: nextBase, current.presentingProduct),
                 isLoading = false,
                 animationSequence = current.animationSequence + 1,
@@ -251,10 +272,15 @@ class SpriteHomeViewModel(
                 currentIntimacy = if (levelUp) 0 else intimacyTotal,
             )
             progressToSave = nextProgress
+            val fireReward = FireRewardCalculator.reward(
+                SpriteHomeRewards.ADD_TO_CART_FIRE,
+                nextProgress.level,
+            )
             current.copy(
                 transientAvatarState = nextTransient,
-                userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + SpriteHomeRewards.ADD_TO_CART_FIRE),
+                userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + fireReward),
                 spiritProgress = nextProgress,
+                tasks = current.tasks.incrementById("add_to_cart"),
                 speechBubble = SpriteHomeStateMapper.speechFor(nextTransient, current.presentingProduct),
                 animationSequence = current.animationSequence + 1,
             )
@@ -265,23 +291,14 @@ class SpriteHomeViewModel(
         }
     }
 
-    private fun handleDailyTaskClicked() {
-        val task = uiState.value.dailyTask
-        if (task.completed && !task.claimed) {
-            _uiState.update { current ->
-                current.copy(
-                    dailyTask = current.dailyTask.copy(claimed = true),
-                    userProfile = current.userProfile.copy(firePoints = current.userProfile.firePoints + current.dailyTask.rewardFirePoints),
-                    speechBubble = SpeechBubbleUiState("任务奖励已领取", style = SpeechBubbleStyle.SUCCESS),
-                    animationSequence = current.animationSequence + 1,
-                )
-            }
-            emitEffect(SpriteHomeEffect.ShowMessage("任务奖励已领取"))
-        } else {
-            setSpeech("去聊天页完成一次导购吧")
-            emitEffect(SpriteHomeEffect.NavigateToTasks)
+    private fun incrementTask(taskId: String) {
+        _uiState.update { current ->
+            current.copy(tasks = current.tasks.incrementById(taskId))
         }
     }
+
+    private fun List<TaskUiState>.incrementById(taskId: String): List<TaskUiState> =
+        map { if (it.taskId == taskId) it.increment() else it }
 
     private fun setSpeech(text: String) {
         _uiState.update { current -> current.copy(speechBubble = current.speechBubble.copy(text = text, visible = true)) }
@@ -289,12 +306,6 @@ class SpriteHomeViewModel(
 
     private fun emitEffect(effect: SpriteHomeEffect) {
         _effects.tryEmit(effect)
-    }
-
-    private fun DailyTaskUiState.incrementProgress(): DailyTaskUiState {
-        if (claimed) return this
-        val nextCount = (currentCount + 1).coerceAtMost(targetCount)
-        return copy(currentCount = nextCount, completed = targetCount > 0 && nextCount >= targetCount)
     }
 
     private fun cartEventKey(event: RealtimeEvent.CartUpdate): String =

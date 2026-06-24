@@ -16,6 +16,7 @@ def lexical_search_chunks(
     constraints: HardConstraints,
     top_k: int = 30,
 ) -> list[ChunkSearchResult]:
+    """Chunk-level BM25 search that preserves evidence for product-level fusion."""
     rows = _load_active_chunks(session, constraints)
     if not rows:
         return []

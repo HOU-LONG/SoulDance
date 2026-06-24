@@ -1,0 +1,107 @@
+[
+  {
+    "id": "multi_turn_add_constraint",
+    "session_id": "eval_multi_turn_add_constraint",
+    "tags": ["multi_turn", "add_constraint"],
+    "steps": [
+      {
+        "message": "推荐一款防晒霜",
+        "expect": {
+          "min_product_items": 1,
+          "expect_product_ids_subset_of": [
+            "p_beauty_006",
+            "p_beauty_010",
+            "p_beauty_023"
+          ]
+        }
+      },
+      {
+        "message": "不要含酒精的",
+        "expect": {
+          "min_product_items": 1,
+          "expected_product_ids": ["p_beauty_006"],
+          "forbidden_product_ids": ["p_beauty_010", "p_beauty_023"]
+        }
+      }
+    ]
+  },
+  {
+    "id": "multi_turn_cancel_constraint",
+    "session_id": "eval_multi_turn_cancel_constraint",
+    "tags": ["multi_turn", "cancel_constraint"],
+    "steps": [
+      {
+        "message": "推荐一款防晒霜，不要含酒精",
+        "expect": {
+          "expected_product_ids": ["p_beauty_006"],
+          "forbidden_product_ids": ["p_beauty_010", "p_beauty_023"]
+        }
+      },
+      {
+        "message": "酒精可以接受",
+        "expect": {
+          "min_product_items": 1,
+          "expect_product_ids_subset_of": [
+            "p_beauty_006",
+            "p_beauty_010",
+            "p_beauty_023"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "id": "multi_turn_reference_resolution",
+    "session_id": "eval_multi_turn_reference_resolution",
+    "tags": ["multi_turn", "reference"],
+    "steps": [
+      {
+        "message": "推荐一款防晒霜",
+        "expect": {"min_product_items": 1},
+        "bind": {"first_product": "product_ids[0]"}
+      },
+      {
+        "message": "第一款适合油皮吗",
+        "expect": {
+          "event_types": ["ack", "done"]
+        }
+      }
+    ]
+  },
+  {
+    "id": "multi_turn_product_followup",
+    "session_id": "eval_multi_turn_product_followup",
+    "tags": ["multi_turn", "followup"],
+    "steps": [
+      {
+        "message": "推荐一款防晒霜",
+        "expect": {"min_product_items": 1},
+        "bind": {"first_product": "product_ids[0]"}
+      },
+      {
+        "message": "推荐另一款防晒霜，要敏感肌可用",
+        "expect": {
+          "min_product_items": 1,
+          "forbid_terms": ["酒精"]
+        }
+      }
+    ]
+  },
+  {
+    "id": "multi_turn_comparison",
+    "session_id": "eval_multi_turn_comparison",
+    "tags": ["multi_turn", "comparison"],
+    "steps": [
+      {
+        "message": "推荐一款防晒霜",
+        "expect": {"min_product_items": 2}
+      },
+      {
+        "message": "第一款和第二款哪个更适合油皮",
+        "expect": {
+          "expect_comparison": true
+        }
+      }
+    ]
+  }
+]

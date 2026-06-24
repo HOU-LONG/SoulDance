@@ -74,12 +74,14 @@ class ShopGuideAgent:
         feedback_ranker=None,
         feedback_store=None,
         user_profile_store=None,
+        *,
+        hybrid_retriever=None,
     ):
         self.products = products
         self.product_map = {product.product_id: product for product in products}
         self.llm_client = llm_client or FakeLLMClient()
         self.retriever = retriever or BM25OnlyRetriever(products)
-        self.adaptive_retriever = AdaptiveRetriever(self.retriever)
+        self.adaptive_retriever = AdaptiveRetriever(self.retriever, hybrid_retriever=hybrid_retriever)
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent()
         self.semantic_parser = SemanticParser(self.llm_client)
@@ -147,31 +149,39 @@ class ShopGuideAgent:
         return plan
 
     def retrieve_and_rank(self, plan: RetrievalPlan, limit: int = 8, session_id: str = "") -> list[RankedProduct]:
+        # memory_cache 存的是"未个性化"的基础排序（cross-session 共享是安全的，因为 key
+        # 完全由 plan 内容决定）。命中后必须再走 feedback_ranker 才能注入当前 session 的反馈，
+        # 否则会出现"session A 的偏好被 cache 走，session B 拿到 A 的个性化结果"的数据泄漏。
+        cached_base: list[RankedProduct] | None = None
         if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
-            cached = self.memory_cache.get(plan, self.product_map)
-            if cached is not None:
-                return cached
-        retrieved = self.adaptive_retriever.search(plan, top_k=30)
-        if retrieved:
-            candidates = [product for product, _ in retrieved]
-            scores = {product.product_id: score for product, score in retrieved}
+            cached_base = self.memory_cache.get(plan, self.product_map)
+
+        if cached_base is not None:
+            ranked = list(cached_base)
         else:
-            candidates = self.products
-            scores = {}
-        ranked = rank_products(
-            candidates,
-            plan,
-            scores,
-            limit=limit,
-            retrieval_evidence_by_product=getattr(self.adaptive_retriever, "last_evidence_by_product", {}),
-        )
-        if not ranked and candidates != self.products:
-            ranked = rank_products(self.products, plan, {}, limit=limit)
-        # 反馈闭环：注入反馈信号权重
+            retrieved = self.adaptive_retriever.search(plan, top_k=30)
+            if retrieved:
+                candidates = [product for product, _ in retrieved]
+                scores = {product.product_id: score for product, score in retrieved}
+            else:
+                candidates = self.products
+                scores = {}
+            ranked = rank_products(
+                candidates,
+                plan,
+                scores,
+                limit=limit,
+                retrieval_evidence_by_product=getattr(self.adaptive_retriever, "last_evidence_by_product", {}),
+            )
+            if not ranked and candidates != self.products:
+                ranked = rank_products(self.products, plan, {}, limit=limit)
+            # cache ? feedback_ranker ?????????????"????"?????
+            if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
+                self.memory_cache.put(plan, ranked)
+        # ?????????????? cache????? session ?? apply
+
         if self.feedback_ranker and session_id:
             ranked = self.feedback_ranker.apply(ranked, session_id)
-        if self.memory_cache and plan.intent in {"recommend_product", "product_followup"}:
-            self.memory_cache.put(plan, ranked)
         return ranked
 
     async def handle_message(self, request: ChatRequest) -> list[dict]:
@@ -758,19 +768,27 @@ class ShopGuideAgent:
             intent=intent,
             retrieval_mode="no_retrieval",
         )
+        # 首块超时 + 后续 chunk 间超时双重保护：避免 LLM 卡死把整条 ws 拖住。
+        # 同一个 stream 实例从首块开始一路迭代到底，不重新建 stream，避免 LLM 重复计费/输出重复。
+        stream = self.llm_client.stream_chitchat_response(
+            request.message, intent, self.sessions.get(request.session_id)
+        )
+        got_any_chunk = False
         try:
-            got_chunk = False
-            async for chunk in self.llm_client.stream_chitchat_response(request.message, intent, self.sessions.get(request.session_id)):
+            async for chunk in _stream_with_first_chunk_timeout(
+                stream,
+                first_chunk_timeout=DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS,
+                chunk_timeout=DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS,
+            ):
                 if chunk:
-                    got_chunk = True
+                    got_any_chunk = True
                     yield {"type": "text_delta", "message_id": message_id, "text": chunk}
-            if got_chunk:
-                yield {"type": "done", "message_id": message_id}
-                return
         except Exception:
             pass
-        for event in _text_delta_events(message_id, fallback):
-            yield event
+        if not got_any_chunk:
+            # 流根本没出 chunk（首块超时 / 异常 / 空流）：补静态 fallback
+            for event in _text_delta_events(message_id, fallback):
+                yield event
         yield {"type": "done", "message_id": message_id}
 
     def _apply_product_admission_gate(self, plan: RetrievalPlan, message: str) -> None:
@@ -2126,6 +2144,37 @@ def _text_delta_events(message_id: str, text: str) -> list[dict]:
 
 def _message_id() -> str:
     return "assistant_" + uuid.uuid4().hex[:10]
+
+
+async def _stream_with_first_chunk_timeout(
+    stream,
+    first_chunk_timeout: float,
+    chunk_timeout: float,
+):
+    '''单一 stream 迭代器，对首块和后续每个 chunk 分别施加超时。
+
+    设计目标：
+    - 避免 LLM 卡死时整个 ws 长时间挂住。
+    - 单 stream 实例从头到尾消费，不重复触发 LLM 调用（避免 stream_response 那种
+      "先取首块再重建 stream"导致 LLM 跑两次、文本片段重复 yield 的问题）。
+
+    任一阶段超时即终止迭代（StopAsyncIteration），不抛 TimeoutError，让调用方
+    用 got_any_chunk 标志判断是否需要走静态 fallback 文本。
+    '''
+    import asyncio
+
+    iterator = stream.__aiter__()
+    timeout = first_chunk_timeout
+    while True:
+        try:
+            chunk = await asyncio.wait_for(iterator.__anext__(), timeout=timeout)
+        except StopAsyncIteration:
+            return
+        except asyncio.TimeoutError:
+            return
+        yield chunk
+        # 首块拿到后，后续 chunk 用更宽松的间隔超时
+        timeout = chunk_timeout
 
 
 def _no_match_text(plan: RetrievalPlan) -> str:

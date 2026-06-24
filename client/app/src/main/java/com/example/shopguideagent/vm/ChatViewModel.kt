@@ -18,6 +18,7 @@ import com.example.shopguideagent.data.model.RealtimeEvent
 import com.example.shopguideagent.data.model.VoiceRecognitionState
 import com.example.shopguideagent.audio.StreamingAudioPlayer
 import com.example.shopguideagent.data.remote.RealtimeChatWebSocketClient
+import com.example.shopguideagent.data.remote.SessionsApi
 import com.example.shopguideagent.data.remote.SessionsApiClient
 import com.example.shopguideagent.data.remote.SpeechToTextClient
 import com.example.shopguideagent.data.remote.SttApiService
@@ -45,7 +46,7 @@ class ChatViewModel @JvmOverloads constructor(
     private val audioPlayer: StreamingAudioPlayer = StreamingAudioPlayer(),
     private val voiceRecognitionTimeoutMillis: Long = VOICE_RECOGNITION_TIMEOUT_MILLIS,
     private val userSession: UserSession? = null,
-    private val sessionsApi: SessionsApiClient = SessionsApiClient(),
+    private val sessionsApi: SessionsApi = SessionsApiClient(),
     private val userIdProvider: () -> String = { userSession?.currentUserId?.value ?: "demo_user_a" },
 ) : ViewModel() {
 
@@ -731,8 +732,9 @@ class ChatViewModel @JvmOverloads constructor(
             activeFollowUpText = null
             audioPlayer.stop()
 
-            // Reload history for new user (handled by historyRepository reacting to user change)
-            // New WebSocket connection will be made on next message
+            // Reopen WebSocket against the new session id. Subsequent sendUserMessage
+            // calls will use activeSessionId (which is now the new session id).
+            ensureWebSocketConnection()
         }
     }
 }

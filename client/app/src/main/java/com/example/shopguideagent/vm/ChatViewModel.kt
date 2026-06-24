@@ -1,5 +1,6 @@
 package com.example.shopguideagent.vm
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.shopguideagent.config.UserSession
@@ -17,6 +18,7 @@ import com.example.shopguideagent.data.model.RealtimeEvent
 import com.example.shopguideagent.data.model.VoiceRecognitionState
 import com.example.shopguideagent.audio.StreamingAudioPlayer
 import com.example.shopguideagent.data.remote.RealtimeChatWebSocketClient
+import com.example.shopguideagent.data.remote.SessionsApiClient
 import com.example.shopguideagent.data.remote.SpeechToTextClient
 import com.example.shopguideagent.data.remote.SttApiService
 import kotlinx.coroutines.Dispatchers
@@ -42,7 +44,29 @@ class ChatViewModel @JvmOverloads constructor(
     private val sttApi: SpeechToTextClient = SttApiService(),
     private val audioPlayer: StreamingAudioPlayer = StreamingAudioPlayer(),
     private val voiceRecognitionTimeoutMillis: Long = VOICE_RECOGNITION_TIMEOUT_MILLIS,
+    private val userSession: UserSession? = null,
+    private val sessionsApi: SessionsApiClient = SessionsApiClient(),
+    private val userIdProvider: () -> String = { userSession?.currentUserId?.value ?: "demo_user_a" },
 ) : ViewModel() {
+
+    @JvmOverloads
+    constructor(
+        context: Context,
+        productCatalog: ProductCatalog? = null,
+        historyRepository: ChatHistoryRepository? = null,
+        wsClient: RealtimeChatWebSocketClient = RealtimeChatWebSocketClient(),
+        sttApi: SpeechToTextClient = SttApiService(),
+        audioPlayer: StreamingAudioPlayer = StreamingAudioPlayer(),
+    ) : this(
+        productCatalog = productCatalog,
+        historyRepository = historyRepository,
+        wsClient = wsClient,
+        sttApi = sttApi,
+        audioPlayer = audioPlayer,
+        userSession = UserSession.get(context),
+        userIdProvider = { UserSession.get(context).currentUserId.value },
+    )
+
     private val welcome = ChatMessageUiModel(
         id = "welcome",
         role = MessageRole.Assistant,
@@ -88,7 +112,6 @@ class ChatViewModel @JvmOverloads constructor(
             cartBadgeCount = _uiState.value.cartBadgeCount,
             isSpeakerEnabled = true,
             voiceRecognitionState = VoiceRecognitionState.Idle,
-            voiceRecognitionMessage = null,
             messages = listOf(welcome),
         )
         activeStreamUserText = null
@@ -115,7 +138,6 @@ class ChatViewModel @JvmOverloads constructor(
             phase = ChatExperiencePhase.Idle,
             isSpeakerEnabled = true,
             voiceRecognitionState = VoiceRecognitionState.Idle,
-            voiceRecognitionMessage = null,
             focus = ProductFocusUiState(),
             errorMessage = null,
             retryMessageText = null,
@@ -149,7 +171,6 @@ class ChatViewModel @JvmOverloads constructor(
             phase = ChatExperiencePhase.Idle,
             isSpeakerEnabled = true,
             voiceRecognitionState = VoiceRecognitionState.Idle,
-            voiceRecognitionMessage = null,
             focus = ProductFocusUiState(),
             errorMessage = null,
             retryMessageText = null,
@@ -318,7 +339,7 @@ class ChatViewModel @JvmOverloads constructor(
                             errorMessage = "语音识别失败: $displayMessage",
                         )
                     }
-                }
+                },
             )
         }
     }
@@ -676,6 +697,44 @@ class ChatViewModel @JvmOverloads constructor(
 
     private fun titleFor(messages: List<ChatMessageUiModel>): String =
         messages.firstOrNull { it.role == MessageRole.User }?.text?.take(18) ?: "新会话"
+
+    fun onUserSwitched(newUserId: String) {
+        viewModelScope.launch {
+            val currentUserId = userIdProvider()
+            if (newUserId == currentUserId) return@launch
+
+            userSession?.setCurrentUserId(newUserId)
+
+            // Get latest session for new user
+            val latest = sessionsApi.getLatest()
+
+            // Close current WebSocket
+            wsJob?.cancel()
+            wsClient.close()
+            wsJob = null
+
+            // Reset session and UI for new user
+            activeSessionId = latest.session_id
+            _uiState.value = ChatUiState(
+                sessionId = activeSessionId,
+                cartBadgeCount = _uiState.value.cartBadgeCount,
+                isSpeakerEnabled = true,
+                voiceRecognitionState = VoiceRecognitionState.Idle,
+                messages = listOf(welcome),
+            )
+
+            // Clear active state
+            activeStreamUserText = null
+            lastProductFollowUpPayload = null
+            activeAssistantId = null
+            activeFollowUpAssistantId = null
+            activeFollowUpText = null
+            audioPlayer.stop()
+
+            // Reload history for new user (handled by historyRepository reacting to user change)
+            // New WebSocket connection will be made on next message
+        }
+    }
 }
 
 fun visibleProductCountForStreaming(

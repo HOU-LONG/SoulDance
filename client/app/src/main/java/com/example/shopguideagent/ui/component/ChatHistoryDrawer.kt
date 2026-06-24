@@ -24,20 +24,29 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.shopguideagent.config.PresetUser
+import com.example.shopguideagent.config.UserSession
 import com.example.shopguideagent.data.history.ChatHistoryUiState
 import com.example.shopguideagent.data.history.ChatSessionUiModel
 import com.example.shopguideagent.ui.theme.AppBackground
@@ -56,11 +65,13 @@ import com.example.shopguideagent.ui.theme.TextTertiary
 @Composable
 fun ChatHistoryDrawer(
     state: ChatHistoryUiState,
+    currentUserId: String,
     userAvatarUri: String?,
     onNewSession: () -> Unit,
     onSelectSession: (ChatSessionUiModel) -> Unit,
     onDeleteSession: (ChatSessionUiModel) -> Unit,
-    onUserAvatarClick: () -> Unit,
+    onUserSelected: (String) -> Unit,
+    onAvatarChangeRequested: () -> Unit,
 ) {
     Surface(
         modifier = Modifier
@@ -147,8 +158,10 @@ fun ChatHistoryDrawer(
             Divider(color = DividerColor, thickness = 1.dp)
 
             DrawerUserFooter(
+                currentUserId = currentUserId,
                 userAvatarUri = userAvatarUri,
-                onUserAvatarClick = onUserAvatarClick,
+                onUserSelected = onUserSelected,
+                onAvatarChangeRequested = onAvatarChangeRequested,
             )
         }
     }
@@ -225,44 +238,95 @@ private fun HistorySessionItem(
 
 @Composable
 private fun DrawerUserFooter(
+    currentUserId: String,
     userAvatarUri: String?,
-    onUserAvatarClick: () -> Unit,
+    onUserSelected: (String) -> Unit,
+    onAvatarChangeRequested: () -> Unit,
 ) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickableWithScale(onUserAvatarClick),
-        color = SurfacePrimary,
-        shape = RoundedCornerShape(AppCornerRadius.Card),
-        border = BorderStroke(1.dp, BorderColor),
-        tonalElevation = 1.dp,
-        shadowElevation = 1.dp,
-    ) {
-        Row(
-            modifier = Modifier.padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    var expanded by remember { mutableStateOf(false) }
+    val currentUser = UserSession.PRESET_USERS.find { it.id == currentUserId }
+
+    Box {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickableWithScale { expanded = true },
+            color = SurfacePrimary,
+            shape = RoundedCornerShape(AppCornerRadius.Card),
+            border = BorderStroke(1.dp, BorderColor),
+            tonalElevation = 1.dp,
+            shadowElevation = 1.dp,
         ) {
-            AvatarView(
-                kind = AvatarKind.User,
-                avatarUri = userAvatarUri,
-                size = 44.dp,
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    text = "用户信息",
-                    color = TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    style = MaterialTheme.typography.bodyMedium,
+            Row(
+                modifier = Modifier.padding(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AvatarView(
+                    kind = AvatarKind.User,
+                    avatarUri = userAvatarUri,
+                    size = 44.dp,
                 )
-                Text(
-                    text = "点击更换头像",
-                    color = TextSecondary,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = currentUser?.displayName ?: "用户信息",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = "点击切换用户",
+                        color = TextSecondary,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                    )
+                }
+                Icon(
+                    imageVector = Icons.Outlined.ExpandMore,
+                    contentDescription = "展开菜单",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(20.dp),
                 )
             }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            UserSession.PRESET_USERS.forEach { user ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            text = "${user.displayName}${if (user.id == currentUserId) "（当前）" else ""}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        if (user.id != currentUserId) {
+                            onUserSelected(user.id)
+                        }
+                    },
+                )
+            }
+            Divider()
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        text = "点击更换头像",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                },
+                onClick = {
+                    expanded = false
+                    onAvatarChangeRequested()
+                },
+            )
         }
     }
 }

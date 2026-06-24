@@ -64,6 +64,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.MessageRole
 import com.example.shopguideagent.data.model.ChatExperiencePhase
+import com.example.shopguideagent.config.UserSession
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.profile.userProfileRepository
 import com.example.shopguideagent.ui.component.AiMessageBlock
@@ -113,6 +114,8 @@ fun ChatScreen(
     val state by chatViewModel.uiState.collectAsState()
     val historyState by chatViewModel.historyState.collectAsState()
     val context = LocalContext.current
+    val userSession = remember(context) { UserSession.get(context) }
+    val currentUserId by userSession.currentUserId.collectAsState()
     val profileRepository = remember(context) { userProfileRepository(context) }
     val profileState by profileRepository.state.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
@@ -232,6 +235,7 @@ fun ChatScreen(
         drawerContent = {
             ChatHistoryDrawer(
                 state = historyState,
+                currentUserId = currentUserId,
                 userAvatarUri = profileState.avatarUri,
                 onNewSession = {
                     chatViewModel.newSession()
@@ -244,7 +248,10 @@ fun ChatScreen(
                 onDeleteSession = {
                     chatViewModel.deleteSession(it)
                 },
-                onUserAvatarClick = ::openAvatarPicker,
+                onUserSelected = { newUserId ->
+                    chatViewModel.onUserSwitched(newUserId)
+                },
+                onAvatarChangeRequested = ::openAvatarPicker,
             )
         },
     ) {

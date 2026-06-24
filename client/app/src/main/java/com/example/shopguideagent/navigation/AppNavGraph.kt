@@ -77,13 +77,17 @@ object AppRouteBackStack {
 fun AppNavGraph() {
     val context = LocalContext.current
     var route by rememberSaveable { mutableStateOf(AppRoute.Home) }
-    val userIdProvider = { UserSession.get(context).currentUserId.value }
+    val userSession = remember(context) { UserSession.get(context) }
+    val currentUserId by userSession.currentUserId.collectAsState()
+    val userIdProvider = { currentUserId }
     val chatViewModel = remember {
         ChatViewModel(
             productCatalog = AndroidAssetProductCatalog(context.assets),
             historyRepository = chatHistoryRepository(context),
             wsClient = RealtimeChatWebSocketClient(userIdProvider),
             sttApi = SttApiService(userIdProvider),
+            userSession = userSession,
+            userIdProvider = userIdProvider,
         )
     }
     val cartStore = remember { SharedPreferencesCartPersistenceStore(context) }

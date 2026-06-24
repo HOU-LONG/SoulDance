@@ -23,6 +23,7 @@ from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
 from .order_service import OrderError, OrderService
 from .rag.fusion import HybridRetriever
+from .rag.reranker import build_reranker
 from .rag.vector_search import DenseIndex, build_dense_index
 from .semantic_layer import rule_semantic_frame
 from .realtime_envelope import RealtimeEnvelope
@@ -59,6 +60,12 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         config=settings.retrieval_config,
         dense_index=dense_index,
     )
+    # Reranker: llm_client wiring deferred until sync chat_json_sync is available; cross-only / no-op for now
+    reranker = build_reranker(
+        settings,
+        llm_client=None,
+        metrics=None,
+    )
     memory_cache = StructuredMemoryCache(settings.memory_cache_path or None)
     recommendation_memory = RecommendationMemoryCache(_recommendation_memory_path(settings.memory_cache_path))
 
@@ -90,6 +97,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         feedback_store=feedback_store,
         user_profile_store=user_profile_store,
         hybrid_retriever=hybrid_retriever,
+        reranker=reranker,
     )
     cart = CartService(products, settings.cart_path or None, db_session=db_session)
     product_map = {product.product_id: product for product in products}

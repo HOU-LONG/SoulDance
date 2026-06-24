@@ -311,6 +311,8 @@ git commit -m "feat: record provider token usage"
 
 ## Task 4: Add Tenant-Isolated Compression Persistence And Migration
 
+> **Prerequisite:** `docs/superpowers/plans/2026-06-24-user-switching-and-tenant-isolation.md` Tasks 1-5 have shipped. `SessionRepository` is already keyed by `(user_id, session_id)`. This task now only adds the new `SessionCompressionStateRow` table and its dual-key methods; do NOT re-derive the identity layer.
+
 **Files:**
 - Modify: `server/backend/app/db/models.py`
 - Modify: `server/backend/app/repositories/session_repository.py`

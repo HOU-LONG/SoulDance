@@ -283,12 +283,37 @@ def _has_shopping_signal(text: str) -> bool:
     )
 
 
-def semantic_context_payload(context: SessionContext | None) -> dict[str, Any]:
+def semantic_context_payload(
+    context: SessionContext | None,
+    *,
+    disable_window: bool = False,
+    disable_snapshot: bool = False,
+) -> dict[str, Any]:
     if context is None:
         return {}
     focus_product = _focus_product_summary(context)
+    pending_clar = (
+        context.state.pending_clarification.model_dump(mode="json")
+        if context.state.pending_clarification
+        else None
+    )
+    pending_rec = (
+        context.state.pending_recovery.model_dump(mode="json")
+        if context.state.pending_recovery
+        else None
+    )
+    last_plan_payload = context.last_plan.model_dump(mode="json") if context.last_plan else None
+    current_task_payload = context.state.current_task.model_dump(mode="json")
+
+    if disable_snapshot:
+        # A2 评测模式：清四项结构化快照字段；focus_product_id 自身保留（状态机不动）
+        focus_product = None
+        last_plan_payload = None
+        pending_clar = None
+        current_task_payload = None
+
     return {
-        "last_plan": context.last_plan.model_dump(mode="json") if context.last_plan else None,
+        "last_plan": last_plan_payload,
         "last_intent": context.state.dialog_state.last_intent,
         "focus_product_id": context.focus_product_id,
         "has_focus_product": focus_product is not None,
@@ -297,18 +322,10 @@ def semantic_context_payload(context: SessionContext | None) -> dict[str, Any]:
         "last_recommendations": list(context.last_recommendations),
         "recent_cart_product_id": context.recent_cart_product_id,
         "global_profile": dict(context.global_profile),
-        "current_task": context.state.current_task.model_dump(mode="json"),
-        "pending_clarification": (
-            context.state.pending_clarification.model_dump(mode="json")
-            if context.state.pending_clarification
-            else None
-        ),
-        "pending_recovery": (
-            context.state.pending_recovery.model_dump(mode="json")
-            if context.state.pending_recovery
-            else None
-        ),
-        "recent_context": _recent_context_summary(context),
+        "current_task": current_task_payload,
+        "pending_clarification": pending_clar,
+        "pending_recovery": pending_rec,
+        "recent_context": _recent_context_summary(context, disable_window=disable_window),
     }
 
 
@@ -322,25 +339,37 @@ def _focus_product_summary(context: SessionContext) -> dict[str, Any] | None:
     return {"product_id": focus_id}
 
 
-def _recent_context_summary(context: SessionContext) -> dict[str, Any]:
-    recommendation_sets = [
+def _recent_context_summary(
+    context: SessionContext,
+    *,
+    disable_window: bool = False,
+) -> dict[str, Any]:
+    rec_events = [
         event.model_dump(mode="json")
         for event in context.state.context_events
         if event.result_type == "recommendation_set"
-    ][-3:]
-    user_turns = [
+    ]
+    user_turn_events = [
         {
             "turn_index": event.turn_index,
             "user_message": event.user_message,
             "assistant_intent": event.assistant_intent,
             "result_type": event.result_type,
         }
-        for event in context.state.context_events[-6:]
-    ][-3:]
+        for event in context.state.context_events
+    ]
+    all_events = [event.model_dump(mode="json") for event in context.state.context_events]
+    if disable_window:
+        # A1 评测模式：不截窗口，让 LLM 看到全量历史；外层 25K 硬截断保护见 agent.py
+        return {
+            "recent_user_turns": user_turn_events,
+            "recent_recommendation_sets": rec_events,
+            "last_events": all_events,
+        }
     return {
-        "recent_user_turns": user_turns,
-        "recent_recommendation_sets": recommendation_sets,
-        "last_events": [event.model_dump(mode="json") for event in context.state.context_events[-3:]],
+        "recent_user_turns": user_turn_events[-6:][-3:],
+        "recent_recommendation_sets": rec_events[-3:],
+        "last_events": all_events[-3:],
     }
 
 

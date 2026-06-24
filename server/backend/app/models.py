@@ -273,6 +273,52 @@ class ProductCard(BaseModel):
     risk_tags: list[str] = Field(default_factory=list)
 
 
+class CompressionPartDecision(BaseModel):
+    """A persisted, byte-stable compression decision for a single prompt part.
+
+    Once a part is replaced by a placeholder/stub, the decision is frozen so
+    that downstream prompt caches stay valid across turns (Spec principle 7).
+    """
+
+    part_id: str
+    action: str
+    replacement_text: str
+    original_token_count: int | None = None
+    compressed_token_count: int | None = None
+    created_turn: int = 0
+
+
+class LivingSummary(BaseModel):
+    """Incrementally maintained summary of compressed-away history.
+
+    Updated only at watermark Level 3+; tracks which `part_id`s have already
+    been folded in so the same history is never re-summarized.
+    """
+
+    text: str = ""
+    covered_part_ids: list[str] = Field(default_factory=list)
+    updated_turn: int = 0
+    source_token_count: int = 0
+
+
+class SessionCompressionState(BaseModel):
+    """Per-(user_id, session_id) compression ledger.
+
+    `model_context_limit` is intentionally 0 by default; the runtime must
+    populate it from configuration before any watermark decision is made.
+    Relying on a hard-coded production default here would silently mask
+    misconfiguration.
+    """
+
+    user_id: str = "anonymous"
+    session_id: str
+    model_context_limit: int = 0
+    last_total_tokens: int | None = None
+    watermark_level: str = "maintain"
+    decisions: dict[str, CompressionPartDecision] = Field(default_factory=dict)
+    living_summary: LivingSummary = Field(default_factory=LivingSummary)
+
+
 class SessionContext(BaseModel):
     session_id: str
     state: SessionState = Field(default_factory=SessionState)

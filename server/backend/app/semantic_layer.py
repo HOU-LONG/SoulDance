@@ -20,8 +20,8 @@ class SemanticParser:
 
     def _payload(self, context: SessionContext | None) -> dict[str, Any]:
         disable_window = bool(getattr(self.settings, "eval_disable_window_truncation", False))
-        # disable_snapshot 由 Task 3 接管；此处先保持默认 False
-        return semantic_context_payload(context, disable_window=disable_window)
+        disable_snapshot = bool(getattr(self.settings, "eval_disable_structured_snapshot", False))
+        return semantic_context_payload(context, disable_window=disable_window, disable_snapshot=disable_snapshot)
 
     async def parse(self, request: ChatRequest, context: SessionContext | None = None) -> SemanticFrame:
         if self.llm_client and hasattr(self.llm_client, "parse_semantic_frame"):
@@ -295,7 +295,7 @@ def semantic_context_payload(
     context: SessionContext | None,
     *,
     disable_window: bool = False,
-    disable_snapshot: bool = False,  # 占位参数；A2 snapshot 清空逻辑由 Task 3 接管
+    disable_snapshot: bool = False,
 ) -> dict[str, Any]:
     if context is None:
         return {}
@@ -312,6 +312,13 @@ def semantic_context_payload(
     )
     last_plan_payload = context.last_plan.model_dump(mode="json") if context.last_plan else None
     current_task_payload = context.state.current_task.model_dump(mode="json")
+
+    if disable_snapshot:
+        # A2 评测模式：清四项结构化快照字段；focus_product_id 自身保留（状态机仍跑）
+        focus_product = None
+        last_plan_payload = None
+        pending_clar = None
+        current_task_payload = None
 
     return {
         "last_plan": last_plan_payload,

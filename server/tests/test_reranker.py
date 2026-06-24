@@ -321,6 +321,7 @@ class TestLLMReranker:
         assert metrics.counters.get("retrieval.reranker.fallback.llm_failed", 0) == 1
 
 
+@pytest.mark.asyncio
 class TestHybridReranker:
     def _result(self, pid: str, score: float = 0.5) -> ProductRetrievalResult:
         return ProductRetrievalResult(product=_product(pid), score=score, evidence_chunks=[])
@@ -338,7 +339,7 @@ class TestHybridReranker:
         hybrid = HybridReranker(cross, llm, metrics=metrics, low_confidence_threshold=threshold)
         return hybrid, metrics
 
-    def test_default_scenario_skips_llm(self):
+    async def test_default_scenario_skips_llm(self):
         from backend.app.rag.reranker_scenarios import RerankScenario
         c1 = ProductRetrievalResult(
             product=_product_with("p1", "a"), score=0.5, evidence_chunks=[]
@@ -350,13 +351,13 @@ class TestHybridReranker:
             cross_scores={"a": 0.9, "b": 0.3},
             llm_response=[{"product_id": "p2", "rank": 1}, {"product_id": "p1", "rank": 2}],
         )
-        result = hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.DEFAULT)
+        result = await hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.DEFAULT)
         # cross says p1 wins; LLM is wired but not invoked because scenario is DEFAULT
         # and the score gap (0.9 - 0.3 = 0.6) is above threshold.
         assert [r.product.product_id for r in result] == ["p1", "p2"]
         assert metrics.counters.get("retrieval.reranker.scenario.default", 0) == 1
 
-    def test_low_confidence_upgrades_default_to_llm(self):
+    async def test_low_confidence_upgrades_default_to_llm(self):
         from backend.app.rag.reranker_scenarios import RerankScenario
         c1 = ProductRetrievalResult(
             product=_product_with("p1", "a"), score=0.5, evidence_chunks=[]
@@ -368,12 +369,12 @@ class TestHybridReranker:
             cross_scores={"a": 0.91, "b": 0.90},
             llm_response=[{"product_id": "p2", "rank": 1}, {"product_id": "p1", "rank": 2}],
         )
-        result = hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.DEFAULT)
+        result = await hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.DEFAULT)
         # cross says p1 (0.91) > p2 (0.90), gap < 0.05 → LLM upgrade → p2 first
         assert [r.product.product_id for r in result] == ["p2", "p1"]
         assert metrics.counters.get("retrieval.reranker.scenario.low_confidence", 0) == 1
 
-    def test_comparison_scenario_always_invokes_llm(self):
+    async def test_comparison_scenario_always_invokes_llm(self):
         from backend.app.rag.reranker_scenarios import RerankScenario
         c1 = ProductRetrievalResult(
             product=_product_with("p1", "a"), score=0.5, evidence_chunks=[]
@@ -385,12 +386,12 @@ class TestHybridReranker:
             cross_scores={"a": 0.9, "b": 0.3},
             llm_response=[{"product_id": "p2", "rank": 1}, {"product_id": "p1", "rank": 2}],
         )
-        result = hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.COMPARISON)
+        result = await hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.COMPARISON)
         # Even though cross gap is wide, COMPARISON intent triggers LLM
         assert [r.product.product_id for r in result] == ["p2", "p1"]
         assert metrics.counters.get("retrieval.reranker.scenario.comparison", 0) == 1
 
-    def test_refinement_scenario_invokes_llm(self):
+    async def test_refinement_scenario_invokes_llm(self):
         from backend.app.rag.reranker_scenarios import RerankScenario
         c1 = ProductRetrievalResult(
             product=_product_with("p1", "a"), score=0.5, evidence_chunks=[]
@@ -399,10 +400,10 @@ class TestHybridReranker:
             cross_scores={"a": 0.9},
             llm_response=[{"product_id": "p1", "rank": 1}],
         )
-        hybrid.rerank("q", [c1], top_k=10, scenario=RerankScenario.REFINEMENT)
+        await hybrid.rerank("q", [c1], top_k=10, scenario=RerankScenario.REFINEMENT)
         assert metrics.counters.get("retrieval.reranker.scenario.refinement", 0) == 1
 
-    def test_without_llm_falls_back_to_cross_only(self):
+    async def test_without_llm_falls_back_to_cross_only(self):
         from backend.app.rag.reranker import CrossEncoderReranker, HybridReranker
         from backend.app.rag.reranker_scenarios import RerankScenario
         c1 = ProductRetrievalResult(
@@ -413,7 +414,7 @@ class TestHybridReranker:
         )
         cross = CrossEncoderReranker(FakeEncoder({"a": 0.7, "b": 0.9}), output_top_k=10)
         hybrid = HybridReranker(cross, llm=None)
-        result = hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.COMPARISON)
+        result = await hybrid.rerank("q", [c1, c2], top_k=10, scenario=RerankScenario.COMPARISON)
         # No LLM available → must follow cross order
         assert [r.product.product_id for r in result] == ["p2", "p1"]
 

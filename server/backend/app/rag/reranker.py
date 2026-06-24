@@ -255,7 +255,7 @@ class HybridReranker:
         self.metrics = metrics
         self.low_confidence_threshold = low_confidence_threshold
 
-    def rerank(
+    async def rerank(
         self,
         query: str,
         candidates: list[ProductRetrievalResult],
@@ -266,7 +266,7 @@ class HybridReranker:
         from .reranker_scenarios import upgrade_scenario
 
         pre = scenario or RerankScenario.DEFAULT
-        cross_result = self.cross.rerank(query, candidates, top_k=top_k, scenario=pre)
+        cross_result = await self.cross.rerank(query, candidates, top_k=top_k, scenario=pre)
 
         scores = [r.score for r in cross_result]
         final_scenario = upgrade_scenario(pre, scores, self.low_confidence_threshold)
@@ -274,7 +274,7 @@ class HybridReranker:
 
         llm_triggers = {RerankScenario.COMPARISON, RerankScenario.REFINEMENT, RerankScenario.LOW_CONFIDENCE}
         if final_scenario in llm_triggers and self.llm is not None:
-            return self.llm.rerank(query, cross_result, top_k=top_k, scenario=final_scenario)
+            return await self.llm.rerank(query, cross_result, top_k=top_k, scenario=final_scenario)
         return cross_result
 
     def _record_scenario(self, scenario: RerankScenario) -> None:

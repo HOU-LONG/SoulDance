@@ -19,6 +19,8 @@ _MISS_REASONS = {
     "planner_wrong",
     "clarification_blocked",
     "hard_filter_removed_gold",
+    "gold_conflicts_with_constraints",
+    "final_emission_empty",
     "lexical_miss",
     "dense_miss",
     "fusion_no_gain",
@@ -28,8 +30,37 @@ _MISS_REASONS = {
 
 
 def load_scenarios(path: str | Path) -> list[EvalScenario]:
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    return [EvalScenario.model_validate(item) for item in data]
+    path = Path(path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    scenarios = [EvalScenario.model_validate(item) for item in data]
+    golden = _load_adjacent_golden_products(path)
+    if golden:
+        scenarios = [_apply_golden_products(scenario, golden) for scenario in scenarios]
+    return scenarios
+
+
+def _load_adjacent_golden_products(path: Path) -> dict[str, dict[str, Any]]:
+    golden_path = path.parent / "golden_products.json"
+    if not golden_path.exists():
+        return {}
+    raw = json.loads(golden_path.read_text(encoding="utf-8"))
+    return {key: value for key, value in raw.items() if not key.startswith("_") and isinstance(value, dict)}
+
+
+def _apply_golden_products(scenario: EvalScenario, golden: dict[str, dict[str, Any]]) -> EvalScenario:
+    if not scenario.golden_id or scenario.golden_id not in golden:
+        return scenario
+    entry = golden[scenario.golden_id]
+    ideal_top = [str(item) for item in entry.get("ideal_top", [])]
+    if not ideal_top:
+        return scenario
+    expect = scenario.expect.model_copy(
+        update={
+            "gold_product_ids": scenario.expect.gold_product_ids or ideal_top,
+            "gold_primary_ids": scenario.expect.gold_primary_ids or ideal_top,
+        }
+    )
+    return scenario.model_copy(update={"expect": expect})
 
 
 def run_scenarios(app: FastAPI, scenarios: list[EvalScenario]) -> EvalReport:
@@ -136,6 +167,8 @@ def _build_retrieval_attribution(app: FastAPI, scenario: EvalScenario, events: l
     miss_reason = _classify_miss_reason(
         gold_ids=gold_ids,
         product_ids=set(agent.product_map.keys()),
+        product_map=agent.product_map,
+        hard_constraints=plan.hard_constraints,
         planner_ok=planner_ok,
         clarification_blocked=clarification_blocked,
         pre_filter_top20=pre_filter_top20,
@@ -209,6 +242,8 @@ def _classify_miss_reason(
     *,
     gold_ids: list[str],
     product_ids: set[str],
+    product_map: dict[str, Any] | None = None,
+    hard_constraints: Any = None,
     planner_ok: bool,
     clarification_blocked: bool,
     pre_filter_top20: list[str],
@@ -227,11 +262,25 @@ def _classify_miss_reason(
         return "planner_wrong"
     if not any(gold_id in pre_filter_top20 for gold_id in gold_ids):
         return "lexical_miss"
+    if _gold_conflicts_with_constraints(gold_ids, product_map or {}, hard_constraints):
+        return "gold_conflicts_with_constraints"
     if not any(gold_id in post_filter_top20 for gold_id in gold_ids):
         return "hard_filter_removed_gold"
+    if not final_top5 and any(gold_id in post_filter_top20 for gold_id in gold_ids):
+        return "final_emission_empty"
     if any(gold_id in post_filter_top20 for gold_id in gold_ids):
         return "rerank_demoted_gold"
     return "fusion_no_gain"
+
+
+def _gold_conflicts_with_constraints(gold_ids: list[str], product_map: dict[str, Any], hard_constraints: Any) -> bool:
+    if hard_constraints is None or not product_map:
+        return False
+    for gold_id in gold_ids:
+        product = product_map.get(gold_id)
+        if product is not None and hard_filter(product, hard_constraints):
+            return False
+    return True
 
 
 def _miss_reason_without_plan(gold_ids: list[str]) -> str | None:
@@ -266,12 +315,16 @@ def _mean_bool(values) -> float | None:
 def _gold_recall(results: list[EvalScenarioResult], field_name: str) -> float | None:
     if not results:
         return None
-    hits = 0
+    recalls: list[float] = []
     for result in results:
         predicted = set(getattr(result, field_name))
-        if any(gold_id in predicted for gold_id in result.gold_ids):
-            hits += 1
-    return hits / len(results)
+        gold = set(result.gold_ids)
+        if not gold:
+            continue
+        recalls.append(len(predicted & gold) / len(gold))
+    if not recalls:
+        return None
+    return sum(recalls) / len(recalls)
 
 
 def _primary_hit_at_1(results: list[EvalScenarioResult]) -> float | None:

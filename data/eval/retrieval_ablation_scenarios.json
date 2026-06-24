@@ -1,0 +1,122 @@
+[
+  {
+    "id": "basic_sunscreen",
+    "query": "\u63a8\u8350\u4e00\u6b3e\u9632\u6652\u971c \u7f8e\u5986\u62a4\u80a4 \u9632\u6652",
+    "hard_constraints": {
+      "category": "\u7f8e\u5986\u62a4\u80a4",
+      "sub_category": "\u9632\u6652"
+    },
+    "gold_product_ids": [
+      "p_beauty_006",
+      "p_beauty_010",
+      "p_beauty_023"
+    ],
+    "gold_primary_ids": [
+      "p_beauty_006",
+      "p_beauty_010",
+      "p_beauty_023"
+    ]
+  },
+  {
+    "id": "cheaper_running_shoes",
+    "query": "\u4fbf\u5b9c\u4e00\u70b9\u7684\u8dd1\u6b65\u978b \u65e5\u5e38\u8bad\u7ec3 \u516c\u8def\u8dd1",
+    "hard_constraints": {
+      "category": "\u670d\u9970\u8fd0\u52a8",
+      "sub_category": "\u8dd1\u6b65\u978b",
+      "price_max": 1000
+    },
+    "gold_product_ids": [
+      "p_clothes_007",
+      "p_clothes_010"
+    ],
+    "gold_primary_ids": [
+      "p_clothes_007"
+    ]
+  },
+  {
+    "id": "waterproof_hiking_shoes",
+    "query": "\u9632\u6c34\u5f92\u6b65\u978b \u6237\u5916\u767b\u5c71 \u8f7b\u91cf\u6293\u5730",
+    "hard_constraints": {
+      "category": "\u670d\u9970\u8fd0\u52a8",
+      "sub_category": "\u5f92\u6b65\u978b"
+    },
+    "gold_product_ids": [
+      "p_clothes_014",
+      "p_clothes_015"
+    ],
+    "gold_primary_ids": [
+      "p_clothes_014",
+      "p_clothes_015"
+    ]
+  },
+  {
+    "id": "noise_canceling_earbuds",
+    "query": "\u4e3b\u52a8\u964d\u566a \u771f\u65e0\u7ebf \u84dd\u7259\u8033\u673a \u901a\u52e4 \u9ad8\u97f3\u8d28",
+    "hard_constraints": {
+      "category": "\u6570\u7801\u7535\u5b50",
+      "sub_category": "\u771f\u65e0\u7ebf\u8033\u673a"
+    },
+    "gold_product_ids": [
+      "p_digital_007",
+      "p_digital_018"
+    ],
+    "gold_primary_ids": [
+      "p_digital_007",
+      "p_digital_018"
+    ]
+  },
+  {
+    "id": "budget_camera_phone",
+    "query": "4000\u4ee5\u5185 \u62cd\u4eba\u50cf \u8f7b\u8584 \u624b\u673a",
+    "hard_constraints": {
+      "category": "\u6570\u7801\u7535\u5b50",
+      "sub_category": "\u667a\u80fd\u624b\u673a",
+      "price_max": 4000
+    },
+    "gold_product_ids": [
+      "p_digital_016"
+    ],
+    "gold_primary_ids": [
+      "p_digital_016"
+    ]
+  },
+  {
+    "id": "lightweight_work_laptop",
+    "query": "\u8f7b\u8584 \u7b14\u8bb0\u672c \u529e\u516c \u901a\u52e4 \u751f\u4ea7\u529b",
+    "hard_constraints": {
+      "category": "\u6570\u7801\u7535\u5b50",
+      "sub_category": "\u7b14\u8bb0\u672c\u7535\u8111"
+    },
+    "gold_product_ids": [
+      "p_digital_004",
+      "p_digital_020",
+      "p_digital_022",
+      "p_digital_023"
+    ],
+    "gold_primary_ids": [
+      "p_digital_004",
+      "p_digital_020",
+      "p_digital_023"
+    ]
+  },
+  {
+    "id": "sugar_free_drink",
+    "query": "\u65e0\u7cd6 0\u7cd6 \u6e05\u723d \u996e\u6599",
+    "hard_constraints": {
+      "category": "\u98df\u54c1\u996e\u6599"
+    },
+    "gold_product_ids": [
+      "p_food_003",
+      "p_food_004",
+      "p_food_014",
+      "p_food_015",
+      "p_food_024"
+    ],
+    "gold_primary_ids": [
+      "p_food_003",
+      "p_food_004",
+      "p_food_014",
+      "p_food_015"
+    ]
+  }
+]

@@ -40,6 +40,33 @@ def evaluate_events(scenario: EvalScenario, events: list[dict]) -> EvalScenarioR
                 failures.append(
                     f"product {product_name} price {price} exceeds max {scenario.expect.price_max}"
                 )
+        if scenario.expect.price_min is not None and price is not None:
+            if price < scenario.expect.price_min:
+                failures.append(
+                    f"product {product_name} price {price} below min {scenario.expect.price_min}"
+                )
+    if scenario.expect.expect_clarification:
+        if "clarification_request" not in event_types:
+            failures.append("expected clarification_request event")
+    if scenario.expect.expect_product_ids_subset_of and product_ids:
+        allowed = set(scenario.expect.expect_product_ids_subset_of)
+        for product_id in product_ids:
+            if product_id not in allowed:
+                failures.append(f"product {product_id} outside expected subset")
+    if scenario.expect.expected_brands or scenario.expect.forbidden_brands:
+        returned_brands = [
+            str(event.get("product", {}).get("brand", ""))
+            for event in product_events
+            if isinstance(event.get("product"), dict)
+        ]
+        returned_lower = [brand.lower() for brand in returned_brands if brand]
+        for expected_brand in scenario.expect.expected_brands:
+            if not any(expected_brand.lower() in brand for brand in returned_lower):
+                failures.append(f"missing expected brand: {expected_brand}")
+        for forbidden_brand in scenario.expect.forbidden_brands:
+            if any(forbidden_brand.lower() in brand or brand in forbidden_brand.lower() for brand in returned_lower):
+                failures.append(f"forbidden brand returned: {forbidden_brand}")
+
     if scenario.expect.require_cart_success:
         cart_events = [event for event in events if event.get("type") == "cart_update"]
         if not cart_events:

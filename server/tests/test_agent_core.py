@@ -572,6 +572,9 @@ def test_doubao_semantic_parse_retries_without_json_mode_when_model_rejects_resp
     client = object.__new__(DoubaoLLMClient)
     client.model = "doubao-test"
     client.client = JsonModeFallbackClient(content)
+    # `_json_completion` now records usage on every call; the partially-built
+    # test client must satisfy that contract.
+    client.last_usage_by_call_kind = {}
 
     raw = asyncio.run(
         client.parse_semantic_frame(

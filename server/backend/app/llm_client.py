@@ -9,6 +9,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential_jitter
 
 from .config import Settings
 from .knowledge_base import evidence_review_summary
+from .llm_usage import LLMUsage, extract_usage
 from .models import Product, RankedProduct, RetrievalPlan, SessionContext
 from .prompt_registry import PromptRegistry
 from .response_contract import recommendation_contract_text
@@ -54,6 +55,28 @@ class DoubaoLLMClient:
             base_url=settings.effective_base_url,
             http_client=http_client,
         )
+        # Compression ledger input. Spec principle 4: store the most recent
+        # provider-reported usage per call_kind so the agent lifecycle can
+        # drive the watermark policy off real numbers. Preflight estimates
+        # must NOT overwrite an existing authoritative entry — see
+        # record_usage() below.
+        self.last_usage_by_call_kind: dict[str, LLMUsage] = {}
+
+    def record_usage(self, usage: LLMUsage) -> None:
+        """Store the latest usage record for `usage.call_kind`.
+
+        An authoritative provider-reported value always wins over a later
+        non-authoritative one for the same call_kind; this prevents a
+        preflight estimate from silently degrading a real measurement.
+        """
+        existing = self.last_usage_by_call_kind.get(usage.call_kind)
+        if (
+            existing is not None
+            and existing.is_authoritative
+            and not usage.is_authoritative
+        ):
+            return
+        self.last_usage_by_call_kind[usage.call_kind] = usage
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential_jitter(1, 8))
     async def _json_completion(self, messages: list[dict[str, str]], temperature: float = 0) -> str:
@@ -70,6 +93,7 @@ class DoubaoLLMClient:
                 raise
             kwargs.pop('response_format', None)
             response = await self.client.chat.completions.create(**kwargs)
+        self.record_usage(extract_usage(response, call_kind='json'))
         return response.choices[0].message.content or '{}'
 
     async def parse_semantic_frame(
@@ -153,6 +177,7 @@ class DoubaoLLMClient:
             temperature=0.3,
             **self.reasoning_params,
         )
+        self.record_usage(extract_usage(response, call_kind='response'))
         return response.choices[0].message.content or ''
 
     async def select_products(
@@ -186,9 +211,9 @@ class DoubaoLLMClient:
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
     ):
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        stream_kwargs: dict[str, Any] = {
+            'model': self.model,
+            'messages': [
                 {'role': 'system', 'content': RESPONSE_SYSTEM_PROMPT},
                 {
                     'role': 'user',
@@ -201,14 +226,38 @@ class DoubaoLLMClient:
                     ),
                 },
             ],
-            temperature=0.3,
-            stream=True,
+            'temperature': 0.3,
+            'stream': True,
+            'stream_options': {'include_usage': True},
             **self.reasoning_params,
-        )
+        }
+        try:
+            stream = await self.client.chat.completions.create(**stream_kwargs)
+        except Exception as exc:
+            if not _is_unsupported_stream_options_error(exc):
+                raise
+            stream_kwargs.pop('stream_options', None)
+            stream = await self.client.chat.completions.create(**stream_kwargs)
+        observed_usage = False
         async for chunk in stream:
             text = chunk.choices[0].delta.content if chunk.choices and chunk.choices[0].delta else None
             if text:
                 yield text
+            chunk_usage = extract_usage(chunk, call_kind='stream_response')
+            if chunk_usage.is_authoritative:
+                self.record_usage(chunk_usage)
+                observed_usage = True
+        if not observed_usage:
+            # Streaming finished without provider-reported usage. Record a
+            # non-authoritative marker so callers know the watermark policy
+            # cannot rely on a real measurement from this call.
+            self.record_usage(
+                LLMUsage(
+                    call_kind='stream_response',
+                    source='unknown',
+                    is_authoritative=False,
+                )
+            )
 
     async def stream_chitchat_response(
         self,
@@ -216,9 +265,9 @@ class DoubaoLLMClient:
         intent: str,
         context: SessionContext | None = None,
     ):
-        stream = await self.client.chat.completions.create(
-            model=self.model,
-            messages=[
+        stream_kwargs: dict[str, Any] = {
+            'model': self.model,
+            'messages': [
                 {'role': 'system', 'content': CHITCHAT_SYSTEM_PROMPT},
                 {
                     'role': 'user',
@@ -228,14 +277,35 @@ class DoubaoLLMClient:
                     ),
                 },
             ],
-            temperature=0.4,
-            stream=True,
+            'temperature': 0.4,
+            'stream': True,
+            'stream_options': {'include_usage': True},
             **self.reasoning_params,
-        )
+        }
+        try:
+            stream = await self.client.chat.completions.create(**stream_kwargs)
+        except Exception as exc:
+            if not _is_unsupported_stream_options_error(exc):
+                raise
+            stream_kwargs.pop('stream_options', None)
+            stream = await self.client.chat.completions.create(**stream_kwargs)
+        observed_usage = False
         async for chunk in stream:
             text = chunk.choices[0].delta.content if chunk.choices and chunk.choices[0].delta else None
             if text:
                 yield text
+            chunk_usage = extract_usage(chunk, call_kind='stream_chitchat')
+            if chunk_usage.is_authoritative:
+                self.record_usage(chunk_usage)
+                observed_usage = True
+        if not observed_usage:
+            self.record_usage(
+                LLMUsage(
+                    call_kind='stream_chitchat',
+                    source='unknown',
+                    is_authoritative=False,
+                )
+            )
 
 
 class FakeLLMClient:
@@ -355,6 +425,15 @@ def _contextual_intent_task(message: str, context_payload: dict[str, Any]) -> di
 def _is_unsupported_json_mode_error(exc: Exception) -> bool:
     text = str(exc)
     return 'response_format' in text and 'json_object' in text and 'not supported' in text
+
+
+def _is_unsupported_stream_options_error(exc: Exception) -> bool:
+    """Some OpenAI-compatible providers (older Doubao endpoints, proxies)
+    reject the `stream_options` field. The caller should retry without it
+    and accept that this stream will not report authoritative usage.
+    """
+    text = str(exc).lower()
+    return 'stream_options' in text and ('not supported' in text or 'unknown' in text or 'invalid' in text)
 
 
 def _response_evidence_payload(

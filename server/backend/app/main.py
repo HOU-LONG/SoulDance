@@ -99,6 +99,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         user_profile_store=user_profile_store,
         hybrid_retriever=hybrid_retriever,
         reranker=reranker,
+        settings=settings,
     )
     cart = CartService(products, settings.cart_path or None, db_session=db_session)
     product_map = {product.product_id: product for product in products}

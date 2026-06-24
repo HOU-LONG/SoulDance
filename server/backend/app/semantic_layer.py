@@ -12,15 +12,23 @@ from .utils import extract_json
 
 
 class SemanticParser:
-    def __init__(self, llm_client: Any | None = None):
+    def __init__(self, llm_client: Any | None = None, settings: Any | None = None):
+        # settings: 仅长会话评测专用。运行时由 ShopGuideAgent 注入，用于决定是否启用
+        # A1（窗口截断）/ A2（结构化快照）禁用开关。production 默认 None → 全开行为。
         self.llm_client = llm_client
+        self.settings = settings
+
+    def _payload(self, context: SessionContext | None) -> dict[str, Any]:
+        disable_window = bool(getattr(self.settings, "eval_disable_window_truncation", False))
+        # disable_snapshot 由 Task 3 接管；此处先保持默认 False
+        return semantic_context_payload(context, disable_window=disable_window)
 
     async def parse(self, request: ChatRequest, context: SessionContext | None = None) -> SemanticFrame:
         if self.llm_client and hasattr(self.llm_client, "parse_semantic_frame"):
             try:
                 raw = await self.llm_client.parse_semantic_frame(
                     request.message,
-                    semantic_context_payload(context),
+                    self._payload(context),
                     request_type=request.type,
                 )
                 frame = _parse_frame(raw)
@@ -29,13 +37,13 @@ class SemanticParser:
                     frame.clarification_question = frame.clarification_question or "我没太理解你的意思，可以再说具体一点吗？比如想买什么、预算多少，或者有什么偏好。"
                 guarded = _merge_rule_guards(frame, request)
                 if guarded.intent == "unclear_input":
-                    recovered = await self._try_contextual_followup_judge(request, semantic_context_payload(context))
+                    recovered = await self._try_contextual_followup_judge(request, self._payload(context))
                     if recovered is not None:
                         return recovered
-                    recovered_by_rule = _contextual_rule_followup(request, semantic_context_payload(context))
+                    recovered_by_rule = _contextual_rule_followup(request, self._payload(context))
                     if recovered_by_rule is not None:
                         return recovered_by_rule
-                recovered_by_rule = _contextual_rule_followup(request, semantic_context_payload(context))
+                recovered_by_rule = _contextual_rule_followup(request, self._payload(context))
                 if recovered_by_rule is not None and guarded.intent == "recommend_product":
                     return recovered_by_rule
                 return guarded
@@ -287,7 +295,7 @@ def semantic_context_payload(
     context: SessionContext | None,
     *,
     disable_window: bool = False,
-    disable_snapshot: bool = False,
+    disable_snapshot: bool = False,  # 占位参数；A2 snapshot 清空逻辑由 Task 3 接管
 ) -> dict[str, Any]:
     if context is None:
         return {}
@@ -304,13 +312,6 @@ def semantic_context_payload(
     )
     last_plan_payload = context.last_plan.model_dump(mode="json") if context.last_plan else None
     current_task_payload = context.state.current_task.model_dump(mode="json")
-
-    if disable_snapshot:
-        # A2 评测模式：清四项结构化快照字段；focus_product_id 自身保留（状态机不动）
-        focus_product = None
-        last_plan_payload = None
-        pending_clar = None
-        current_task_payload = None
 
     return {
         "last_plan": last_plan_payload,

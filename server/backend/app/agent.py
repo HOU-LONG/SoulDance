@@ -77,6 +77,7 @@ class ShopGuideAgent:
         *,
         hybrid_retriever=None,
         reranker=None,
+        settings: object | None = None,
     ):
         self.products = products
         self.product_map = {product.product_id: product for product in products}
@@ -85,7 +86,9 @@ class ShopGuideAgent:
         self.adaptive_retriever = AdaptiveRetriever(self.retriever, hybrid_retriever=hybrid_retriever, reranker=reranker)
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent()
-        self.semantic_parser = SemanticParser(self.llm_client)
+        # settings 仅长会话评测专用，production 默认 None → 全部走 C4 全开行为
+        self.settings = settings
+        self.semantic_parser = SemanticParser(self.llm_client, settings=self.settings)
         self.intent_compiler = IntentCompiler(self.llm_client, self.semantic_parser)
         self.state_reducer = StateReducer()
         self.reference_resolver = ReferenceResolver(self.product_map)

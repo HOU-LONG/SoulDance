@@ -57,6 +57,17 @@ class Settings(BaseModel):
     database_url: str = ""
     embedding_dimension: int = 384
 
+    # Reranker
+    rerank_enabled: bool = True
+    rerank_model_dir: str = "model/bge-reranker-v2-m3"
+    rerank_model_id: str = "BAAI/bge-reranker-v2-m3"
+    rerank_device: str = "cuda:0"
+    rerank_input_top_k: int = 30
+    rerank_output_top_k: int = 15
+    rerank_llm_enabled: bool = True
+    rerank_llm_top_n: int = 8
+    rerank_low_confidence_threshold: float = 0.05
+
     # Session context compression. Single runtime value for the LLM context
     # window — when model-name → limit mapping is added later, it must resolve
     # into this field before the watermark policy is consulted.
@@ -303,4 +314,13 @@ def get_settings() -> Settings:
         doubao_asr_enable_itn=os.getenv("DOUBAO_ASR_ENABLE_ITN", "true").lower() not in {"0", "false"},
         doubao_asr_enable_punc=os.getenv("DOUBAO_ASR_ENABLE_PUNC", "true").lower() not in {"0", "false"},
         doubao_asr_result_type=os.getenv("DOUBAO_ASR_RESULT_TYPE", "full"),
+        rerank_enabled=os.getenv("RERANK_ENABLED", "true").lower() not in {"0", "false"},
+        rerank_model_dir=os.getenv("RERANK_MODEL_DIR", "model/bge-reranker-v2-m3"),
+        rerank_model_id=os.getenv("RERANK_MODEL_ID", "BAAI/bge-reranker-v2-m3"),
+        rerank_device=os.getenv("RERANK_DEVICE", "cuda:0"),
+        rerank_input_top_k=int(os.getenv("RERANK_INPUT_TOP_K", "30")),
+        rerank_output_top_k=int(os.getenv("RERANK_OUTPUT_TOP_K", "15")),
+        rerank_llm_enabled=os.getenv("RERANK_LLM_ENABLED", "true").lower() not in {"0", "false"},
+        rerank_llm_top_n=int(os.getenv("RERANK_LLM_TOP_N", "8")),
+        rerank_low_confidence_threshold=float(os.getenv("RERANK_LOW_CONFIDENCE_THRESHOLD", "0.05")),
     )

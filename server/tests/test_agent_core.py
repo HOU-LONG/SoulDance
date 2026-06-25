@@ -2229,6 +2229,40 @@ def test_compare_products_uses_last_recommendations_without_hallucinating():
     assert comparison["recommendation"]["product_id"] in compared_ids
 
 
+def test_compare_new_phone_request_after_coffee_retrieves_phone_candidates():
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())
+    session_id = "demo_compare_phone_after_coffee"
+
+    coffee_events = asyncio.run(
+        agent.handle_message(
+            "anonymous",
+            ChatRequest(type="user_message", session_id=session_id, message="推荐咖啡"),
+        )
+    )
+    coffee_cards = [event["product"] for event in coffee_events if event["type"] == "product_item"]
+    assert len(coffee_cards) >= 2
+    assert all(card["sub_category"] == "咖啡" for card in coffee_cards)
+
+    compare_events = asyncio.run(
+        agent.handle_message(
+            "anonymous",
+            ChatRequest(
+                type="user_message",
+                session_id=session_id,
+                message="对比小米手机和华为手机，6000 元价位段买哪个合适",
+            ),
+        )
+    )
+
+    comparison = next(event for event in compare_events if event["type"] == "comparison_result")
+    items = comparison["items"]
+    brands = {item["brand"] for item in items}
+    assert {"华为", "小米"}.issubset(brands)
+    assert all("咖啡" not in item["name"] for item in items)
+    assert all(5000 <= item["price"] <= 7000 for item in items)
+
+
 def test_compare_three_products_returns_structured_dimensions():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient(), FakeRetriever())

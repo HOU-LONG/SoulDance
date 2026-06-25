@@ -14,5 +14,6 @@ class CompareProductsTool:
 
     async def execute(self, request: ChatRequest, context: SessionContext, **kwargs) -> AsyncIterator[dict]:
         user_id = kwargs.get("user_id", "anonymous")
-        for event in await self._agent._build_comparison_events(user_id, request):
+        plan = kwargs.get("plan")
+        for event in await self._agent._build_comparison_events(user_id, request, plan):
             yield event

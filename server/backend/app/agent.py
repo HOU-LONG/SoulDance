@@ -906,12 +906,31 @@ class ShopGuideAgent:
             memory_mode=memory_mode,
         )
 
-    async def _build_comparison_events(self, user_id: str, request: ChatRequest) -> list[dict]:
+    async def _build_comparison_events(
+        self, user_id: str, request: ChatRequest, plan: RetrievalPlan | None = None
+    ) -> list[dict]:
         context = self.sessions.get(user_id, request.session_id)
-        product_ids = _resolve_comparison_product_ids(request.message, context)
-        products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
-        if context.last_plan:
-            products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
+        uses_current_plan = _is_explicit_current_comparison(plan, request.message)
+        comparison_plan = (
+            _comparison_plan_for_current_request(plan, request.message, self.taxonomy, self.products)
+            if uses_current_plan and plan
+            else None
+        )
+        if uses_current_plan and comparison_plan:
+            ranked = await self.retrieve_and_rank(
+                comparison_plan,
+                user_id=user_id,
+                limit=8,
+                session_id=request.session_id,
+            )
+            products = _comparison_products_from_ranked(ranked, comparison_plan)
+            context.last_plan = comparison_plan
+        else:
+            product_ids = _resolve_comparison_product_ids(request.message, context)
+            products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
+            if context.last_plan:
+                products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
+            comparison_plan = context.last_plan
         message_id = _message_id()
         if len(products) < 2:
             text = insufficient_comparison_products_text()
@@ -937,15 +956,20 @@ class ShopGuideAgent:
             "overall_winner": result.overall_winner,
             "overall_reason": result.overall_reason,
             "scenario_recommendations": result.scenario_recommendations,
-            "items": [comparison_item(product, request.message, dimension_names, context.last_plan) for product in products],
+            "items": [comparison_item(product, request.message, dimension_names, comparison_plan) for product in products],
             "recommendation": {
                 "product_id": winner.product_id if winner else None,
                 "reason": (result.overall_reason or comparison_reason(winner, request.message)) if winner else "",
             },
         }
+        understanding = (
+            f"我按你这次说的条件筛出 {len(products)} 款来比。"
+            if uses_current_plan
+            else f"我把你刚才看的 {len(products)} 款放在一起比。"
+        )
         text = compose_markdown_sections(
             [
-                ("理解", f"我把你刚才看的 {len(products)} 款放在一起比。"),
+                ("理解", understanding),
                 (
                     "结论",
                     f"如果只选一款，我更建议「{winner.title if winner else products[0].title}」，因为{result.overall_reason or '综合对比'}。",
@@ -964,7 +988,7 @@ class ShopGuideAgent:
             _assistant_state(message_id, "comparing", "正在多维度对比商品"),
             *_text_delta_events(message_id, text),
             comparison,
-            _quick_actions_event(message_id, context.last_plan or _default_plan(request.message), []),
+            _quick_actions_event(message_id, comparison_plan or _default_plan(request.message), []),
             {"type": "done", "message_id": message_id},
         ]
 
@@ -2036,6 +2060,135 @@ def _resolve_comparison_product_ids(text: str, context: SessionContext) -> list[
     if any(marker in text for marker in ["这两款", "两款", "前两款", "前2款"]):
         return source_ids[:2]
     return source_ids[: min(3, len(source_ids))]
+
+
+def _is_explicit_current_comparison(plan: RetrievalPlan | None, text: str) -> bool:
+    if not plan or plan.intent != "compare_products":
+        return False
+    if _comparison_looks_contextual(text):
+        return False
+    constraints = plan.hard_constraints
+    return bool(
+        constraints.include_brands
+        or constraints.category
+        or constraints.sub_category
+        or constraints.price_min is not None
+        or constraints.price_max is not None
+    )
+
+
+def _comparison_looks_contextual(text: str) -> bool:
+    markers = [
+        "这两款",
+        "这三款",
+        "这几款",
+        "两款",
+        "三款",
+        "第一",
+        "第二",
+        "第三",
+        "第1",
+        "第2",
+        "第3",
+        "刚才",
+        "刚刚",
+        "之前",
+        "上面",
+        "以上",
+        "前两款",
+        "前三款",
+        "前2款",
+        "前3款",
+    ]
+    return any(marker in text for marker in markers)
+
+
+def _comparison_plan_for_current_request(
+    plan: RetrievalPlan, text: str, taxonomy, products: list[Product]
+) -> RetrievalPlan:
+    current_plan = plan.model_copy(deep=True)
+    match = taxonomy.resolve(text) if taxonomy else None
+    if match:
+        current_plan.hard_constraints.category = match.category
+        current_plan.hard_constraints.sub_category = match.sub_category
+        current_plan.category = match.sub_category or match.category
+
+    included_brands = _included_brands_from_product_catalog(text, products)
+    if included_brands:
+        current_plan.hard_constraints.include_brands = included_brands
+
+    price_band = _price_band_from_text(text)
+    if price_band:
+        if current_plan.hard_constraints.price_min is None:
+            current_plan.hard_constraints.price_min = price_band[0]
+        if current_plan.hard_constraints.price_max is None:
+            current_plan.hard_constraints.price_max = price_band[1]
+
+    query_parts = [
+        text,
+        current_plan.hard_constraints.category,
+        current_plan.hard_constraints.sub_category,
+        *current_plan.hard_constraints.include_brands,
+    ]
+    current_plan.retrieval_query = " ".join(part for part in query_parts if part)
+    return current_plan
+
+
+def _price_band_from_text(text: str) -> tuple[float, float] | None:
+    match = re.search(r"(\d{3,6})\s*(?:元|块)?\s*价位段", text)
+    if not match:
+        return None
+    center = float(match.group(1))
+    width = 1000.0 if center >= 3000 else max(100.0, center * 0.2)
+    return max(0.0, center - width), center + width
+
+
+def _included_brands_from_product_catalog(text: str, products: list[Product]) -> list[str]:
+    brands: list[str] = []
+    for product in products:
+        brand = product.brand
+        if brand and brand in text and brand not in brands:
+            brands.append(brand)
+    return brands
+
+
+def _comparison_products_from_ranked(ranked: list[RankedProduct], plan: RetrievalPlan) -> list[Product]:
+    constraints = plan.hard_constraints
+    eligible = [item.product for item in ranked if hard_filter(item.product, constraints)]
+    selected: list[Product] = []
+    seen: set[str] = set()
+
+    for brand in constraints.include_brands[:3]:
+        product = next(
+            (
+                candidate
+                for candidate in eligible
+                if candidate.product_id not in seen and _product_matches_brand(candidate, brand)
+            ),
+            None,
+        )
+        if product:
+            selected.append(product)
+            seen.add(product.product_id)
+
+    for product in eligible:
+        if product.product_id in seen:
+            continue
+        selected.append(product)
+        seen.add(product.product_id)
+        if len(selected) >= 3:
+            break
+
+    return selected[:3]
+
+
+def _product_matches_brand(product: Product, brand: str) -> bool:
+    wanted = canonical_brand(brand)
+    actual = canonical_brand(product.brand)
+    if wanted and actual == wanted:
+        return True
+    text = f"{product.brand} {product.title} {product.search_text}"
+    return bool(brand and brand in text)
 
 
 def _comparison_reference_indexes(text: str) -> list[int]:

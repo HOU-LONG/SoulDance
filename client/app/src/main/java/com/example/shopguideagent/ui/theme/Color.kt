@@ -80,6 +80,12 @@ val SpritePrimaryButton = Color(0xFFFFC94D)
 val SpriteVoiceBarBackground = Color(0xFF4A3524)
 val SpriteVoiceBarTint = Color(0xFFFFF8E1)
 
+// Chat page warm cream background — softer than the sprite room, easy to read
+val ChatBackgroundTop = Color(0xFFFFF8F0)
+val ChatBackgroundMiddle = Color(0xFFFFF0E4)
+val ChatBackgroundBottom = Color(0xFFFFE8D6)
+val ChatBackgroundAlt = Color(0xFFFDF6ED)
+
 // ============================================================
 // Legacy aliases (deprecated but kept for compat)
 // ============================================================

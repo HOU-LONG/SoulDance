@@ -13,7 +13,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -48,6 +54,7 @@ fun ProductPresentationSheet(
     onProductClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onQuickAction: (String) -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val visible = primaryProduct != null || expectedCount > 0
@@ -81,6 +88,21 @@ fun ProductPresentationSheet(
                     .padding(horizontal = 16.dp, vertical = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = "关闭商品卡片",
+                            tint = TextPrimary,
+                        )
+                    }
+                }
                 primaryProduct?.let { product ->
                     HeroProductCard(
                         product = product,
@@ -133,6 +155,7 @@ private fun ProductPresentationSheetPreview() {
             onProductClick = {},
             onAddToCart = {},
             onQuickAction = {},
+            onDismiss = {},
         )
     }
 }

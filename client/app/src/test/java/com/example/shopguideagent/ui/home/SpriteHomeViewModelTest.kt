@@ -2,6 +2,10 @@ package com.example.shopguideagent.ui.home
 
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.model.RealtimeEvent
+import com.example.shopguideagent.data.model.ChatExperiencePhase
+import com.example.shopguideagent.data.model.ChatMessageUiModel
+import com.example.shopguideagent.data.model.ChatUiState
+import com.example.shopguideagent.data.model.MessageRole
 import com.example.shopguideagent.domain.event.CartOperationEvent
 import com.example.shopguideagent.test.CoroutineTestHelper
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -48,6 +52,43 @@ class SpriteHomeViewModelTest {
         viewModel.onRealtimeEvent(RealtimeEvent.ProductsDone("m1"))
         assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.baseAvatarState)
         assertEquals(true, viewModel.uiState.value.productPresentation.completed)
+    }
+
+    @Test
+    fun dismissingProductPresentationPreventsOldChatProductFromReappearingUntilNewProductArrives() {
+        val viewModel = SpriteHomeViewModel()
+        val oldProduct = sampleProduct("p1")
+
+        viewModel.onChatStateChanged(chatStateWithProduct(oldProduct))
+        assertEquals("p1", viewModel.uiState.value.presentingProduct?.productId)
+
+        viewModel.onAction(SpriteHomeAction.ProductPresentationDismissed)
+        assertNull(viewModel.uiState.value.presentingProduct)
+        assertNull(viewModel.uiState.value.productPresentation.primaryProduct)
+
+        viewModel.onChatStateChanged(chatStateWithProduct(oldProduct))
+        assertNull(viewModel.uiState.value.presentingProduct)
+        assertNull(viewModel.uiState.value.productPresentation.primaryProduct)
+
+        viewModel.onRealtimeEvent(RealtimeEvent.ProductsStart("m2", expectedCount = 1, title = null))
+        viewModel.onRealtimeEvent(RealtimeEvent.ProductItem("m2", 0, oldProduct))
+
+        assertEquals("p1", viewModel.uiState.value.presentingProduct?.productId)
+        assertEquals("p1", viewModel.uiState.value.productPresentation.primaryProduct?.productId)
+    }
+
+    @Test
+    fun returningFromChatDismissesCurrentPresentationFromChatState() {
+        val viewModel = SpriteHomeViewModel()
+        val product = sampleProduct("p1")
+
+        viewModel.onChatStateChanged(chatStateWithProduct(product))
+        viewModel.onReturnedFromChat()
+        viewModel.onChatStateChanged(chatStateWithProduct(product))
+
+        assertEquals(AvatarState.IDLE, viewModel.uiState.value.baseAvatarState)
+        assertNull(viewModel.uiState.value.presentingProduct)
+        assertNull(viewModel.uiState.value.productPresentation.primaryProduct)
     }
 
     @Test
@@ -353,8 +394,19 @@ class SpriteHomeViewModelTest {
         success = success,
     )
 
-    private fun sampleProduct(): ProductUiModel = ProductUiModel(
-        productId = "p1",
+    private fun chatStateWithProduct(product: ProductUiModel): ChatUiState = ChatUiState(
+        phase = ChatExperiencePhase.RecommendationReady,
+        messages = listOf(
+            ChatMessageUiModel(
+                id = "assistant_${product.productId}",
+                role = MessageRole.Assistant,
+                products = listOf(product),
+            ),
+        ),
+    )
+
+    private fun sampleProduct(productId: String = "p1"): ProductUiModel = ProductUiModel(
+        productId = productId,
         name = "Smart headphones",
         price = 299.0,
         isPrimary = true,

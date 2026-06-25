@@ -109,7 +109,6 @@ data class SpriteHomeUiState(
     val isRealtimeConnected: Boolean = false,
     val isLoading: Boolean = false,
     val animationSequence: Long = 0L,
-    val earnedStars: Int = 886,
 ) {
     val displayedAvatarState: AvatarState
         get() = transientAvatarState ?: baseAvatarState

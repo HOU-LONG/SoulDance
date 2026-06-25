@@ -8,7 +8,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.LocalMall
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,7 +18,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
@@ -29,7 +27,6 @@ import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.BrandPrimary
 import com.example.shopguideagent.ui.theme.BrandSoft
 import com.example.shopguideagent.ui.theme.SurfaceSoft
-import com.example.shopguideagent.ui.theme.TextSecondary
 
 @Composable
 fun ProductImage(
@@ -81,19 +78,11 @@ private fun ProductImageFallback(productName: String) {
     Box(contentAlignment = Alignment.Center) {
         Icon(
             imageVector = Icons.Outlined.LocalMall,
-            contentDescription = null,
+            contentDescription = productName,
             tint = BrandPrimary,
             modifier = Modifier
-                .fillMaxSize(0.36f)
+                .fillMaxSize(0.42f)
                 .padding(4.dp),
-        )
-        Text(
-            text = productName.take(2),
-            color = TextSecondary,
-            fontWeight = FontWeight.Medium,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 14.dp),
         )
     }
 }

@@ -25,7 +25,19 @@ sealed interface SpriteHomeAction {
     object ChatModeClicked : SpriteHomeAction
     object CartClicked : SpriteHomeAction
     object SettingsClicked : SpriteHomeAction
+    object ProductPresentationDismissed : SpriteHomeAction
     data class AddToCartClicked(val product: ProductUiModel) : SpriteHomeAction
     data class ProductDetailClicked(val product: ProductUiModel) : SpriteHomeAction
     data class QuickActionClicked(val message: String) : SpriteHomeAction
+
+    // Drawer / user switching / session history
+    object HistoryDrawerOpened : SpriteHomeAction
+    data class UserSelected(val userId: String) : SpriteHomeAction
+    object AvatarChangeRequested : SpriteHomeAction
+    data class SessionSelected(val sessionId: String) : SpriteHomeAction
+    object NewSessionRequested : SpriteHomeAction
+
+    // Spirit name editing
+    object EditSpiritNameClicked : SpriteHomeAction
+    data class SpiritNameChanged(val name: String) : SpriteHomeAction
 }

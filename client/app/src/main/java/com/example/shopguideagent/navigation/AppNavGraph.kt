@@ -1,6 +1,9 @@
 package com.example.shopguideagent.navigation
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +36,7 @@ import com.example.shopguideagent.data.catalog.AndroidAssetProductCatalog
 import com.example.shopguideagent.data.history.chatHistoryRepository
 import com.example.shopguideagent.data.local.SharedPreferencesCartPersistenceStore
 import com.example.shopguideagent.data.local.SpiritPreferencesDataSource
+import com.example.shopguideagent.data.profile.userProfileRepository
 import com.example.shopguideagent.data.repository.SharedPreferencesSpiritAppearanceRepository
 import com.example.shopguideagent.data.repository.SharedPreferencesSpiritProgressRepository
 import com.example.shopguideagent.ui.home.SpriteHomeEffect
@@ -110,6 +114,25 @@ fun AppNavGraph() {
             }
         },
     )
+    val historyRepository = remember(context) { chatHistoryRepository(context) }
+    val profileRepository = remember(context) { userProfileRepository(context) }
+    val historyState by historyRepository.state.collectAsState()
+    val profileState by profileRepository.state.collectAsState()
+
+    val avatarLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            } catch (_: SecurityException) { }
+            profileRepository.updateAvatarUri(uri.toString())
+        }
+    }
+
     val spiritPreferences = remember { SpiritPreferencesDataSource(context) }
     val debugInitialState = remember { spriteDebugInitialState(context) }
     val spriteHomeViewModel: SpriteHomeViewModel = viewModel(
@@ -159,14 +182,15 @@ fun AppNavGraph() {
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-    ) { paddingValues ->
-        Surface(modifier = Modifier
-            .fillMaxSize()
-            .padding(paddingValues)) {
+    ) { _ ->
+        Surface(modifier = Modifier.fillMaxSize()) {
             when (route) {
             AppRoute.Home -> SpriteHomeRoute(
                 viewModel = spriteHomeViewModel,
                 chatUiState = chatState,
+                historyState = historyState,
+                currentUserId = currentUserId,
+                userAvatarUri = profileState.avatarUri,
                 onEffect = { effect ->
                     when (effect) {
                         SpriteHomeEffect.NavigateToGuide,
@@ -177,6 +201,11 @@ fun AppNavGraph() {
                         SpriteHomeEffect.NavigateToShare -> showSnackbar("分享功能即将开放")
                         SpriteHomeEffect.ShowTaskCenter -> Unit // handled locally in SpriteHomeRoute
                         SpriteHomeEffect.HideTaskCenter -> Unit // handled locally in SpriteHomeRoute
+                        SpriteHomeEffect.OpenHistoryDrawer -> Unit // handled locally in SpriteHomeRoute
+                        is SpriteHomeEffect.SwitchUser -> Unit // handled locally in SpriteHomeRoute
+                        is SpriteHomeEffect.SelectSession -> Unit // handled locally in SpriteHomeRoute
+                        SpriteHomeEffect.CreateNewSession -> Unit // handled locally in SpriteHomeRoute
+                        SpriteHomeEffect.ShowEditSpiritName -> Unit // handled locally in SpriteHomeRoute
                         is SpriteHomeEffect.OpenProduct -> route = AppRoute.Chat
                         is SpriteHomeEffect.ShowProductDetail -> route = AppRoute.Chat
                         is SpriteHomeEffect.SendTextMessage -> chatViewModel.sendMessageStreaming(effect.text)
@@ -188,6 +217,11 @@ fun AppNavGraph() {
                         is SpriteHomeEffect.ShowClaimedReward -> showSnackbar("任务奖励已领取：${effect.firePoints} 火星")
                     }
                 },
+                onUserSelected = { userId -> userSession.setCurrentUserId(userId) },
+                onAvatarChangeRequested = { avatarLauncher.launch(arrayOf("image/*")) },
+                onNewSession = { chatViewModel.newSession() },
+                onSelectSession = { chatViewModel.selectSession(it) },
+                onDeleteSession = { chatViewModel.deleteSession(it) },
             )
             AppRoute.Chat -> ChatScreen(
                 chatViewModel = chatViewModel,
@@ -197,7 +231,10 @@ fun AppNavGraph() {
                 onAddToCart = cartViewModel::addProduct,
                 onVoiceRecordingStarted = spriteHomeViewModel::onVoiceRecordingStarted,
                 onMessageSubmitted = spriteHomeViewModel::onRequestSent,
-                onBackToSprite = { route = AppRoute.Home },
+                onBackToSprite = {
+                    spriteHomeViewModel.onReturnedFromChat()
+                    route = AppRoute.Home
+                },
             )
             AppRoute.Wardrobe -> WardrobeScreen(
                 currentOutfitId = spriteHomeState.appearance.outfitId,

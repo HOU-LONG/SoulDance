@@ -65,6 +65,7 @@ class SpriteHomeViewModel(
     val effects: SharedFlow<SpriteHomeEffect> = _effects.asSharedFlow()
 
     private val processedCartEvents = mutableSetOf<String>()
+    private val dismissedPresentationProductIds = mutableSetOf<String>()
     private var realtimeEventJob: Job? = null
 
     init {
@@ -129,28 +130,59 @@ class SpriteHomeViewModel(
             SpriteHomeAction.ChatModeClicked -> emitEffect(SpriteHomeEffect.NavigateToChat)
             SpriteHomeAction.CartClicked -> emitEffect(SpriteHomeEffect.NavigateToCart)
             SpriteHomeAction.SettingsClicked -> emitEffect(SpriteHomeEffect.ShowMessage("设置暂未开放"))
+            SpriteHomeAction.ProductPresentationDismissed -> dismissProductPresentation()
             is SpriteHomeAction.AddToCartClicked -> emitEffect(SpriteHomeEffect.AddToCart(action.product))
             is SpriteHomeAction.ProductDetailClicked -> emitEffect(SpriteHomeEffect.ShowProductDetail(action.product))
             is SpriteHomeAction.QuickActionClicked -> emitEffect(SpriteHomeEffect.SendTextMessage(action.message))
+            SpriteHomeAction.HistoryDrawerOpened -> emitEffect(SpriteHomeEffect.OpenHistoryDrawer)
+            is SpriteHomeAction.UserSelected -> {
+                userSession?.setCurrentUserId(action.userId)
+                onCurrentUserChanged()
+            }
+            SpriteHomeAction.AvatarChangeRequested -> emitEffect(SpriteHomeEffect.OpenHistoryDrawer)
+            is SpriteHomeAction.SessionSelected -> emitEffect(SpriteHomeEffect.SelectSession(action.sessionId))
+            SpriteHomeAction.NewSessionRequested -> emitEffect(SpriteHomeEffect.CreateNewSession)
+            SpriteHomeAction.EditSpiritNameClicked -> emitEffect(SpriteHomeEffect.ShowEditSpiritName)
+            is SpriteHomeAction.SpiritNameChanged -> updateSpiritName(action.name)
         }
     }
 
     fun onChatStateChanged(chatState: ChatUiState) {
-        val product = SpriteHomeStateMapper.latestProduct(chatState)
+        val latestProduct = SpriteHomeStateMapper.latestProduct(chatState)
+        val product = latestProduct?.takeUnless { dismissedPresentationProductIds.contains(it.productId) }
         val transient = SpriteHomeStateMapper.transientAvatarStateFromChatState(chatState)
-        val base = SpriteHomeStateMapper.baseAvatarStateFromChatState(chatState)
+        val mappedBase = SpriteHomeStateMapper.baseAvatarStateFromChatState(chatState)
+        val base = if (product == null && mappedBase == AvatarState.PRESENTING) {
+            AvatarState.IDLE
+        } else {
+            mappedBase
+        }
         _uiState.update { current ->
             val nextTransient = transient ?: current.transientAvatarState
-            val nextProduct = product ?: current.presentingProduct
+            val nextProduct = product ?: current.presentingProduct?.takeUnless {
+                dismissedPresentationProductIds.contains(it.productId)
+            }
+            val nextPresentation = if (
+                current.productPresentation.primaryProduct?.productId?.let(dismissedPresentationProductIds::contains) == true
+            ) {
+                ProductPresentationUiState()
+            } else {
+                current.productPresentation
+            }
             val displayed = nextTransient ?: base
             current.copy(
                 baseAvatarState = base,
                 transientAvatarState = nextTransient,
                 presentingProduct = nextProduct,
+                productPresentation = nextPresentation,
                 speechBubble = SpriteHomeStateMapper.speechFor(displayed, nextProduct),
                 animationSequence = current.animationSequence + if (displayed != current.displayedAvatarState) 1 else 0,
             )
         }
+    }
+
+    fun onReturnedFromChat() {
+        dismissProductPresentation()
     }
 
     fun onRealtimeEvent(event: RealtimeEvent) {
@@ -207,7 +239,6 @@ class SpriteHomeViewModel(
         emitEffect(SpriteHomeEffect.ShowMessage(text))
     }
 
-    /** 换装：切换并持久化当前服装；缺失状态由 [SpriteAssetRegistry] 按 manifest fallback 处理。 */
     fun onOutfitSelected(outfitId: String) {
         var saved: AvatarAppearance? = null
         _uiState.update { current ->
@@ -221,6 +252,23 @@ class SpriteHomeViewModel(
             )
         }
         saved?.let(appearanceRepository::saveAppearance)
+    }
+
+    /** 用户修改精灵名字：更新 UI 状态并持久化。 */
+    fun updateSpiritName(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        var saved: SpiritProgressUiState? = null
+        _uiState.update { current ->
+            val next = current.spiritProgress.copy(spiritName = trimmed)
+            saved = next
+            current.copy(
+                spiritProgress = next,
+                speechBubble = SpeechBubbleUiState("以后叫我 $trimmed 吧", style = SpeechBubbleStyle.SUCCESS),
+                animationSequence = current.animationSequence + 1,
+            )
+        }
+        saved?.let(progressRepository::saveProgress)
     }
 
     fun onLocalAddToCartSuccess() {
@@ -274,7 +322,8 @@ class SpriteHomeViewModel(
             val nextBase = AvatarState.SEARCHING
             current.copy(
                 baseAvatarState = nextBase,
-                speechBubble = SpriteHomeStateMapper.speechFor(current.transientAvatarState ?: nextBase, current.presentingProduct),
+                presentingProduct = null,
+                speechBubble = SpriteHomeStateMapper.speechFor(current.transientAvatarState ?: nextBase, null),
                 productPresentation = ProductPresentationUiState(expectedCount = expectedCount.coerceAtLeast(0)),
                 isLoading = true,
                 animationSequence = current.animationSequence + 1,
@@ -283,6 +332,7 @@ class SpriteHomeViewModel(
     }
 
     private fun onProductItem(index: Int, product: ProductUiModel) {
+        dismissedPresentationProductIds.remove(product.productId)
         _uiState.update { current ->
             val currentPresentation = current.productPresentation
             val nextPrimary = when {
@@ -397,6 +447,31 @@ class SpriteHomeViewModel(
 
     private fun setSpeech(text: String) {
         _uiState.update { current -> current.copy(speechBubble = current.speechBubble.copy(text = text, visible = true)) }
+    }
+
+    private fun dismissProductPresentation() {
+        val current = _uiState.value
+        val productIds = buildSet {
+            current.presentingProduct?.productId?.let(::add)
+            current.productPresentation.primaryProduct?.productId?.let(::add)
+            current.productPresentation.alternatives.forEach { add(it.productId) }
+        }
+        dismissedPresentationProductIds.addAll(productIds)
+        _uiState.update { state ->
+            val nextBase = if (state.baseAvatarState == AvatarState.PRESENTING) {
+                AvatarState.IDLE
+            } else {
+                state.baseAvatarState
+            }
+            val displayed = state.transientAvatarState ?: nextBase
+            state.copy(
+                baseAvatarState = nextBase,
+                presentingProduct = null,
+                productPresentation = ProductPresentationUiState(),
+                speechBubble = SpriteHomeStateMapper.speechFor(displayed, null),
+                animationSequence = state.animationSequence + 1,
+            )
+        }
     }
 
     private fun emitEffect(effect: SpriteHomeEffect) {

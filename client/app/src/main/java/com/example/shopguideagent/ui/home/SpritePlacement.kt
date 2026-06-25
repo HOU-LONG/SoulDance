@@ -38,27 +38,18 @@ data class NormalizedPlacement(
  *   脚底稳定，不被底部 UI 浮层遮挡。
  */
 object SpritePlacement {
-    /** 全屏环境层坐标（对应 layout 的 room_background / blackboard / discovery_globe）。 */
+    /** 全屏环境层坐标（对应 layout 的 room_background / discovery_globe）。 */
     object Backdrop {
-        val Blackboard = NormalizedPlacement(0.035f, 0.330f, 0.20f, PlacementAnchor.TOP_START)
-        val DiscoveryGlobe = NormalizedPlacement(0.045f, 0.470f, 0.24f, PlacementAnchor.TOP_START)
+        val DiscoveryGlobe = NormalizedPlacement(0.045f, 0.400f, 0.24f, PlacementAnchor.TOP_START)
     }
 
-    /** 中央舞台区相对坐标（0..1 相对舞台 Box）。 */
+    /** 中央舞台区相对坐标（0..1 相对舞台 Box）。
+     *  黑板、购物袋与人物共用同一舞台坐标系，并以 BOTTOM_CENTER 锚点统一站在"地面"基准线上。 */
     object Stage {
-        // 购物袋：人物右侧手边
-        val ShoppingBag = NormalizedPlacement(0.760f, 0.640f, 0.34f, PlacementAnchor.CENTER)
-        // 搜索特效：购物袋附近，逐层放大
-        val SearchScanRing = NormalizedPlacement(0.760f, 0.640f, 0.30f, PlacementAnchor.CENTER)
-        val SearchOrbitRing = NormalizedPlacement(0.760f, 0.640f, 0.38f, PlacementAnchor.CENTER)
-        val PortalSwirl = NormalizedPlacement(0.760f, 0.640f, 0.44f, PlacementAnchor.CENTER)
-        // 商品卡发光外框：购物袋上方展示位
-        val ProductCardFrame = NormalizedPlacement(0.740f, 0.420f, 0.52f, PlacementAnchor.CENTER)
-        // 奖励星：人物上方
-        val RewardStar = NormalizedPlacement(0.500f, 0.270f, 0.34f, PlacementAnchor.CENTER)
-        // 商品卡飞行路径：购物袋 → 展示位
-        val ProductFlyStart = NormalizedPlacement(0.760f, 0.620f, 0.20f, PlacementAnchor.CENTER)
-        val ProductFlyEnd = NormalizedPlacement(0.740f, 0.420f, 0.20f, PlacementAnchor.CENTER)
+        // 黑板：人物左侧，底部与脚底对齐（像立在地上的展示牌）
+        val Blackboard = NormalizedPlacement(0.120f, 0.92f, 0.22f, PlacementAnchor.BOTTOM_CENTER)
+        // 购物袋：人物右侧手边，底部与脚底对齐
+        val ShoppingBag = NormalizedPlacement(0.820f, 0.92f, 0.32f, PlacementAnchor.BOTTOM_CENTER)
         // 气泡中心：人物头顶上方
         const val SpeechBubbleCenterY = 0.06f
     }

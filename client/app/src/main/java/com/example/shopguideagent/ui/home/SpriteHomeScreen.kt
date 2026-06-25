@@ -4,27 +4,44 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.ChatUiState
+import com.example.shopguideagent.ui.component.clickableWithScale
 import com.example.shopguideagent.ui.component.quickActionsForProduct
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
+import com.example.shopguideagent.ui.theme.SpritePanel
+import com.example.shopguideagent.ui.theme.TextPrimary
 import com.example.shopguideagent.voice.VoiceInputManager
 import com.example.shopguideagent.voice.VoiceInputResult
 import com.example.shopguideagent.voice.VoiceInputStateMachine
@@ -84,6 +101,16 @@ fun SpriteHomeScreen(
         onDispose { voiceManager.release() }
     }
 
+    val onVoicePress = {
+        if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            beginVoiceRecording()
+        } else {
+            voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -99,10 +126,11 @@ fun SpriteHomeScreen(
                 .safeDrawingPadding(),
         ) {
             SpriteTopBar(
-                userProfile = state.userProfile,
+                userAvatarUri = state.userProfile.avatarUrl,
                 speakerEnabled = chatState.isSpeakerEnabled,
                 onSpeakerToggle = { onAction(SpriteHomeAction.SpeakerToggled) },
                 onChatClick = { onAction(SpriteHomeAction.ChatModeClicked) },
+                onHistoryClick = { onAction(SpriteHomeAction.HistoryDrawerOpened) },
             )
 
             SpriteStageArea(
@@ -111,6 +139,15 @@ fun SpriteHomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
+            )
+
+            // 可编辑的精灵名字徽章
+            EditableSpiritName(
+                name = state.spiritProgress.spiritName,
+                onClick = { onAction(SpriteHomeAction.EditSpiritNameClicked) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
             )
 
             ProductPresentationSheet(
@@ -124,19 +161,19 @@ fun SpriteHomeScreen(
                 onProductClick = { onAction(SpriteHomeAction.ProductDetailClicked(it)) },
                 onAddToCart = { onAction(SpriteHomeAction.AddToCartClicked(it)) },
                 onQuickAction = { onAction(SpriteHomeAction.QuickActionClicked(it)) },
+                onDismiss = { onAction(SpriteHomeAction.ProductPresentationDismissed) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 10.dp),
             )
 
-            IntimacyPanel(
-                spriteName = state.spiritProgress.spiritName,
-                level = state.spiritProgress.level,
-                intimacy = state.spiritProgress.currentIntimacy,
-                intimacyMax = state.spiritProgress.requiredIntimacy,
+            BottomActionBar(
+                firePoints = state.userProfile.firePoints,
+                cartCount = chatState.cartBadgeCount,
+                onAction = onAction,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 18.dp, end = 18.dp, bottom = 8.dp),
+                    .padding(horizontal = 16.dp),
             )
 
             DailyTaskBar(
@@ -144,16 +181,7 @@ fun SpriteHomeScreen(
                 onAction = onAction,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, bottom = 8.dp),
-            )
-
-            BottomActionBar(
-                earnedStars = state.earnedStars,
-                cartCount = chatState.cartBadgeCount,
-                onAction = onAction,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp),
             )
 
             SpriteVoiceBar(
@@ -162,15 +190,7 @@ fun SpriteHomeScreen(
                 recognitionState = chatState.voiceRecognitionState,
                 recognitionMessage = chatState.voiceRecognitionMessage,
                 onTextSubmit = { onAction(SpriteHomeAction.TextSubmitted(it)) },
-                onVoicePress = {
-                    if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        beginVoiceRecording()
-                    } else {
-                        voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                    }
-                },
+                onVoicePress = onVoicePress,
                 onVoiceDrag = { dragY ->
                     voiceState = voiceStateMachine.onDrag(dragY)
                 },
@@ -187,7 +207,8 @@ fun SpriteHomeScreen(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 16.dp, top = 10.dp, end = 16.dp, bottom = 12.dp),
+                    .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+                showTextInput = false,
             )
         }
     }
@@ -212,6 +233,47 @@ private fun SpriteHomeUiState.primaryDailyTask(): DailyTaskUiState {
             completed = task.completed,
             claimed = task.claimed,
         )
+    }
+}
+
+/** 可点击的精灵名字徽章：点击后通知上层打开编辑对话框。 */
+@Composable
+private fun EditableSpiritName(
+    name: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Surface(
+            onClick = onClick,
+            modifier = Modifier.clickableWithScale(onClick),
+            shape = RoundedCornerShape(999.dp),
+            color = SpritePanel.copy(alpha = 0.78f),
+            shadowElevation = 2.dp,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = TextPrimary,
+                )
+                Icon(
+                    imageVector = Icons.Outlined.Edit,
+                    contentDescription = "编辑名字",
+                    tint = TextPrimary.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
     }
 }
 

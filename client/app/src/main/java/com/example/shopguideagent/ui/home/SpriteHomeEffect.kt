@@ -21,4 +21,13 @@ sealed interface SpriteHomeEffect {
     data class AddToCart(val product: ProductUiModel) : SpriteHomeEffect
     data class ShowMessage(val message: String) : SpriteHomeEffect
     data class ShowLevelUpReward(val newLevel: Int) : SpriteHomeEffect
+
+    // Drawer / user switching / session history
+    object OpenHistoryDrawer : SpriteHomeEffect
+    data class SwitchUser(val userId: String) : SpriteHomeEffect
+    data class SelectSession(val sessionId: String) : SpriteHomeEffect
+    object CreateNewSession : SpriteHomeEffect
+
+    // Spirit name editing
+    object ShowEditSpiritName : SpriteHomeEffect
 }

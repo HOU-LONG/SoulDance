@@ -1,12 +1,12 @@
 package com.example.shopguideagent.ui.home
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -62,8 +62,53 @@ import com.example.shopguideagent.ui.theme.TextTertiary
 import com.example.shopguideagent.ui.theme.WarningColor
 import com.example.shopguideagent.voice.VoiceInputUiState
 
+/**
+ * 精灵空间语音输入条。
+ *
+ * @param showTextInput 为 `true` 时显示完整输入条（语音 + 文字输入 + 发送）；
+ *                      为 `false` 时仅显示按住说话的麦克风按钮，用于首页精简模式。
+ */
 @Composable
 fun SpriteVoiceBar(
+    enabled: Boolean,
+    voiceState: VoiceInputUiState,
+    recognitionState: VoiceRecognitionState,
+    recognitionMessage: String?,
+    onTextSubmit: (String) -> Unit,
+    onVoicePress: () -> Unit,
+    onVoiceDrag: (Float) -> Unit,
+    onVoiceRelease: () -> Unit,
+    modifier: Modifier = Modifier,
+    showTextInput: Boolean = true,
+) {
+    if (showTextInput) {
+        FullVoiceBar(
+            enabled = enabled,
+            voiceState = voiceState,
+            recognitionState = recognitionState,
+            recognitionMessage = recognitionMessage,
+            onTextSubmit = onTextSubmit,
+            onVoicePress = onVoicePress,
+            onVoiceDrag = onVoiceDrag,
+            onVoiceRelease = onVoiceRelease,
+            modifier = modifier,
+        )
+    } else {
+        CompactVoiceButton(
+            enabled = enabled,
+            voiceState = voiceState,
+            recognitionState = recognitionState,
+            recognitionMessage = recognitionMessage,
+            onVoicePress = onVoicePress,
+            onVoiceDrag = onVoiceDrag,
+            onVoiceRelease = onVoiceRelease,
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun FullVoiceBar(
     enabled: Boolean,
     voiceState: VoiceInputUiState,
     recognitionState: VoiceRecognitionState,
@@ -176,6 +221,43 @@ fun SpriteVoiceBar(
     }
 }
 
+/**
+ * 精简版语音入口：仅保留按住说话的麦克风按钮，用于首页无文字输入模式。
+ */
+@Composable
+private fun CompactVoiceButton(
+    enabled: Boolean,
+    voiceState: VoiceInputUiState,
+    recognitionState: VoiceRecognitionState,
+    recognitionMessage: String?,
+    onVoicePress: () -> Unit,
+    onVoiceDrag: (Float) -> Unit,
+    onVoiceRelease: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        VoiceRecognitionStatus(
+            state = recognitionState,
+            message = recognitionMessage,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+        )
+        VoiceHoldButton(
+            enabled = enabled,
+            voiceState = voiceState,
+            size = 56.dp,
+            onPress = onVoicePress,
+            onDrag = onVoiceDrag,
+            onRelease = onVoiceRelease,
+        )
+    }
+}
+
 @Composable
 private fun VoiceRecognitionStatus(
     state: VoiceRecognitionState,
@@ -207,6 +289,8 @@ private fun VoiceHoldButton(
     onPress: () -> Unit,
     onDrag: (Float) -> Unit,
     onRelease: () -> Unit,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp = 48.dp,
 ) {
     val active = voiceState != VoiceInputUiState.Idle
     val background = when (voiceState) {
@@ -217,8 +301,8 @@ private fun VoiceHoldButton(
     val tint = if (active) Color.White else SpriteVoiceBarBackground
 
     Box(
-        modifier = Modifier
-            .size(48.dp)
+        modifier = modifier
+            .size(size)
             .clip(CircleShape)
             .background(if (enabled) background else SpritePanel)
             .pointerInput(enabled) {
@@ -244,7 +328,7 @@ private fun VoiceHoldButton(
             Icons.Outlined.Mic,
             contentDescription = "按住说话",
             tint = tint,
-            modifier = Modifier.size(24.dp),
+            modifier = Modifier.size(size * 0.5f),
         )
     }
 }
@@ -318,6 +402,24 @@ private fun SpriteVoiceBarPreview() {
             onVoicePress = {},
             onVoiceDrag = {},
             onVoiceRelease = {},
+        )
+    }
+}
+
+@Preview(showBackground = true, widthDp = 390)
+@Composable
+private fun CompactVoiceButtonPreview() {
+    ShopGuideAgentTheme {
+        SpriteVoiceBar(
+            enabled = true,
+            voiceState = VoiceInputUiState.Idle,
+            recognitionState = VoiceRecognitionState.Idle,
+            recognitionMessage = null,
+            onTextSubmit = {},
+            onVoicePress = {},
+            onVoiceDrag = {},
+            onVoiceRelease = {},
+            showTextInput = false,
         )
     }
 }

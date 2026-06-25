@@ -1,7 +1,10 @@
 package com.example.shopguideagent.ui.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -11,24 +14,33 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import com.example.shopguideagent.R
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
+import com.example.shopguideagent.ui.theme.TextPrimary
+import com.example.shopguideagent.ui.theme.TextTertiary
 
 @Composable
 fun SpriteTopBar(
-    userProfile: UserProfileUiState,
+    userAvatarUri: String?,
     speakerEnabled: Boolean,
     onSpeakerToggle: () -> Unit,
     onChatClick: () -> Unit,
+    onHistoryClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -38,12 +50,9 @@ fun SpriteTopBar(
         verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        UserProfileCard(
-            fireValue = userProfile.firePoints,
-            identity = userProfile.identityTitle,
-            identityBadge = userProfile.identityLevel,
-            userAvatarUri = userProfile.avatarUrl,
-            partnerAvatarUri = userProfile.partnerAvatarUrl,
+        HistoryAvatarButton(
+            avatarUri = userAvatarUri,
+            onClick = onHistoryClick,
         )
 
         Row(
@@ -61,6 +70,59 @@ fun SpriteTopBar(
                 contentDescription = "聊天模式",
                 onClick = onChatClick,
             )
+        }
+    }
+}
+
+@Composable
+private fun HistoryAvatarButton(
+    avatarUri: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.size(42.dp),
+        shape = CircleShape,
+        color = Color.White.copy(alpha = 0.72f),
+        shadowElevation = 4.dp,
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.size(42.dp),
+        ) {
+            if (!avatarUri.isNullOrBlank()) {
+                AsyncImage(
+                    model = avatarUri,
+                    contentDescription = "用户头像",
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .border(2.dp, Color.White, CircleShape),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .border(2.dp, Color.White, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.shopping),
+                        contentDescription = "默认头像",
+                        modifier = Modifier.size(28.dp),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Icon(
+                        imageVector = Icons.Outlined.Person,
+                        contentDescription = null,
+                        tint = TextTertiary,
+                        modifier = Modifier.size(16.dp),
+                    )
+                }
+            }
         }
     }
 }
@@ -88,7 +150,7 @@ private fun CircleIconButton(
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
-                tint = Color(0xFF5B422A),
+                tint = TextPrimary,
                 modifier = Modifier.size(22.dp),
             )
         }
@@ -100,10 +162,11 @@ private fun CircleIconButton(
 private fun SpriteTopBarPreview() {
     ShopGuideAgentTheme {
         SpriteTopBar(
-            userProfile = UserProfileUiState(),
+            userAvatarUri = null,
             speakerEnabled = true,
             onSpeakerToggle = {},
             onChatClick = {},
+            onHistoryClick = {},
         )
     }
 }

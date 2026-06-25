@@ -7,14 +7,13 @@ import java.io.File
 
 class ChatScreenArchitectureTest {
     @Test
-    fun chatScreenUsesWarmSpriteRoomBackground() {
+    fun chatScreenUsesWarmCreamBackground() {
         val source = findRepoFile("client/app/src/main/java/com/example/shopguideagent/ui/screen/ChatScreen.kt")
             .readText()
 
-        assertTrue("Chat screen should share the warm sprite-space background start", source.contains("SpriteRoomTop"))
-        assertTrue("Chat screen should share the warm sprite-space background middle", source.contains("SpriteRoomMiddle"))
-        assertTrue("Chat screen should share the warm sprite-space background light", source.contains("SpriteRoomLight"))
-        assertTrue("Chat screen should share the warm sprite-space background bottom", source.contains("SpriteRoomBottom"))
+        assertTrue("Chat screen should use the warm cream background top", source.contains("ChatBackgroundTop"))
+        assertTrue("Chat screen should use the warm cream background middle", source.contains("ChatBackgroundMiddle"))
+        assertTrue("Chat screen should use the warm cream background bottom", source.contains("ChatBackgroundBottom"))
         assertFalse("Chat screen should not keep the old green app background container", source.contains("containerColor = AppBackground"))
         assertFalse("Chat screen should not keep the old green gradient end", source.contains("AppBackgroundGradientEnd"))
     }

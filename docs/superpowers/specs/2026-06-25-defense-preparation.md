@@ -190,47 +190,281 @@ HOST=127.0.0.1 PORT=8000 USE_EMBEDDING=0 TTS_ENABLED=false STT_ENABLED=false \
 - 每个商品含：SKU 变体 + RAG 知识库（营销文案/FAQ/用户评价）+ 图片
 - 后端约 80 个 Python 文件，504 个测试通过
 
-### 2.2 语义理解层：SemanticParser + IntentCompiler（2 min）
+### 2.2 核心链路：自然语言 → 结构化意图 → 结构化检索 → 商品匹配（5 min）
 
-**技术要点**：
+**这是整个项目最核心的技术链路——也是答辩中最应该讲清楚的部分。**
 
-1. **两层语义解析**：
-   - `rule_semantic_frame`：规则快速通道（关键词匹配 + 正则），处理高频简单意图
-   - `SemanticParser.parse()`：LLM 语义解析（temperature=0），处理复杂/模糊意图
-   - 规则层兜底 LLM 解析失败 → 确保系统不会因 LLM 不可用而崩溃
+用户说一句话，最终得到精确的商品推荐。中间经历了什么？不是黑箱 LLM pipeline，而是 **5 个阶段的强类型结构化数据转换**。每一步的输入和输出都是 Pydantic Model，可校验、可回溯、可 debug。
 
-2. **IntentCompiler**：将 SemanticFrame 编译为可执行的 RetrievalPlan
-   - 提取硬约束（价格、品牌、类目、SKU 属性）
-   - 提取软偏好（"好看"、"性价比高"）
-   - 编译为结构化检索计划，传给下游
+---
 
-3. **上下文感知**：
-   - Contextual followup 判定：当 intent 被解析为 "unclear_input" 时，二次判定是否为 product_followup
-   - 使用 context_payload（含 focus_product / last_plan）作为判定依据
+#### 阶段 1：规则快速通道 — `rule_semantic_frame()`
 
-**答辩话术**：
-"为什么不用一上来就全部走 LLM？两个原因：一是成本和延迟——规则通道能在 1ms 内覆盖 60% 的简单意图；二是可靠性——当 LLM 不可用时规则层兜底，确保服务不降级到无法使用。"
+**源文件**：`server/backend/app/semantic_layer.py:95-168`
 
-### 2.3 混合检索 + Reranker（3 min）
+这是一层**纯规则引擎**（正则 + 关键词字典），不调 LLM，1ms 内返回：
 
-**技术要点**：
+```python
+def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
+    # ① 购物信号检测：没有购物意图 → unclear_input
+    if not _has_shopping_signal(text):                          # L284-291: 关键词正则
+        return SemanticFrame(intent="unclear_input")
 
-1. **HybridRetriever**：
-   - BM25（jieba 分词）：精确匹配品牌名、型号、成分等关键词
-   - Dense Vector（bge-small-zh-v1.5）：语义相似度，覆盖同义词和隐含需求
-   - RRF（Reciprocal Rank Fusion）融合：`score = 1/(k+rank_bm25) + 1/(k+rank_dense)`，k=60
+    # ② 价格约束提取（正则，非 LLM）
+    price_min = _detect_price_min(text)   # "500以上" → 500.0  L551-561
+    price_max = _detect_price_max(text)   # "500以内" → 500.0  L564-586
 
-2. **Reranker 模块**（新实现）：
-   - **默认路径**：CrossEncoder（BGE-reranker-v2-m3），本地推理，<10ms overhead
-   - **LLM 兜底**（三种场景触发）：对比意图 / 低置信度 / 用户纠偏 → 调 LLM 做语义精排
-   - **静默降级**：Reranker 失败不影响主链路，回退到 rank_products
+    # ③ 品牌排除/包含（正则）
+    extract_excluded_brands(text)         # "不要日系" → ["日本"]
+    extract_included_brands(text)         # "雅诗兰黛" → ["雅诗兰黛"]
 
-3. **rank_products**：业务规则打分（类目匹配度 / 品牌 / 价格区间 / 评价分数），最终选出 Top 5-8
+    # ④ 软偏好字典匹配（关键词映射表）
+    if "油皮" in text: soft["skin_type"] = "油皮"             # L146-147
+    if "保湿" in text: soft["effect"] = "保湿修护"             # L150-151
+    if "送人" in text: soft["occasion"] = "送礼"               # L158-159
+    # ... 共 15 个软偏好维度
 
-**答辩话术**：
-"这里的关键设计决策是 CrossEncoder + LLM 兜底的混合方案。为什么不全用 LLM？因为成本和延迟 — 每次检索 LLM 重排需要 2-3 秒 + token 费用，而本地 CrossEncoder 在 <10ms 内完成。但为什么不全用 CrossEncoder？因为在对比/纠偏等复杂场景下，LLM 的语义理解能力远超 CrossEncoder。所以我设计了场景触发机制：默认走 CrossEncoder，仅在三种高价值场景触发 LLM。"
+    return SemanticFrame(intent=intent, constraint_edits=edits)
+```
 
-### 2.4 上下文控制层：A1 + A2（3 min）
+**产出**：`SemanticFrame`（`server/backend/app/models.py:94-103`）—— Pydantic Model，包含 intent + constraint_edits + soft_preferences。
+
+**为什么需要这一层？** 两点：(1) 1ms 覆盖 60% 简单意图，省 LLM 调用；(2) LLM 不可用时兜底，服务不降级。
+
+---
+
+#### 阶段 2：LLM 语义解析 + 规则守卫合并 — `SemanticParser.parse()`
+
+**源文件**：`server/backend/app/semantic_layer.py:26-52`
+
+规则层不够用时（复杂意图/模糊表述），调 LLM。但**关键设计**：LLM 输出和规则层输出不是二选一，而是**取并集**：
+
+```python
+async def parse(self, request, context) -> SemanticFrame:
+    # ① LLM 语义解析（带上下文快照）
+    raw = await self.llm_client.parse_semantic_frame(
+        request.message,
+        self._payload(context),     # A2 结构化上下文：focus_product/last_plan/...
+        request_type=request.type,
+    )
+    frame = _parse_frame(raw)                      # L203-206: JSON → SemanticFrame
+
+    # ② 低置信度 → 转澄清
+    if frame.confidence < 0.6:                     # L35-37
+        frame.intent = "clarification"
+
+    # ③ ★ 关键：规则守卫合并
+    guarded = _merge_rule_guards(frame, request)    # L222-259
+
+    # ④ 上下文 followup 二次判定
+    if guarded.intent == "unclear_input":
+        recovered = await self._try_contextual_followup_judge(...)
+        # ↑ LLM 说"不明白"但上下文有 focus_product → 是否其实是追问？
+```
+
+**`_merge_rule_guards()` 是整条链路最精妙的设计**（`semantic_layer.py:222-259`）：
+
+```python
+def _merge_rule_guards(frame, request):
+    guarded = rule_semantic_frame(request)   # 同时跑一遍规则层
+
+    # 规则层判定为 small_talk → 覆盖 LLM 的 intent
+    if guarded.intent == "small_talk":
+        frame.intent = "small_talk"           # 规则层有否决权
+
+    # 规则层提取了购物车操作 → 覆盖 LLM
+    if guarded.intent == "cart_operation":
+        frame.cart_operation = guarded.cart_operation
+
+    # ★ 硬约束取并集：LLM 的软意图 + 规则层的硬提取
+    frame.constraint_edits.add.exclude_terms.extend(guarded...)     # L233-235
+    frame.constraint_edits.add.exclude_brands.extend(guarded...)    # L242-244
+    frame.constraint_edits.add.price_max = guarded...               # L247-248
+    # soft_preferences 也合并
+    frame.constraint_edits.add.soft_preferences.update(guarded...)  # L249
+```
+
+**为什么这样设计？** LLM 擅长理解"我想要那种涂上去不油腻的"（语义理解），规则层擅长精确提取"500 元以内"和"不要日系"（结构化提取）。两者并行取并集，各取所长。LLM 可能把"500"误解为"500ml"——但正则不会；LLM 可能无法从"涂上去不油腻"中提取出"肤质=油皮"——但规则字典会。
+
+---
+
+#### 阶段 3：意图编译 → 结构化检索计划 — `IntentCompiler` + `QueryBuilder`
+
+**源文件**：
+- `server/backend/app/intent_compiler.py:10-20` — IntentCompiler.compile()
+- `server/backend/app/query_builder.py:9-62` — QueryBuilder.build()
+
+这是**数据治理的核心环节**——用户的自然语言被完整转换为结构化的 `RetrievalPlan`：
+
+```python
+# query_builder.py:15-62
+def build(self, ir, context, user_message) -> RetrievalPlan:
+    # ① 从 session 状态读当前约束（跨轮次累积！）
+    hard = context.state.constraint_state.hard    # HardConstraints
+    soft = dict(context.state.constraint_state.soft)
+
+    # ② Taxonomy 解析：类目匹配
+    _fill_category_from_text(hard, user_message, self.taxonomy)  # L65-82
+
+    # ③ 构建检索查询字符串（类目+约束+偏好拼接）
+    retrieval_query = " ".join([
+        *ir.query_intent.query_terms, user_message,
+        hard.category, hard.sub_category, *soft.values()
+    ])
+
+    # ④ 澄清策略判定
+    need_clarification, question = _clarification_policy(...)
+
+    # ⑤ 选择检索模式
+    retrieval_mode = {
+        "product_followup": "product_focus_retrieval",  # 基于 focus_product 检
+        "compare_products": "state_then_detail",          # 先拿候选再对比
+        "scenario_bundle": "decompose_parallel",          # 拆解并行检
+    }.get(intent, "single")
+
+    return RetrievalPlan(
+        intent=intent,
+        retrieval_mode=retrieval_mode,
+        hard_constraints=hard,       # 硬约束：价格/品牌/排除词
+        soft_preferences=soft,        # 软偏好：肤质/功效/送礼场景
+        retrieval_query=...,          # 混合检索查询字符串
+    )
+```
+
+**以"我是干皮，想买500以内的保湿精华，不要日系"为例的完整转换**：
+
+```
+用户输入: "我是干皮，想买500以内的保湿精华，不要日系"
+
+  → [阶段1] rule_semantic_frame()
+     price_max=500.0, exclude_brand_regions=["日本"], soft={"skin_type":"干皮","effect":"保湿修护"}
+
+  → [阶段2] SemanticParser.parse()
+     LLM 确认 intent=recommend_product, category="精华", confidence=0.85
+     _merge_rule_guards() 合并：price_max + exclude 追加到 LLM 输出
+
+  → [阶段3] QueryBuilder.build()
+     RetrievalPlan(
+       intent="recommend_product",
+       retrieval_mode="single",
+       category="精华",
+       hard_constraints=HardConstraints(
+         sub_category="精华",
+         price_max=500.0,
+         exclude_brand_regions=["日本"],
+         in_stock_only=True,
+       ),
+       soft_preferences={"skin_type":"干皮","effect":"保湿修护"},
+       retrieval_query="我是干皮想买500以内的保湿精华不要日系 精华 干皮 保湿修护",
+     )
+```
+
+**三个关键设计决策**：
+
+1. **全程 Pydantic 强类型**：`SemanticFrame`（`models.py:94`）→ `ShoppingIntentIR`（`models.py:106`）→ `RetrievalPlan`（`models.py:45`），每一步的中间产物都是可序列化、可校验的。debug 不是看 LLM 黑箱输出，是看每一步的 JSON。
+
+2. **约束跨轮累积**：`HardConstraints` 存在 session state 中（`state_reducer.py`），每轮基于上一轮做增量编辑。用户在第五轮说"不要日系"，到第二十轮说"刚才那个不要日系算了"——约束的增删改通过 `apply_constraint_edits()`（`semantic_layer.py:71-85`）做事务性变更，不是每轮重新解析全量历史。
+
+3. **Clarification 优于乱猜**：`_clarification_policy()` 判断是否信息不足——比如用户说"推荐一款"但没给任何约束，Agent 会反问"您想要什么类型的商品？有没有预算或品牌偏好？"，而不是随机推荐。
+
+---
+
+#### 阶段 4：混合检索 + 精排 — `AdaptiveRetriever` + `HybridRetriever` + `Reranker`
+
+**源文件**：
+- `server/backend/app/adaptive_retriever.py:31-80` — AdaptiveRetriever.search_async()
+- `server/backend/app/rag/fusion.py` — HybridRetriever（BM25+Dense+RRF 融合）
+- `server/backend/app/rag/reranker.py` — Reranker（CrossEncoder + LLM 兜底）
+- `server/backend/app/rag/reranker_scenarios.py` — 场景触发判断
+
+```python
+# adaptive_retriever.py:57-80
+async def search_async(self, plan, top_k=30):
+    # ① 混合检索：BM25 + Dense Vector + RRF 融合
+    hybrid_results = self.hybrid_retriever.search_with_evidence(plan, top_k=30)
+
+    # ② Reranker 精排
+    if self.reranker:
+        pre_scenario = detect_pre_scenario(plan)  # 场景检测
+        hybrid_results = await self.reranker.rerank(
+            plan.retrieval_query, hybrid_results, top_k=top_k, scenario=pre_scenario)
+
+    # ③ 自适应放松：结果不足时逐步放宽约束
+    if len(hybrid_results) < min_candidates:
+        # 放松顺序：软偏好 → 价格区间 → 类目降级
+```
+
+**混合检索的两路**：
+- **BM25**（jieba 分词）：精确匹配——"雅诗兰黛"、"精华"必须出现在商品字段中
+- **Dense Vector**（bge-small-zh-v1.5）：语义近似——"干皮"↔"干燥肌肤"、"秋冬"↔"寒冷季节"
+- **RRF 融合**：`score = 1/(60+rank_bm25) + 1/(60+rank_dense)`——不要求两路分数量纲一致，只依赖排名
+
+**Reranker 场景触发**（`reranker_scenarios.py`）：
+- **默认**：CrossEncoder（BGE-reranker-v2-m3），本地推理 <10ms
+- **LLM 兜底**（三种场景）：对比意图 / 低置信度 / 用户纠偏重推
+
+---
+
+#### 阶段 5：硬过滤 + 业务打分 — `hard_filter()` + `rank_products()`
+
+**源文件**：
+- `server/backend/app/constraint_filter.py` — hard_filter()
+- `server/backend/app/ranker.py` — rank_products()
+
+```python
+# hard_filter：硬约束把关（constraint_filter.py）
+for product in candidates:
+    if plan.hard_constraints.price_max and product.price > plan.hard_constraints.price_max:
+        continue    # 超预算 → 直接过滤
+    if product.brand_region in plan.hard_constraints.exclude_brand_regions:
+        continue    # 日系 → 直接过滤
+
+# rank_products：业务规则打分（ranker.py）
+# 类目匹配度 × 品牌匹配度 × 价格合理度 × 评价星级 → 综合分 → Top 5-8
+```
+
+Agent 从商品数据库拿到最终 Top-K，生成推荐回复 —— 走 `server/backend/app/tools/retrieval.py:15-30`（RetrieveProductsTool）。
+
+---
+
+#### 完整链路图（答辩时直接展示）
+
+```
+用户自然语言: "干皮，500以内保湿精华，不要日系"
+  │
+  ▼
+┌─ 阶段1: rule_semantic_frame()         [semantic_layer.py:95]   1ms，无LLM
+│  产出: SemanticFrame {price_max=500, exclude=["日本"], skin="干皮"}
+│
+├─ 阶段2: SemanticParser.parse()        [semantic_layer.py:26]   LLM调用
+│  ├─ LLM 语义解析                      含A2上下文快照
+│  └─ _merge_rule_guards()              [semantic_layer.py:222]  ★规则+LLM取并集
+│  产出: SemanticFrame {intent, constraint_edits, confidence}
+│
+├─ 阶段3: QueryBuilder.build()          [query_builder.py:15]    确定性编译
+│  产出: RetrievalPlan {hard_constraints, soft_preferences, retrieval_query}
+│
+├─ 阶段4: AdaptiveRetriever.search()    [adaptive_retriever.py:57]
+│  ├─ HybridRetriever                   [rag/fusion.py]          BM25+Dense+RRF
+│  └─ Reranker                          [rag/reranker.py]        CrossEncoder+LLM
+│  产出: 候选商品列表（Top-30 → 精排后）
+│
+├─ 阶段5: hard_filter + rank_products   [constraint_filter.py] + [ranker.py]
+│  产出: Top-5 RankedProduct
+  │
+  ▼
+流式输出 ProductCard（图片+价格+SKU+推荐理由）  [agent.py:205 stream_message]
+```
+
+**跟专家强调的三个核心设计**：
+
+1. **规则+LLM 并行取并集**——不是"先规则后 LLM"或"规则兜底"，而是同时跑、取并集。硬约束（价格数字、品牌名）不会因 LLM 理解偏差而丢失。
+
+2. **强类型数据管道**——从 `SemanticFrame` → `RetrievalPlan` → `RankedProduct`，全程 Pydantic Model，每一步可校验、可序列化、可回溯。这保证了评测时每一轮的中间状态都可以从 trace 中精确复现。
+
+3. **约束跨轮累积 + 事务性编辑**——`apply_constraint_edits()` 支持 add/remove/relax 三种操作。用户说"不要日系"→ 加约束，说"算了"→ 减约束。不是每轮从零解析全量历史。
+
+### 2.3 上下文控制层：A1 + A2（3 min）
 
 **这是答辩的核心亮点，也是你论文/项目最有区分度的技术点。**
 
@@ -261,7 +495,7 @@ A1 + A2 = 上下文体积可控 + 关键状态不丢失
 
 我的方案分两层：A1 做体积控制，A2 做结构保持。这两层合在一起，既控制了成本，又保住了关键状态。而且每个轮次的可控截断点在代码里是显式的，不依赖 LLM 自己做摘要——因为 LLM 摘要本身可能引入幻觉。"
 
-### 2.5 决策复用层：B1 + B2（2 min）
+### 2.4 决策复用层：B1 + B2（2 min）
 
 **技术要点**：
 
@@ -280,7 +514,7 @@ A1 + A2 = 上下文体积可控 + 关键状态不丢失
 **答辩话术**：
 "决策复用本质上是用存储换计算——把历史决策缓存下来，相似请求直接回放。但这里有几个坑：第一，缓存键必须能感知硬约束变化，否则用户改了预算你还返回旧结果；第二，缓存统计必须区分 'would_hit' 和 'effective_hit' 两个口径——在消融实验中 B1/B2 被禁用时 effective_hit 为 0，但我们要知道如果不禁用有多少能命中，所以加了 side-effect-free 的 probe API。"
 
-### 2.6 评测体系：5-Condition 消融实验（2 min）
+### 2.5 评测体系：5-Condition 消融实验（2 min）
 
 **技术要点**：
 

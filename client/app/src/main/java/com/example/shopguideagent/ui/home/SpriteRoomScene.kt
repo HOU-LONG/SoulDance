@@ -20,8 +20,8 @@ import com.example.shopguideagent.R
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
 
 /**
- * 全屏环境层：暖色房间背景（crop 铺满）+ 远景道具（左侧水晶球）。
- * 作为整页最底层，UI 浮层与中央舞台叠加其上。道具位于屏幕中上部，不被底部 UI 浮层遮挡。
+ * 全屏环境层：暖色房间背景（crop 铺满）+ 墙上黑板（远景装饰）。
+ * 作为整页最底层，UI 浮层与中央舞台叠加其上。
  */
 @Composable
 fun SpriteRoomBackdrop(modifier: Modifier = Modifier) {
@@ -35,20 +35,20 @@ fun SpriteRoomBackdrop(modifier: Modifier = Modifier) {
             modifier = Modifier.matchParentSize(),
         )
         PlacedAsset(
-            resId = R.drawable.prop_discovery_globe,
-            placement = SpritePlacement.Backdrop.DiscoveryGlobe,
+            resId = R.drawable.prop_smart_guide_blackboard,
+            placement = SpritePlacement.Backdrop.Blackboard,
             containerWidth = w,
             containerHeight = h,
-            contentDescription = "好物发现水晶球",
+            contentDescription = "墙上黑板",
         )
     }
 }
 
 /**
- * 中央舞台区：黑板、购物袋、人物本体、气泡，全部相对本区（顶栏与底部 UI 之间的 weight 区）定位。
+ * 中央舞台区：水晶球、购物袋、人物本体、气泡，全部相对本区（顶栏与底部 UI 之间的 weight 区）定位。
  *
  * 人物经 [avatarStage]（[AvatarStageRenderer]）以 `fillMaxSize` 渲染，内部 Fit + BottomCenter 保证
- * 全身完整、脚底落在本区底部，不被底部 UI 浮层遮挡。黑板与购物袋同样以 BOTTOM_CENTER 锚点与本区
+ * 全身完整、脚底落在本区底部，不被底部 UI 浮层遮挡。水晶球与购物袋同样以 BOTTOM_CENTER 锚点与本区
  * 底部对齐，形成统一的"地面"基准线。本区不依赖 2D/3D 具体实现。
  */
 @Composable
@@ -61,13 +61,13 @@ fun SpriteStageArea(
         val w = maxWidth
         val h = maxHeight
 
-        // 黑板（人物左侧，底部着地）
+        // 水晶球（舞台左下角，底部着地）
         PlacedAsset(
-            resId = R.drawable.prop_smart_guide_blackboard,
-            placement = SpritePlacement.Stage.Blackboard,
+            resId = R.drawable.prop_discovery_globe,
+            placement = SpritePlacement.Stage.DiscoveryGlobe,
             containerWidth = w,
             containerHeight = h,
-            contentDescription = "智能导购黑板",
+            contentDescription = "好物发现水晶球",
         )
 
         // 购物袋（人物右侧）

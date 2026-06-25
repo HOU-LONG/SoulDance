@@ -38,20 +38,21 @@ data class NormalizedPlacement(
  *   脚底稳定，不被底部 UI 浮层遮挡。
  */
 object SpritePlacement {
-    /** 全屏环境层坐标（对应 layout 的 room_background / discovery_globe）。 */
+    /** 全屏环境层坐标（对应 layout 的 room_background / wall_blackboard）。 */
     object Backdrop {
-        val DiscoveryGlobe = NormalizedPlacement(0.045f, 0.400f, 0.24f, PlacementAnchor.TOP_START)
+        // 木质黑板：挂在后墙左侧
+        val Blackboard = NormalizedPlacement(0.05f, 0.18f, 0.24f, PlacementAnchor.TOP_START)
     }
 
     /** 中央舞台区相对坐标（0..1 相对舞台 Box）。
-     *  黑板、购物袋与人物共用同一舞台坐标系，并以 BOTTOM_CENTER 锚点统一站在"地面"基准线上。 */
+     *  水晶球、购物袋与人物共用同一舞台坐标系，并以 BOTTOM_CENTER 锚点统一站在"地面"基准线上。 */
     object Stage {
-        // 黑板：人物左侧，底部与脚底对齐（像立在地上的展示牌）
-        val Blackboard = NormalizedPlacement(0.120f, 0.92f, 0.22f, PlacementAnchor.BOTTOM_CENTER)
+        // 水晶球：舞台左下角，底部与人物脚底对齐
+        val DiscoveryGlobe = NormalizedPlacement(0.08f, 0.92f, 0.22f, PlacementAnchor.BOTTOM_CENTER)
         // 购物袋：人物右侧手边，底部与脚底对齐
         val ShoppingBag = NormalizedPlacement(0.820f, 0.92f, 0.32f, PlacementAnchor.BOTTOM_CENTER)
-        // 气泡中心：人物头顶上方
-        const val SpeechBubbleCenterY = 0.06f
+        // 气泡中心：人物头顶上方，上移避免遮挡头部
+        const val SpeechBubbleCenterY = 0.02f
     }
 }
 

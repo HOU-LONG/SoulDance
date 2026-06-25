@@ -14,7 +14,9 @@ import com.example.shopguideagent.data.repository.InMemorySpiritAppearanceReposi
 import com.example.shopguideagent.data.repository.InMemorySpiritProgressRepository
 import com.example.shopguideagent.data.repository.SpiritAppearanceRepository
 import com.example.shopguideagent.data.repository.SpiritProgressRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -67,6 +69,8 @@ class SpriteHomeViewModel(
     private val processedCartEvents = mutableSetOf<String>()
     private val dismissedPresentationProductIds = mutableSetOf<String>()
     private var realtimeEventJob: Job? = null
+    private var transientStateResetJob: Job? = null
+    private var transientStateGeneration = 0L
 
     init {
         userSession?.let { session ->
@@ -98,6 +102,7 @@ class SpriteHomeViewModel(
 
     override fun onCleared() {
         realtimeEventJob?.cancel()
+        transientStateResetJob?.cancel()
         super.onCleared()
     }
 
@@ -236,6 +241,7 @@ class SpriteHomeViewModel(
     private fun onAddToCartFailed(message: String) {
         val text = message.ifBlank { "加购失败，请重试" }
         setTransientState(AvatarState.ERROR, SpeechBubbleUiState(text, style = SpeechBubbleStyle.ERROR))
+        scheduleTransientStateReset()
         emitEffect(SpriteHomeEffect.ShowMessage(text))
     }
 
@@ -288,6 +294,8 @@ class SpriteHomeViewModel(
     }
 
     fun onStageAnimationFinished() {
+        transientStateResetJob?.cancel()
+        transientStateGeneration += 1
         _uiState.update { current ->
             val stable = current.baseAvatarState
             current.copy(
@@ -295,6 +303,28 @@ class SpriteHomeViewModel(
                 speechBubble = SpriteHomeStateMapper.speechFor(stable, current.presentingProduct),
                 animationSequence = current.animationSequence + 1,
             )
+        }
+    }
+
+    private fun clearTransientAvatarState(expectedGeneration: Long) {
+        if (expectedGeneration != transientStateGeneration) return
+        _uiState.update { current ->
+            val stable = current.baseAvatarState
+            current.copy(
+                transientAvatarState = null,
+                speechBubble = SpriteHomeStateMapper.speechFor(stable, current.presentingProduct),
+                animationSequence = current.animationSequence + 1,
+            )
+        }
+    }
+
+    private fun scheduleTransientStateReset(delayMs: Long = 2000L) {
+        transientStateResetJob?.cancel()
+        transientStateGeneration += 1
+        val generation = transientStateGeneration
+        transientStateResetJob = viewModelScope.launch(Dispatchers.Main) {
+            delay(delayMs)
+            clearTransientAvatarState(generation)
         }
     }
 
@@ -392,6 +422,8 @@ class SpriteHomeViewModel(
     }
 
     private fun setTransientState(avatarState: AvatarState, speechBubble: SpeechBubbleUiState = SpriteHomeStateMapper.speechFor(avatarState, _uiState.value.presentingProduct)) {
+        transientStateResetJob?.cancel()
+        transientStateGeneration += 1
         _uiState.update { current ->
             current.copy(
                 transientAvatarState = avatarState,
@@ -434,6 +466,7 @@ class SpriteHomeViewModel(
         if (_uiState.value.transientAvatarState == AvatarState.LEVEL_UP) {
             emitEffect(SpriteHomeEffect.ShowLevelUpReward(_uiState.value.spiritProgress.level))
         }
+        scheduleTransientStateReset()
     }
 
     private fun incrementTask(taskId: String) {

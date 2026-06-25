@@ -8,11 +8,16 @@ import com.example.shopguideagent.data.model.ChatUiState
 import com.example.shopguideagent.data.model.MessageRole
 import com.example.shopguideagent.domain.event.CartOperationEvent
 import com.example.shopguideagent.test.CoroutineTestHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -383,6 +388,67 @@ class SpriteHomeViewModelTest {
         val after = viewModel.uiState.value
         assertEquals(before.userProfile.firePoints + expectedReward, after.userProfile.firePoints)
         job.cancel()
+    }
+
+    @Test
+    fun transientCelebrationResetsAfterTwoSeconds() = runTest {
+        Dispatchers.resetMain()
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = SpriteHomeViewModel()
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartSucceeded("p1", 1))
+
+        assertEquals(AvatarState.CELEBRATING, viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.CELEBRATING, viewModel.uiState.value.displayedAvatarState)
+
+        advanceTimeBy(1999)
+        assertEquals(AvatarState.CELEBRATING, viewModel.uiState.value.transientAvatarState)
+
+        advanceTimeBy(2)
+        advanceUntilIdle()
+        assertNull(viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.IDLE, viewModel.uiState.value.displayedAvatarState)
+    }
+
+    @Test
+    fun secondAddToCartResetsCelebrationTimer() = runTest {
+        Dispatchers.resetMain()
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = SpriteHomeViewModel()
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartSucceeded("p1", 1))
+        advanceTimeBy(1500)
+
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartSucceeded("p2", 1))
+        assertEquals(AvatarState.CELEBRATING, viewModel.uiState.value.transientAvatarState)
+
+        advanceTimeBy(1500)
+        assertEquals(AvatarState.CELEBRATING, viewModel.uiState.value.transientAvatarState)
+
+        advanceTimeBy(500)
+        advanceUntilIdle()
+        assertNull(viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.IDLE, viewModel.uiState.value.displayedAvatarState)
+    }
+
+    @Test
+    fun transientErrorResetsAfterTwoSeconds() = runTest {
+        Dispatchers.resetMain()
+        Dispatchers.setMain(UnconfinedTestDispatcher(testScheduler))
+        val viewModel = SpriteHomeViewModel(
+            initialState = SpriteHomeUiState(baseAvatarState = AvatarState.PRESENTING, presentingProduct = sampleProduct()),
+        )
+        viewModel.onCartOperationEvent(CartOperationEvent.AddToCartFailed("p1", "库存不足"))
+
+        assertEquals(AvatarState.ERROR, viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.ERROR, viewModel.uiState.value.displayedAvatarState)
+        assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.baseAvatarState)
+
+        advanceTimeBy(1999)
+        assertEquals(AvatarState.ERROR, viewModel.uiState.value.transientAvatarState)
+
+        advanceTimeBy(2)
+        advanceUntilIdle()
+        assertNull(viewModel.uiState.value.transientAvatarState)
+        assertEquals(AvatarState.PRESENTING, viewModel.uiState.value.displayedAvatarState)
     }
 
     private fun cartUpdate(messageId: String, success: Boolean): RealtimeEvent.CartUpdate = RealtimeEvent.CartUpdate(

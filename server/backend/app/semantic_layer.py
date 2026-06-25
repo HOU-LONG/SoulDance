@@ -1,3 +1,56 @@
+"""
+语义解析层 — 将用户自然语言消息转换为结构化的语义帧（SemanticFrame）。
+
+===== 领域概念扫盲 =====
+
+"语义帧"（SemanticFrame）：
+用户的原始消息（如"想给女朋友买一款 200 元以内的保湿精华"）经解析后，
+变成结构化的 {intent, constraint_edits, cart_operation, ...} 字典。
+后续模块（StateReducer、Agent、Retriever）只消费语义帧，不再看原始文本。
+这就像编译器把源代码转成 AST——后续流程不再依赖原始字符串。
+
+"意图分类"（Intent Classification）：
+判断用户这句话想干什么——是推荐商品（recommend_product）、操作购物车（cart_operation）、
+比较商品（compare_products）、闲聊（small_talk），还是表达不清需要澄清（clarification）。
+
+"混合解析：LLM + 规则"：
+- SemanticParser.parse() 优先走 LLM 解析（更灵活，能理解复杂表达）
+- 当 LLM 不可用或置信度 < 0.6 时，回退到 rule_semantic_frame()（纯规则匹配）
+- 两条路径的结果都要经过 _merge_rule_guards() 合并——规则检测到的硬约束
+  （如购物车操作、违规内容）不会被 LLM 覆盖
+
+"C4 / A1 / A2 评测开关"：
+这些是长会话评测中的实验条件代码名，通过 config.Settings 的 eval_* 字段控制：
+- C4（窗口截断）生产默认启用：只保留最近 3 轮对话上下文，防止 LLM 对历史过拟合
+- A1（结构化快照）生产默认启用：用结构化 JSON 代替原始对话日志，减少 token 消耗
+- A2（推荐记忆缓存）生产默认启用：缓存最近推荐结果，相同查询直接返回缓存
+
+"规则保底"（Rule Guards）：
+rule_semantic_frame() 是一套基于正则和关键字匹配的规则引擎。
+它的作用不是替代 LLM，而是作为 LLM 的安全网——LLM 可能出错（返回不存在的商品、
+错误的购物车操作等），规则引擎可以检测并覆盖这些错误。
+
+===== 数据流 =====
+
+用户消息 → SemanticParser.parse()
+    ├─ LLM 路径：llm_client.parse_semantic_frame() → _parse_frame() → JSON → SemanticFrame
+    │   └─ 置信度 < 0.6 → intent 改为 clarification
+    └─ 规则路径：rule_semantic_frame() → 正则+关键字 → 硬规则分类
+    ↓
+_merge_rule_guards()：合并两条路径结果，规则检测的硬约束优先级更高
+    ↓
+返回 SemanticFrame → 被 Agent.stream_message() 消费 → StateReducer.apply() → 检索
+
+===== 与其它模块协作 =====
+
+- agent.py：ShopGuideAgent 创建 SemanticParser 实例并调用 parse()
+- models.py：SemanticFrame, ConstraintEdits, CartOperation, ShoppingIntentIR
+- state_reducer.py：消费 SemanticFrame.constraint_edits 更新对话状态
+- intent_compiler.py：将 SemanticFrame 进一步编译为 ShoppingIntentIR
+- cart_intent.py：_detect_quantity 等购物车意图检测辅助
+- utils.py：extract_json 从 LLM 返回文本中提取 JSON
+"""
+
 from __future__ import annotations
 
 import re
@@ -12,6 +65,11 @@ from .utils import extract_json
 
 
 class SemanticParser:
+    """混合语义解析器：LLM + 规则双路径，LLM 优先 + 规则保底。
+
+    初始化时可选择注入 llm_client（弱类型，支持任何实现了 parse_semantic_frame 的对象）。
+    如果 llm_client 为 None 或调用失败，parse() 自动回退到纯规则模式。
+    """
     def __init__(self, llm_client: Any | None = None, settings: Any | None = None):
         # settings: 仅长会话评测专用。运行时由 ShopGuideAgent 注入，用于决定是否启用
         # A1（窗口截断）/ A2（结构化快照）禁用开关。production 默认 None → 全开行为。
@@ -69,6 +127,12 @@ class SemanticParser:
 
 
 def apply_constraint_edits(base_plan: RetrievalPlan, edits: ConstraintEdits, message: str = "") -> RetrievalPlan:
+    """将 ConstraintEdits 应用到 RetrievalPlan，返回修改后的新 plan（深拷贝）。
+
+    原 plan 不会被修改（model_copy(deep=True)），调用方可以安全地重用原 plan。
+    这是与 StateReducer._apply_constraint_edits 平行的路径——StateReducer 修改
+    SessionContext 中的约束状态，而这里修改独立的 RetrievalPlan（如 PlannerAgent 产出后微调）。
+    """
     plan = base_plan.model_copy(deep=True)
     constraints = plan.hard_constraints
     _remove_constraints(constraints, edits.remove)
@@ -93,6 +157,18 @@ def resolve_cart_operation(operation: CartOperation, context: SessionContext, pr
 
 
 def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
+    """纯规则引擎的语义帧构建——LLM 不可用或解析失败时的回退路径。
+
+    按优先级检查：
+    1. 购物车操作（购买意图 + 购物车关键词）→ cart_operation
+    2. 商品对比请求（"对比"、"哪个更"）→ compare_products
+    3. 闲聊（"你好"、"谢谢"）→ small_talk
+    4. 缺少购物信号 → unclear_input
+    5. 其余 → recommend_product + 正则提取的价格/品牌/偏好约束
+
+    这套规则覆盖了最常见的用户输入模式。对于复杂的自然语言表达
+    （如"上次那个太贵了，换个便宜点的但是拍照不能差"），LLM 解析更合适。
+    """
     text = request.message or ""
     intent = "product_followup" if request.type == "product_followup" else "recommend_product"
     cart_action = _detect_cart_action(text)
@@ -297,6 +373,17 @@ def semantic_context_payload(
     disable_window: bool = False,
     disable_snapshot: bool = False,
 ) -> dict[str, Any]:
+    """构建注入 LLM 语义解析的上下文 payload。
+
+    包含当前焦点商品、最近推荐列表、购物车最近操作、全局画像、待澄清/恢复状态等。
+    这是 LLM 理解"当前对话在聊什么"的关键信息包。
+
+    评测模式：
+    - disable_window=True（A1 评测）：不截断历史窗口，LLM 看到全量对话事件
+    - disable_snapshot=True（A2 评测）：清空结构化快照字段（last_plan/pending/current_task），
+      但不碰 focus_product_id（状态机仍需要它），LLM 完全依赖原始文本做决策
+    - 生产环境两者均为 False：窗口截断 + 结构化快照全开（C4 全开行为）
+    """
     if context is None:
         return {}
     focus_product = _focus_product_summary(context)
@@ -352,6 +439,18 @@ def _recent_context_summary(
     *,
     disable_window: bool = False,
 ) -> dict[str, Any]:
+    """构建"最近对话上下文"的摘要，供 LLM 理解当前对话状态。
+
+    正常模式（disable_window=False，C4 全开）：
+    - recent_user_turns：最近 3 轮用户消息（取 user_turn_events[-6:][-3:]）
+    - recent_recommendation_sets：最近 3 组推荐结果
+    - last_events：最近 3 个对话事件
+
+    评测模式（disable_window=True，A1 禁用窗口截断）：
+    - 返回全量历史，不做任何截断
+    - 外层有 25K token 硬截断保护（agent.py 中的 trim 逻辑），
+      所以这里不截断也不会 OOM，但 LLM 可能对历史过拟合
+    """
     rec_events = [
         event.model_dump(mode="json")
         for event in context.state.context_events

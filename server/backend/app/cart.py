@@ -1,3 +1,34 @@
+"""
+购物车服务 — SoulDance 电商导购的购物车与结算逻辑。
+
+===== 领域概念扫盲 =====
+
+"幂等键"（idempotency_key）：
+客户端为每次写操作（添加商品、结算）生成一个唯一 ID。后端用这个 ID 做去重：
+同一个 key 的第二次请求直接返回第一次的结果，不会重复执行操作。
+这解决了移动网络不稳定时用户重复点击的问题——比如用户点了两次"结算"，
+只有第一次会真正清空购物车，第二次只是返回同一个订单号。
+
+"双模式存储"（DB vs File）：
+与 OrderService 类似的策略——有 db_session 优先 SQLite，否则用 JSON 文件，
+都没有就纯内存（进程重启丢失）。详见 __init__ 文档。
+
+"审计日志"（audit_log）：
+每次购物车操作（add/remove/update/checkout）都记录一条带时间戳的日志，
+保留最近 100 条。用于调试（排查"为什么我的购物车被清空了"）和潜在的分析需求。
+
+"MAX_CART_QUANTITY"：
+单个商品在购物车中的数量上限（99）。防止恶意请求把某个商品加到极大数量，
+或者客户端出 bug 导致无限累加。
+
+===== 与其它模块协作 =====
+
+- main.py：装配时传入 products + persist_path + db_session，注册 /api/cart/* 路由
+- order_service.py：checkout 时调用 cart.checkout() 清空购物车并获取快照
+- repositories/cart_repository.py：数据库读写层
+- models.py：Product, CartActionRequest
+"""
+
 from __future__ import annotations
 
 import copy
@@ -12,20 +43,43 @@ from .models import Product
 
 logger = logging.getLogger(__name__)
 
-
+# 单个商品在购物车中的数量上限。
+# 99 是常见电商实践：既能覆盖正常批量采购（如企业礼品），又能防止恶意刷数量。
 MAX_CART_QUANTITY = 99
 
 
 class CartService:
+    """购物车核心服务。
+
+    ===== 存储模式（按优先级） =====
+    模式 A（DB）：db_session → CartRepository → SQLite
+    模式 B（文件）：persist_path → JSON 文件（按 user/session 目录结构）
+    模式 C（纯内存）：dict，重启丢失
+
+    ===== 内部数据结构 =====
+    - _carts: {session_id: {product_id: quantity}} — 购物车内容
+    - _audit_log: {session_id: [dict]} — 审计日志，每个操作一条记录
+    - _idempotency_results: {session_id: {idempotency_key: result}} — 幂等缓存
+    """
     def __init__(
         self,
         products: list[Product],
         persist_path: str | Path | None = None,
         db_session=None,
     ):
+        """初始化购物车服务。
+
+        products: 完整商品列表，存储为 {product_id: Product} dict 供快速查找。
+        persist_path: JSON 文件模式的持久化目录。
+        db_session: SQLAlchemy session；不为 None 时启用 DB 模式。
+        """
         self.products = {product.product_id: product for product in products}
+        # 内存购物车：{session_id: {product_id: quantity}}
         self._carts: dict[str, dict[str, int]] = {}
+        # 审计日志：{session_id: [action_dict, ...]}，保留最近 100 条
         self._audit_log: dict[str, list[dict]] = {}
+        # 幂等结果缓存：{session_id: {idempotency_key: result_dict}}
+        # 重复请求直接用缓存返回，不重复执行操作
         self._idempotency_results: dict[str, dict[str, dict]] = {}
         self.persist_path = Path(persist_path) if persist_path else None
         self.db_session = db_session
@@ -35,9 +89,12 @@ class CartService:
             self._repo = CartRepository(self.db_session)
         if self.persist_path and self._repo is None:
             self.persist_path.mkdir(parents=True, exist_ok=True)
-            self._load()
+            self._load()  # 从磁盘恢复
 
-    # ... 保留原有 _load/_save/文件逻辑不变 ...
+    # ── 公开 API ──────────────────────────────────────────────
+    # 每个方法先检查是否在 DB 模式（self._repo is not None），决定走 DB 还是文件。
+    # 这种分支判断分散在各方法中不是最优雅的设计，但避免了在每个方法里重复
+    # 捕获异常/回退的模板代码。
 
     def add(
         self,
@@ -47,6 +104,13 @@ class CartService:
         quantity: int = 1,
         idempotency_key: str | None = None,
     ) -> dict:
+        """向购物车添加商品。
+
+        - 如果提供了 idempotency_key，先检查是否已执行过，是则直接返回缓存结果
+        - 校验 product_id 合法性（必须在 products 中）
+        - 校验 quantity 范围（>=1 且 <= MAX_CART_QUANTITY）
+        - 返回当前购物车的完整快照（含所有商品、数量和总金额）
+        """
         if self._repo is not None:
             return self._db_add(user_id, session_id, product_id, quantity, idempotency_key)
         return self._file_add(user_id, session_id, product_id, quantity, idempotency_key)
@@ -108,6 +172,11 @@ class CartService:
         return self._file_clear(user_id, session_id)
 
     def checkout(self, user_id: str, session_id: str, idempotency_key: str | None = None) -> dict:
+        """结算：获取购物车快照并清空购物车。
+
+        幂等安全：同一个 idempotency_key 第二次调用直接返回缓存的结算结果，
+        不会重复清空或生成新订单号。返回包含 order_id 和 paid_amount 的结果字典。
+        """
         if self._repo is not None:
             return self._db_checkout(user_id, session_id, idempotency_key)
         return self._file_checkout(user_id, session_id, idempotency_key)
@@ -144,6 +213,10 @@ class CartService:
         return result
 
     def _file_add(self, user_id, session_id, product_id, quantity, idempotency_key):
+        """文件模式添加：幂等检查 → 校验 → 更新内存 → 记日志 → 写磁盘。
+
+        DB 模式见 _db_add()，逻辑完全一致，仅存储介质不同。
+        """
         existing = self._get_idempotency_result(session_id, idempotency_key)
         if existing is not None:
             return existing
@@ -228,21 +301,37 @@ class CartService:
         return list(self._audit_log.get(session_id, []))
 
     def _validate_product(self, product_id: str) -> None:
+        """校验 product_id 存在于商品列表中，否则抛出 KeyError（→ 400）。"""
         if product_id not in self.products:
             raise KeyError(f"unknown product_id: {product_id}")
 
     def _validate_quantity(self, quantity: int, *, allow_zero: bool) -> None:
+        """校验数量在合法范围内。
+
+        allow_zero=True 用于 update_quantity（允许数量为 0 表示删除）和 remove 操作。
+        add 操作 allow_zero=False，因为添加商品数量至少为 1。
+        """
         min_quantity = 0 if allow_zero else 1
         if quantity < min_quantity or quantity > MAX_CART_QUANTITY:
             raise ValueError(f"quantity must be between {min_quantity} and {MAX_CART_QUANTITY}")
 
     def _get_idempotency_result(self, session_id: str, key: str | None) -> dict | None:
+        """按 (session_id, idempotency_key) 查找缓存的幂等结果。
+
+        使用 copy.deepcopy 返回深拷贝，防止调用方意外修改缓存内容。
+        key 为 None 时直接返回 None——幂等是可选的。
+        """
         if not key:
             return None
         result = self._idempotency_results.get(session_id, {}).get(key)
         return copy.deepcopy(result) if result is not None else None
 
     def _remember_idempotency_result(self, session_id: str, key: str | None, result: dict) -> None:
+        """记录一次成功操作的结果，用于后续幂等查询。"""
+        if not key:
+            return
+        bucket = self._idempotency_results.setdefault(session_id, {})
+        bucket[key] = copy.deepcopy(result)
         if not key:
             return
         bucket = self._idempotency_results.setdefault(session_id, {})

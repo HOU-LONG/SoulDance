@@ -20,6 +20,16 @@ from backend.app.db.models import *  # noqa: E402, F401, F403
 # access to the values within the .ini file in use.
 config = context.config
 
+# 统一数据库 URL 来源：优先 SHOPGUIDE_DATABASE_URL，否则基于仓库根构造绝对路径，
+# 覆盖 alembic.ini 中的占位值，确保迁移与运行始终指向同一数据库。
+from backend.app.config import get_settings  # noqa: E402
+
+_settings = get_settings()
+config.set_main_option(
+    "sqlalchemy.url",
+    _settings.database_url or f"sqlite:///{_settings.project_root / 'data' / 'shopguide.db'}",
+)
+
 # Interpret the config file for Python logging.
 # this line sets up loggers basically.
 if config.config_file_name is not None:

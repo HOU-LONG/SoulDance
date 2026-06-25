@@ -13,7 +13,9 @@ def get_engine():
     global _engine
     if _engine is None:
         settings = get_settings()
-        url = settings.database_url or "sqlite:////home/huadabioa/houlong/SoulDance/data/shopguide.db"
+        # database_url 为空时回退到仓库根下的 data/shopguide.db。基于运行时计算的
+        # project_root 构造绝对路径，可跨机器移植，且不依赖进程当前工作目录。
+        url = settings.database_url or f"sqlite:///{settings.project_root / 'data' / 'shopguide.db'}"
         _engine = create_engine(url, pool_pre_ping=True, future=True)
         if url.startswith("sqlite"):
             @event.listens_for(_engine, "connect")

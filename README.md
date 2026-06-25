@@ -18,6 +18,14 @@ SoulDance/
 
 The client never implements product recommendation logic or stores LLM/TTS/STT keys. It sends typed payloads and renders backend-owned results. The backend is the source of truth for product retrieval, filtering, cart operations, voice adapters, and WebSocket events.
 
+## 已实现核心能力
+
+- **RAG 混合检索**：BM25 关键词 + 向量语义检索，支持 RRF / weighted 融合策略，CrossEncoder 重排（默认）与 LLM 重排（强场景兜底），失败静默降级不影响可用性。
+- **SQLite 持久化**：购物车、订单、会话、用户画像、反馈事件均已支持数据库存储（`server/backend/app/db/`），Alembic 迁移就绪，数据库路径通过环境变量可配置。
+- **订单状态机**：`address_required → awaiting_confirmation → completed` 三态流转，`confirmation_token` 确认、`idempotency_key` 去重、内存/DB 双写，通过 `/api/order/*` REST 端点暴露。
+- **语音交互**：STT 语音转文字（流式 WebSocket）与 TTS 文字转语音（分块流式播放），支持豆包语音引擎。
+- **反馈闭环**：显式反馈（评分/操作标签）与隐式信号聚合，驱动个性化排序与用户偏好画像。
+
 ## Current Public Demo Backend
 
 ```text

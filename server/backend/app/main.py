@@ -38,6 +38,20 @@ from .observability import InMemoryMetrics
 
 
 def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, concurrency_guard: ConcurrencyGuard | None = None) -> FastAPI:
+    """构建并装配 ShopGuide 后端 FastAPI 应用。
+
+    按依赖顺序装配各组件：先加载商品数据与 LLM 客户端（生产用 DoubaoLLMClient 并叠加
+    熔断包装，测试用 FakeLLMClient），再构建检索器（EmbeddingRetriever / BM25OnlyRetriever）、
+    启动时一次性的共享 dense index、HybridRetriever 与重排器，最后组装 ShopGuideAgent、
+    购物车、反馈闭环与会话存储，并注册 startup/shutdown 钩子。
+
+    参数：
+        use_fake_llm: True 时改用 FakeLLMClient，让测试不依赖真实 LLM API（无 API key 时也会自动启用）。
+        use_fake_retriever: True 时改用 BM25OnlyRetriever，跳过向量模型加载，加速测试。
+        concurrency_guard: 外部注入的并发限制器；为 None 时按 settings 的上限新建。
+
+    数据库 session 仅在 settings.database_url 存在时创建，并在 shutdown 事件中关闭。
+    """
     settings = get_settings()
     products = load_products(settings.dataset_path)
     llm_client = FakeLLMClient() if use_fake_llm or not settings.effective_api_key else DoubaoLLMClient(settings)
@@ -61,16 +75,17 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         config=settings.retrieval_config,
         dense_index=dense_index,
     )
-    # Reranker: llm_client wiring deferred until sync chat_json_sync is available; cross-only / no-op for now
-    reranker = build_reranker(
-        settings,
-        llm_client=None,
-        metrics=None,
-    )
+    # 重排器：CrossEncoder 为默认，强场景（comparison/refinement/low-confidence）下回退到
+    # LLM 重排，任何失败均静默降级回原序。metrics 与下方 app.state.metrics 复用同一实例，
+    # 故在此提前创建；llm_client 直接复用上面已熔断包装的实例，使 HybridReranker 的 LLM 兜底真正生效。
+    metrics = InMemoryMetrics()
+    reranker = build_reranker(settings, llm_client=llm_client, metrics=metrics)
     memory_cache = StructuredMemoryCache(settings.memory_cache_path or None)
     recommendation_memory = RecommendationMemoryCache(_recommendation_memory_path(settings.memory_cache_path))
 
-    # 数据库 session：当 database_url 存在时初始化并创建全局 session（单 worker 演示方案）
+    # 数据库 session：database_url 存在时初始化并创建全局 session。
+    # 注意：全局共享 session 仅适用于单 worker 演示部署；多 worker / 高并发环境下应改为
+    # 请求级 session 或连接池，否则跨请求共享同一 session 存在线程安全问题。
     db_session = None
     if settings.database_url:
         init_db()
@@ -109,7 +124,6 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     )
 
     app = FastAPI(title="SoulDance ShopGuide Agent Backend", version="0.1.0")
-    metrics = InMemoryMetrics()
     app.state.metrics = metrics
 
     @app.on_event("shutdown")

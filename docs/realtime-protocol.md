@@ -117,5 +117,5 @@ error                   recoverable backend error
 ## Non-Goals For Stage 0/01
 
 - No binary image or audio payloads over WebSocket.
-- No database-backed order state machine.
+- 订单状态机已实现（`server/backend/app/order_service.py`），支持 SQLite 持久化与内存回退双模式；WebSocket 层的自然语言下单由状态机的 REST API 保护，Agent 不得在确认 API 返回前声称订单完成。
 - No Android-side fallback recommendation logic.

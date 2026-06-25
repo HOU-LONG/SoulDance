@@ -1,3 +1,42 @@
+"""
+自适应检索器 — 渐进式约束放松与多轮检索策略。
+
+===== 领域概念扫盲 =====
+
+"约束放松"（Constraint Relaxation）：
+用户说"我要 500 元以内的轻薄拍照手机"，但数据库里可能没有同时满足这三个
+条件的商品。如果直接返回空结果（"没找到"），用户体验很差。
+自适应检索器的做法是：先用完整约束搜索，如果结果不够（< min_candidates），
+就按预定顺序逐步放松约束——比如先去掉"拍照"偏好，再去掉"轻薄"偏好，
+最后甚至放宽价格上限——直到返回足够的候选商品。
+
+"relaxation_order"（放松顺序）：
+[soft_preferences, price_range, category_fallback] 三步策略：
+1. soft_preferences：去掉所有软偏好（拍照/轻薄/送礼等），只保留硬约束（价格/品类/排除项）
+2. price_range：再放宽价格上下限（硬约束级别）
+3. category_fallback：最后放宽子品类限制，只保留大类
+
+这个顺序是根据业务影响排的——软偏好对结果准确性影响最小（可先去），
+品类是最核心的用户意图（最后才放弃）。
+
+"证据收集"（last_evidence_by_product）：
+HybridRetriever 返回的每个商品都带有 evidence_chunks（从哪些 chunk 检索到的），
+adaptive_retriever 将 chunks 格式化为可读文本并保存在 last_evidence_by_product 中，
+后续 agent 用这些证据帮助 LLM 解释"为什么推荐这个商品"。
+
+"Hybrid 优先 + 基础回退"（search_async）：
+第一轮优先走 HybridRetriever（BM25 + 向量 + RRF 融合 + Reranker 重排），
+如果返回非空结果直接结束。只有 hybrid 失败或返回空时，才回退到基础 retriever
+的渐进放松循环。这样可以同时获得高质量结果（hybrid）和鲁棒性（fallback）。
+
+===== 与其它模块协作 =====
+
+- agent.py：ShopGuideAgent 调用 search_async() 获取检索结果和证据
+- rag/reranker.py / rag/reranker_scenarios.py：重排场景检测和 Reranker 调用
+- rag/fusion.py：HybridRetriever.search_with_evidence()
+- ranker.py：rank_products() 基础排序（BM25/向量单路检索的回退排序）
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -10,7 +49,15 @@ class RelaxationPolicy:
     """定义自适应检索的约束放松策略。
 
     当严格检索无法返回足够候选商品时，按预定顺序逐步放宽约束，
-    以在召回率和精确度之间取得平衡。
+    以在召回率（能找到多少相关商品）和精确度（结果有多匹配用户意图）之间取得平衡。
+
+    relaxation_order 中的每一步代表解除一类约束：
+    - "soft_preferences"：丢弃所有软偏好（拍照/送礼/轻薄等），只保留硬约束
+    - "price_range"：去掉价格上下限（硬约束级别放松）
+    - "category_fallback"：去掉子品类限制，回退到父类
+
+    min_candidates=5：至少需要 5 个候选才停止放松。太少则 LLM 选择余地不足。
+    max_rounds=3：最多跑 3 轮（含第 0 轮严格检索），防止无限循环。
     """
 
     def __init__(
@@ -177,7 +224,24 @@ class AdaptiveRetriever:
         return candidates
 
     def _build_relaxed_plan(self, plan: RetrievalPlan, round_index: int) -> RetrievalPlan:
-        """根据当前轮次构建放松后的检索计划。"""
+        """根据当前轮次构建放松后的检索计划。
+
+        round_index=0：返回原始 plan（不做任何放松）。
+        round_index=1：应用 relaxation_order[0]，即去掉 soft_preferences。
+        round_index=2：应用 relaxation_order[0:2]，即 soft_preferences + price_range。
+        以此类推，最多到 max_rounds。
+
+        ===== 查询重建策略 =====
+        放松后原 retrieval_query 可能不再适用（比如原 query 包含了已去掉的偏好词），
+        因此重新构建查询字符串，优先级：
+        1. hard.sub_category（最精确）→ 2. hard.category → 3. include_brands → 4. soft 剩余值
+        全部为空时回退到原 query，保证不会空查询。
+
+        ===== 每步放松对 HardConstraints 的具体影响 =====
+        - soft_preferences：清空 soft 字典（不碰 hard）
+        - price_range：hard.price_min/price_max 置 None
+        - category_fallback：hard.sub_category 置 None（保留 hard.category）
+        """
         if round_index == 0:
             return plan
 

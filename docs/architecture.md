@@ -48,11 +48,15 @@ Included:
 - Documented API and WebSocket contract.
 - Non-secret deployment/runtime environment template.
 
-Deferred:
+Implemented (Stage 0/01):
 
-- PostgreSQL, pgvector, Alembic migrations, and database models.
-- Full RAG ingestion and hybrid retrieval evaluation.
-- Checkout/order state machine.
-- Multimodal upload persistence beyond the current STT path.
-- Android multi-module split.
-- Container image deployment; the current project uses the vLLM/conda-derived remote host runtime.
+- **RAG 混合检索**（`server/backend/app/rag/`）：BM25 关键词检索 + 向量语义检索 + RRF/weighted 融合，CrossEncoder 重排（默认）与 LLM 重排（comparison/refinement 等强场景的兜底），失败均静默降级回原序，不影响可用性。
+- **SQLite + SQLAlchemy 持久化**（`server/backend/app/db/`）：购物车、订单、会话、用户画像、反馈事件均已接入 SQLite 存储，Alembic 迁移就绪（`server/alembic/`），数据库 URL 通过 `SHOPGUIDE_DATABASE_URL` 环境变量配置，留空自动落到仓库根 `data/shopguide.db`。
+- **订单状态机**（`server/backend/app/order_service.py`）：支持 `address_required → awaiting_confirmation → completed` 三态流转，含 `confirmation_token` 生命周期、`idempotency_key` 去重、内存/DB 双写，REST API 通过 `/api/order/*` 暴露。
+
+Deferred (genuine roadmap):
+
+- PostgreSQL + pgvector 迁移（当前 SQLite 可支撑演示与单机部署，向量检索使用本地 FAISS dense index）。
+- 多模态上传持久化（图片/视频的端到端存储管线）。
+- Android 多模块拆分。
+- 容器化部署（当前使用 vLLM/conda 宿主机运行时）。

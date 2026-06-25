@@ -1,3 +1,63 @@
+"""
+ShopGuide 导购 Agent — 后端核心编排器。
+
+===== 在项目中的角色 =====
+
+agent.py 是 SoulDance 后端的"大脑"——它不直接做 LLM 推理、不做向量检索、
+不管理购物车数据，但它**编排**所有这些组件协同工作。如果把后端比作一个乐团，
+agent.py 就是指挥家，LLM/RAG/Cart/Order 是各个乐器组。
+
+===== 核心流程：stream_message =====
+
+用户消息到达后的完整处理链路（每步都是 async generator，通过 yield 输出事件）：
+
+1. 【Session】从 SessionStore 加载或创建 SessionContext（对话记忆）
+2. 【Semantic Parse】SemanticParser.parse() → SemanticFrame（意图 + 约束编辑）
+   - LLM 路径优先（DoubaoLLMClient.parse_semantic_frame）
+   - LLM 不可用 → 规则引擎保底（semantic_layer.rule_semantic_frame）
+3. 【Intent Compile】IntentCompiler.compile() → ShoppingIntentIR（购物意图的中间表示）
+4. 【Plan】PlannerAgent.plan() → RetrievalPlan（硬约束 + 软偏好 + 检索关键词）
+5. 【State Reduce】StateReducer.apply() → 将约束编辑写入 SessionContext
+6. 【Retrieve】AdaptiveRetriever.search_async() → 渐进放松 + Hybrid 融合检索
+   - 优先走 HybridRetriever（BM25 + 向量 + RRF 融合 + Reranker 重排）
+   - 失败回退基础 retriever + 约束放松循环
+7. 【Rank】rank_products() → 排序（硬约束过滤 + feedback 加权 + 价格/新品/销量等）
+8. 【Format】compose_markdown_sections() → LLM prompt 组装（含商品卡片 + 证据引用）
+9. 【LLM Generate】llm_client.chat_completion_streaming() → 逐 token 输出 text_delta
+10.【TTS】TTSAdapter.stream_tts() → 文字转语音流式输出 audio_delta
+11.【Cart】购物车操作通过 tool_registry 路由，不经过 LLM 生成链路
+12.【Order】订单操作通过 /api/order/* REST 端点，由 OrderService 状态机保护
+
+===== 评测开关（C4/A1/A2）=====
+
+这些是长会话评测的实验条件代码名，在 config.py 和 semantic_layer.py 中已详细解释。
+简要概括：
+- C4（窗口截断 + 结构化快照 + 推荐记忆缓存）：生产默认全开
+- A1（禁用窗口截断）：评测模式，LLM 看到全量历史
+- A2（禁用结构化快照）：评测模式，LLM 只用原始对话文本
+
+开关通过 settings.eval_disable_window_truncation / eval_disable_structured_snapshot 控制，
+在 semantic_context_payload() 中实际生效，不影响 agent.py 的核心流程代码。
+
+===== 与其它模块协作 =====
+
+- main.py：create_app 装配所有组件后注入 ShopGuideAgent
+- semantic_layer.py：SemanticParser（LLM+规则混合语义解析）
+- intent_compiler.py：IntentCompiler（SemanticFrame → ShoppingIntentIR）
+- planner_agent.py：PlannerAgent（LLM 产出 RetrievalPlan）
+- state_reducer.py：StateReducer（约束编辑应用到对话状态）
+- adaptive_retriever.py：AdaptiveRetriever（渐进放松检索 + Hybrid 融合）
+- rag/：HybridRetriever + Reranker（混合检索与重排序）
+- ranker.py：rank_products（硬约束过滤 + 多因素排序）
+- cart.py：CartService（购物车增删改查 + 幂等 + 检查点）
+- order_service.py：OrderService（订单状态机）
+- session_store.py：SessionStore（对话记忆持久化）
+- feedback_*：FeedbackStore / FeedbackAggregator / FeedbackAwareRanker（反馈闭环）
+- memory_cache.py：RecommendationMemoryCache / StructuredMemoryCache
+- llm_client.py：LLM 客户端（Doubao/DeepSeek/Fake + 熔断）
+- tts_adapter.py / stt_adapter.py：语音交互适配器
+"""
+
 from __future__ import annotations
 
 from collections.abc import AsyncIterator

@@ -47,8 +47,8 @@ object SpritePlacement {
     /** 中央舞台区相对坐标（0..1 相对舞台 Box）。
      *  水晶球、购物袋与人物共用同一舞台坐标系，并以 BOTTOM_CENTER 锚点统一站在"地面"基准线上。 */
     object Stage {
-        // 水晶球：舞台左下角，底部与人物脚底对齐
-        val DiscoveryGlobe = NormalizedPlacement(0.08f, 0.92f, 0.22f, PlacementAnchor.BOTTOM_CENTER)
+        // 水晶球：舞台右下角购物袋的对称位置，宽度一致，底部与人物脚底对齐
+        val DiscoveryGlobe = NormalizedPlacement(0.18f, 0.92f, 0.32f, PlacementAnchor.BOTTOM_CENTER)
         // 购物袋：人物右侧手边，底部与脚底对齐
         val ShoppingBag = NormalizedPlacement(0.820f, 0.92f, 0.32f, PlacementAnchor.BOTTOM_CENTER)
         // 气泡中心：人物头顶上方，上移避免遮挡头部

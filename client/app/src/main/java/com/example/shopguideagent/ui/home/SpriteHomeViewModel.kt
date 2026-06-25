@@ -155,6 +155,7 @@ class SpriteHomeViewModel(
 
     fun onRealtimeEvent(event: RealtimeEvent) {
         when (event) {
+            is RealtimeEvent.TextDelta -> onTextDelta()
             is RealtimeEvent.ProductsStart -> onProductsStart(event.expectedCount)
             is RealtimeEvent.ProductItem -> onProductItem(event.index, event.product)
             is RealtimeEvent.ProductsDone -> onProductsDone()
@@ -163,6 +164,22 @@ class SpriteHomeViewModel(
             }
             is RealtimeEvent.Error -> setTransientState(AvatarState.ERROR, SpeechBubbleUiState(event.message, style = SpeechBubbleStyle.ERROR))
             else -> Unit
+        }
+    }
+
+    /**
+     * 流式回复文本片段到达：精灵进入思考姿态。已在展示商品时不打断展示。
+     * 完整流式气泡文本累积在事件接入阶段(P3)处理。
+     */
+    private fun onTextDelta() {
+        _uiState.update { current ->
+            if (current.baseAvatarState == AvatarState.PRESENTING) return@update current
+            val nextBase = AvatarState.THINKING
+            current.copy(
+                baseAvatarState = nextBase,
+                speechBubble = SpriteHomeStateMapper.speechFor(current.transientAvatarState ?: nextBase, current.presentingProduct),
+                animationSequence = current.animationSequence + if (current.displayedAvatarState != nextBase) 1 else 0,
+            )
         }
     }
 
@@ -177,8 +194,33 @@ class SpriteHomeViewModel(
     fun onCartOperationEvent(event: CartOperationEvent) {
         when (event) {
             is CartOperationEvent.AddToCartSucceeded -> rewardAddToCart(eventKey = null)
-            is CartOperationEvent.AddToCartFailed -> Unit
+            is CartOperationEvent.AddToCartFailed -> onAddToCartFailed(event.message)
         }
+    }
+
+    /**
+     * 本地加购失败：精灵进入道歉姿态并提示，base 状态保持不变（商品卡仍在），动画结束后可重试。
+     */
+    private fun onAddToCartFailed(message: String) {
+        val text = message.ifBlank { "加购失败，请重试" }
+        setTransientState(AvatarState.ERROR, SpeechBubbleUiState(text, style = SpeechBubbleStyle.ERROR))
+        emitEffect(SpriteHomeEffect.ShowMessage(text))
+    }
+
+    /** 换装：切换并持久化当前服装；缺失状态由 [SpriteAssetRegistry] 按 manifest fallback 处理。 */
+    fun onOutfitSelected(outfitId: String) {
+        var saved: AvatarAppearance? = null
+        _uiState.update { current ->
+            if (current.appearance.outfitId == outfitId) return@update current
+            val next = current.appearance.copy(outfitId = outfitId)
+            saved = next
+            current.copy(
+                appearance = next,
+                speechBubble = SpeechBubbleUiState("换上新装扮啦", style = SpeechBubbleStyle.SUCCESS),
+                animationSequence = current.animationSequence + 1,
+            )
+        }
+        saved?.let(appearanceRepository::saveAppearance)
     }
 
     fun onLocalAddToCartSuccess() {

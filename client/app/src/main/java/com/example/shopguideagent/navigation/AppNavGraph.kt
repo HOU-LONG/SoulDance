@@ -37,7 +37,13 @@ import com.example.shopguideagent.data.repository.SharedPreferencesSpiritAppeara
 import com.example.shopguideagent.data.repository.SharedPreferencesSpiritProgressRepository
 import com.example.shopguideagent.ui.home.SpriteHomeEffect
 import com.example.shopguideagent.ui.home.SpriteHomeRoute
+import com.example.shopguideagent.data.model.ProductUiModel
+import com.example.shopguideagent.ui.home.AvatarState
+import com.example.shopguideagent.ui.home.ProductPresentationUiState
+import com.example.shopguideagent.ui.home.SpriteHomeStateMapper
+import com.example.shopguideagent.ui.home.SpriteHomeUiState
 import com.example.shopguideagent.ui.home.SpriteHomeViewModel
+import com.example.shopguideagent.ui.home.WardrobeScreen
 import com.example.shopguideagent.ui.screen.CartScreen
 import com.example.shopguideagent.ui.screen.ChatScreen
 import com.example.shopguideagent.ui.screen.OrdersScreen
@@ -105,11 +111,13 @@ fun AppNavGraph() {
         },
     )
     val spiritPreferences = remember { SpiritPreferencesDataSource(context) }
+    val debugInitialState = remember { spriteDebugInitialState(context) }
     val spriteHomeViewModel: SpriteHomeViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return SpriteHomeViewModel(
+                    initialState = debugInitialState,
                     progressRepository = SharedPreferencesSpiritProgressRepository(spiritPreferences),
                     appearanceRepository = SharedPreferencesSpiritAppearanceRepository(spiritPreferences),
                 ) as T
@@ -125,7 +133,10 @@ fun AppNavGraph() {
     }
 
     LaunchedEffect(chatState) {
-        spriteHomeViewModel.onChatStateChanged(chatState)
+        // debug 截图模式（intent extra 注入初始状态）下不让聊天态覆盖注入的展示状态
+        if (debugInitialState == null) {
+            spriteHomeViewModel.onChatStateChanged(chatState)
+        }
     }
 
     LaunchedEffect(chatState.sessionId, chatState.cartSyncVersion) {
@@ -172,7 +183,7 @@ fun AppNavGraph() {
                         is SpriteHomeEffect.SendVoiceMessage -> chatViewModel.sendVoiceMessage(effect.file)
                         SpriteHomeEffect.ToggleSpeaker -> chatViewModel.setSpeakerEnabled(!chatState.isSpeakerEnabled)
                         is SpriteHomeEffect.AddToCart -> cartViewModel.addProduct(effect.product)
-                        is SpriteHomeEffect.ShowMessage -> Unit
+                        is SpriteHomeEffect.ShowMessage -> showSnackbar(effect.message)
                         is SpriteHomeEffect.ShowLevelUpReward -> Unit
                         is SpriteHomeEffect.ShowClaimedReward -> showSnackbar("任务奖励已领取：${effect.firePoints} 火星")
                     }
@@ -188,9 +199,9 @@ fun AppNavGraph() {
                 onMessageSubmitted = spriteHomeViewModel::onRequestSent,
                 onBackToSprite = { route = AppRoute.Home },
             )
-            AppRoute.Wardrobe -> PlaceholderRoute(
-                title = "装扮衣橱",
-                message = "正式换装系统下一阶段接入",
+            AppRoute.Wardrobe -> WardrobeScreen(
+                currentOutfitId = spriteHomeState.appearance.outfitId,
+                onOutfitSelected = { spriteHomeViewModel.onOutfitSelected(it) },
                 onBackClick = { route = AppRoute.Home },
             )
             AppRoute.Tasks -> PlaceholderRoute(
@@ -214,6 +225,41 @@ fun AppNavGraph() {
         BackHandler(enabled = AppRouteBackStack.previousRoute(route) != null) {
             AppRouteBackStack.previousRoute(route)?.let { route = it }
         }
+    }
+}
+
+/**
+ * Debug-only：当启动 intent 携带 `sprite_state` extra（如 SEARCHING/PRESENTING）时，注入对应初始状态，
+ * 用于无加速模拟器下稳定截取各状态运行截图。正常启动（无该 extra）返回 null，行为完全不变。
+ */
+private fun spriteDebugInitialState(context: android.content.Context): SpriteHomeUiState? {
+    val activity = context as? android.app.Activity ?: return null
+    val name = activity.intent?.getStringExtra("sprite_state") ?: return null
+    val state = runCatching { AvatarState.valueOf(name) }.getOrNull() ?: return null
+    return if (state == AvatarState.PRESENTING) {
+        val product = ProductUiModel(
+            productId = "debug_preview",
+            name = "智能降噪耳机",
+            price = 299.0,
+            reason = "贴合你的通勤降噪需求，续航与佩戴感都更稳",
+            isPrimary = true,
+        )
+        SpriteHomeUiState(
+            baseAvatarState = AvatarState.PRESENTING,
+            presentingProduct = product,
+            productPresentation = ProductPresentationUiState(
+                primaryProduct = product,
+                expectedCount = 1,
+                receivedCount = 1,
+                completed = true,
+            ),
+            speechBubble = SpriteHomeStateMapper.speechFor(AvatarState.PRESENTING, product),
+        )
+    } else {
+        SpriteHomeUiState(
+            baseAvatarState = state,
+            speechBubble = SpriteHomeStateMapper.speechFor(state),
+        )
     }
 }
 

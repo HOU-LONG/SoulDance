@@ -37,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -91,6 +92,7 @@ fun HeroProductCard(
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
+                .testTag("hero_product_card")
                 .clickableWithScale(
                     onClick = { onClick(product) },
                     onLongClick = {
@@ -199,7 +201,9 @@ fun HeroProductCard(
                             added = true
                             onAddToCart(product)
                         },
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("product_add_to_cart"),
                         shape = RoundedCornerShape(AppCornerRadius.Button),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = BrandPrimary,

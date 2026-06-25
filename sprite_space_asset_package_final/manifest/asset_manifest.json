@@ -1,0 +1,400 @@
+{
+  "schema_version": 1,
+  "package_name": "sprite_space_asset_package_final",
+  "design_reference": {
+    "file": "reference/design_reference.png",
+    "size_px": {
+      "width": 941,
+      "height": 1672
+    },
+    "usage": "只用于视觉比对，严禁整图套壳。"
+  },
+  "default_outfit": "DEFAULT",
+  "default_state": "IDLE",
+  "assets": [
+    {
+      "id": "room_background",
+      "file": "assets/background/sprite_room_background.png",
+      "android_resource": "sprite_room_background",
+      "semantic_role": "全屏暖色房间背景",
+      "category": "background",
+      "required": true,
+      "pixel_size": {
+        "width": 941,
+        "height": 1672
+      },
+      "has_alpha": false,
+      "render_layer": 0,
+      "anchor": "center",
+      "states": [
+        "ALL"
+      ],
+      "outfit": null,
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "smart_guide_blackboard",
+      "file": "assets/props/background/prop_smart_guide_blackboard.png",
+      "android_resource": "prop_smart_guide_blackboard",
+      "semantic_role": "人物左后方智能导购黑板",
+      "category": "prop",
+      "required": false,
+      "pixel_size": {
+        "width": 728,
+        "height": 1169
+      },
+      "has_alpha": true,
+      "render_layer": 10,
+      "anchor": "bottom_start",
+      "states": [
+        "ALL"
+      ],
+      "outfit": null,
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "discovery_globe",
+      "file": "assets/props/midground/prop_discovery_globe.png",
+      "android_resource": "prop_discovery_globe",
+      "semantic_role": "人物左侧好物发现水晶球",
+      "category": "prop",
+      "required": true,
+      "pixel_size": {
+        "width": 1024,
+        "height": 1501
+      },
+      "has_alpha": true,
+      "render_layer": 25,
+      "anchor": "bottom_start",
+      "states": [
+        "ALL"
+      ],
+      "outfit": null,
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "shopping_bag",
+      "file": "assets/props/midground/prop_shopping_bag_blue.png",
+      "android_resource": "prop_shopping_bag_blue",
+      "semantic_role": "人物右侧蓝色购物袋",
+      "category": "prop",
+      "required": true,
+      "pixel_size": {
+        "width": 753,
+        "height": 820
+      },
+      "has_alpha": true,
+      "render_layer": 25,
+      "anchor": "bottom_end",
+      "states": [
+        "ALL"
+      ],
+      "outfit": null,
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "avatar_idle_default",
+      "file": "assets/avatar/states/default/avatar_idle_default.png",
+      "android_resource": "avatar_idle_default",
+      "semantic_role": "默认服装下的真正中性待机人物",
+      "category": "avatar",
+      "required": true,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "IDLE"
+      ],
+      "outfit": "DEFAULT",
+      "blend_mode": "normal",
+      "implementation_note": "使用用户补充的真正中性待机素材；已转换为真实透明 Alpha，并统一至 1200×1600 画布和脚底锚点。"
+    },
+    {
+      "id": "avatar_presenting_default",
+      "file": "assets/avatar/states/default/avatar_presenting_default.png",
+      "android_resource": "avatar_presenting_default",
+      "semantic_role": "默认服装展示商品姿态",
+      "category": "avatar",
+      "required": true,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "PRESENTING"
+      ],
+      "outfit": "DEFAULT",
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "avatar_apologizing_default",
+      "file": "assets/avatar/states/default/avatar_apologizing_default.png",
+      "android_resource": "avatar_apologizing_default",
+      "semantic_role": "默认服装道歉/错误姿态",
+      "category": "avatar",
+      "required": true,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "ERROR",
+        "APOLOGIZING"
+      ],
+      "outfit": "DEFAULT",
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "avatar_celebrating_default",
+      "file": "assets/avatar/states/default/avatar_celebrating_default.png",
+      "android_resource": "avatar_celebrating_default",
+      "semantic_role": "默认服装庆祝姿态",
+      "category": "avatar",
+      "required": true,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "CELEBRATING",
+        "LEVEL_UP"
+      ],
+      "outfit": "DEFAULT",
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "avatar_listening_default",
+      "file": "assets/avatar/states/default/avatar_listening_default.png",
+      "android_resource": "avatar_listening_default",
+      "semantic_role": "默认服装倾听姿态",
+      "category": "avatar",
+      "required": true,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "LISTENING"
+      ],
+      "outfit": "DEFAULT",
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "avatar_searching_default",
+      "file": "assets/avatar/states/default/avatar_searching_default.png",
+      "android_resource": "avatar_searching_default",
+      "semantic_role": "默认服装翻找蓝色购物包姿态",
+      "category": "avatar",
+      "required": true,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "SEARCHING"
+      ],
+      "outfit": "DEFAULT",
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "avatar_thinking_default",
+      "file": "assets/avatar/states/default/avatar_thinking_default.png",
+      "android_resource": "avatar_thinking_default",
+      "semantic_role": "默认服装思考姿态",
+      "category": "avatar",
+      "required": true,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "THINKING"
+      ],
+      "outfit": "DEFAULT",
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "avatar_presenting_home_advisor",
+      "file": "assets/avatar/outfits/home_advisor/avatar_presenting_home_advisor.png",
+      "android_resource": "avatar_presenting_home_advisor",
+      "semantic_role": "绿色家居顾问服装展示姿态",
+      "category": "avatar",
+      "required": false,
+      "pixel_size": {
+        "width": 1200,
+        "height": 1600
+      },
+      "has_alpha": true,
+      "render_layer": 30,
+      "anchor": "bottom_center",
+      "states": [
+        "IDLE",
+        "PRESENTING"
+      ],
+      "outfit": "HOME_ADVISOR",
+      "blend_mode": "normal",
+      "implementation_note": null
+    },
+    {
+      "id": "effect_search_scan_ring_blue",
+      "file": "assets/effects/search/effect_search_scan_ring_blue.png",
+      "android_resource": "effect_search_scan_ring_blue",
+      "semantic_role": "购物包附近蓝色搜索扫描环",
+      "category": "effect",
+      "required": true,
+      "pixel_size": {
+        "width": 797,
+        "height": 774
+      },
+      "has_alpha": true,
+      "render_layer": 45,
+      "anchor": "center",
+      "states": [
+        "SEARCHING"
+      ],
+      "outfit": null,
+      "blend_mode": "screen",
+      "implementation_note": null
+    },
+    {
+      "id": "effect_search_orbit_ring_gold_blue",
+      "file": "assets/effects/search/effect_search_orbit_ring_gold_blue.png",
+      "android_resource": "effect_search_orbit_ring_gold_blue",
+      "semantic_role": "购物包附近金蓝轨道光环",
+      "category": "effect",
+      "required": true,
+      "pixel_size": {
+        "width": 537,
+        "height": 320
+      },
+      "has_alpha": true,
+      "render_layer": 46,
+      "anchor": "center",
+      "states": [
+        "SEARCHING"
+      ],
+      "outfit": null,
+      "blend_mode": "screen",
+      "implementation_note": null
+    },
+    {
+      "id": "effect_portal_swirl",
+      "file": "assets/effects/search/effect_portal_swirl.png",
+      "android_resource": "effect_portal_swirl",
+      "semantic_role": "搜索完成或商品出现前的旋涡",
+      "category": "effect",
+      "required": false,
+      "pixel_size": {
+        "width": 779,
+        "height": 718
+      },
+      "has_alpha": true,
+      "render_layer": 47,
+      "anchor": "center",
+      "states": [
+        "SEARCHING",
+        "PRESENTING"
+      ],
+      "outfit": null,
+      "blend_mode": "screen",
+      "implementation_note": null
+    },
+    {
+      "id": "effect_product_card_frame",
+      "file": "assets/effects/product/effect_product_card_frame.png",
+      "android_resource": "effect_product_card_frame",
+      "semantic_role": "商品卡片外围发光装饰；商品内容必须由 Compose 绘制",
+      "category": "effect",
+      "required": true,
+      "pixel_size": {
+        "width": 1024,
+        "height": 1500
+      },
+      "has_alpha": true,
+      "render_layer": 61,
+      "anchor": "center",
+      "states": [
+        "PRESENTING"
+      ],
+      "outfit": null,
+      "blend_mode": "screen",
+      "implementation_note": null
+    },
+    {
+      "id": "effect_product_fly_trail",
+      "file": "assets/effects/product/effect_product_fly_trail.png",
+      "android_resource": "effect_product_fly_trail",
+      "semantic_role": "商品卡片飞行动画拖尾",
+      "category": "effect",
+      "required": false,
+      "pixel_size": {
+        "width": 1536,
+        "height": 1024
+      },
+      "has_alpha": true,
+      "render_layer": 62,
+      "anchor": "center",
+      "states": [
+        "PRESENTING",
+        "ADD_TO_CART"
+      ],
+      "outfit": null,
+      "blend_mode": "screen",
+      "implementation_note": "位置由动画轨迹动态计算，不使用固定页面坐标。"
+    },
+    {
+      "id": "effect_reward_star",
+      "file": "assets/effects/reward/effect_reward_star.png",
+      "android_resource": "effect_reward_star",
+      "semantic_role": "升级、亲密度奖励或底部成长入口使用的发光星星",
+      "category": "effect",
+      "required": true,
+      "pixel_size": {
+        "width": 1024,
+        "height": 1536
+      },
+      "has_alpha": true,
+      "render_layer": 70,
+      "anchor": "center",
+      "states": [
+        "CELEBRATING",
+        "LEVEL_UP"
+      ],
+      "outfit": null,
+      "blend_mode": "screen",
+      "implementation_note": null
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "DEFAULT": {
+    "IDLE": "avatar_idle_default",
+    "LISTENING": "avatar_listening_default",
+    "THINKING": "avatar_thinking_default",
+    "SEARCHING": "avatar_searching_default",
+    "PRESENTING": "avatar_presenting_default",
+    "CELEBRATING": "avatar_celebrating_default",
+    "LEVEL_UP": "avatar_celebrating_default",
+    "ERROR": "avatar_apologizing_default"
+  },
+  "HOME_ADVISOR": {
+    "IDLE": "avatar_presenting_home_advisor",
+    "PRESENTING": "avatar_presenting_home_advisor",
+    "_fallback": "DEFAULT"
+  }
+}

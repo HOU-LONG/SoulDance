@@ -1,0 +1,1 @@
+avatar_idle_default.png 已更新为用户提供的真正中性待机素材。

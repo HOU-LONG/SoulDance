@@ -1,0 +1,43 @@
+{
+  "blocking_for_exact_reference_reproduction": [
+    {
+      "id": "avatar_black_skirt_reference_set",
+      "description": "设计参考图中的白衬衫、黑色高腰半身裙人物及其完整状态组未包含在上传包中。",
+      "impact": "无法逐像素复刻参考图人物；最终包默认使用米色长裙状态组。",
+      "recommended_files": [
+        "avatar_idle_black_skirt.png",
+        "avatar_listening_black_skirt.png",
+        "avatar_thinking_black_skirt.png",
+        "avatar_searching_black_skirt.png",
+        "avatar_presenting_black_skirt.png",
+        "avatar_celebrating_black_skirt.png",
+        "avatar_apologizing_black_skirt.png"
+      ]
+    },
+    {
+      "id": "snack_plate",
+      "description": "设计参考图右前方饼干/零食盘没有独立素材。",
+      "impact": "第一版省略该道具，不影响业务功能。",
+      "recommended_files": [
+        "prop_snack_plate.png"
+      ]
+    }
+  ],
+  "non_blocking_compose_components": [
+    "顶部用户头像与火焰值卡片",
+    "菜单与关闭按钮",
+    "对话气泡",
+    "精灵名称与编辑按钮",
+    "等级和亲密度进度条",
+    "装扮/成长/导购三个底部按钮背景与文字",
+    "每日任务卡",
+    "商品卡片内容",
+    "购物车图标及数量角标"
+  ],
+  "optional_future_assets": [
+    "语音声波特效",
+    "加购购物车飞入终点装饰",
+    "衣柜缩略图",
+    "更多职业服装状态组"
+  ]
+}

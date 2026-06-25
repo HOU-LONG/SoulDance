@@ -1,0 +1,20 @@
+﻿source_filename,asset_id,standard_file,android_resource_name,semantic_role,processing
+8891bcfd-5a33-4b61-a577-afca8f3a4e77.png,design_reference,reference/design_reference.png,,完整目标界面设计参考，仅用于视觉比对，禁止作为整页 UI 背景,原样保留
+"ChatGPT Image Jun 24, 2026, 07_35_27 PM.png",shopping_bag,assets/props/midground/prop_shopping_bag_blue.png,prop_shopping_bag_blue,人物右侧蓝色购物袋道具,保留原始 Alpha；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 24, 2026, 07_47_54 PM.png",room_background,assets/background/sprite_room_background.png,sprite_room_background,精灵空间全屏房间背景，不含人物与功能 UI,原样保留
+"ChatGPT Image Jun 24, 2026, 07_48_00 PM.png",smart_guide_blackboard,assets/props/background/prop_smart_guide_blackboard.png,prop_smart_guide_blackboard,人物左后方智能导购黑板,原图没有真实 Alpha；已将白色/棋盘格背景转换为真实透明通道；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 24, 2026, 07_48_24 PM.png",discovery_globe,assets/props/midground/prop_discovery_globe.png,prop_discovery_globe,人物左侧“好物发现”水晶球,保留原始 Alpha；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 24, 2026, 08_08_39 PM.png",avatar_presenting_home_advisor,assets/avatar/outfits/home_advisor/avatar_presenting_home_advisor.png,avatar_presenting_home_advisor,绿色家居顾问服装下的展示姿态人物,保留原始 Alpha；已统一为 1200×1600 画布并统一脚底锚点
+"ChatGPT Image Jun 24, 2026, 08_20_57 PM.png",avatar_presenting_default,assets/avatar/states/default/avatar_presenting_default.png,avatar_presenting_default,米色默认服装下的展示/默认待机姿态人物,原图没有真实 Alpha；已将白色/棋盘格背景转换为真实透明通道；已统一为 1200×1600 画布并统一脚底锚点
+"ChatGPT Image Jun 24, 2026, 08_41_21 PM.png",avatar_apologizing_default,assets/avatar/states/default/avatar_apologizing_default.png,avatar_apologizing_default,米色默认服装下的道歉/错误状态人物,保留原始 Alpha；已统一为 1200×1600 画布并统一脚底锚点
+"ChatGPT Image Jun 24, 2026, 08_41_45 PM.png",avatar_celebrating_default,assets/avatar/states/default/avatar_celebrating_default.png,avatar_celebrating_default,米色默认服装下的开心庆祝状态人物,保留原始 Alpha；已统一为 1200×1600 画布并统一脚底锚点
+"ChatGPT Image Jun 24, 2026, 09_05_18 PM.png",avatar_listening_default,assets/avatar/states/default/avatar_listening_default.png,avatar_listening_default,米色默认服装下的倾听状态人物,原图没有真实 Alpha；已将白色/棋盘格背景转换为真实透明通道；已统一为 1200×1600 画布并统一脚底锚点
+"ChatGPT Image Jun 24, 2026, 11_40_57 PM.png",avatar_searching_default,assets/avatar/states/default/avatar_searching_default.png,avatar_searching_default,米色默认服装下翻找蓝色购物包的搜索状态人物,原图没有真实 Alpha；已将白色/棋盘格背景转换为真实透明通道；已统一为 1200×1600 画布并统一脚底锚点
+"ChatGPT Image Jun 24, 2026, 11_57_26 PM.png",avatar_thinking_default,assets/avatar/states/default/avatar_thinking_default.png,avatar_thinking_default,米色默认服装下的思考状态人物,原图没有真实 Alpha；已将白色/棋盘格背景转换为真实透明通道；已统一为 1200×1600 画布并统一脚底锚点
+"ChatGPT Image Jun 25, 2026, 12_03_20 AM.png",effect_search_scan_ring_blue,assets/effects/search/effect_search_scan_ring_blue.png,effect_search_scan_ring_blue,搜索状态浅蓝色扫描环,原图没有真实 Alpha；已将白色/棋盘格背景转换为真实透明通道；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 25, 2026, 12_03_30 AM.png",effect_search_orbit_ring_gold_blue,assets/effects/search/effect_search_orbit_ring_gold_blue.png,effect_search_orbit_ring_gold_blue,搜索状态金蓝色轨道光环,原图没有真实 Alpha；已将白色/棋盘格背景转换为真实透明通道；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 25, 2026, 12_03_55 AM.png",effect_product_card_frame,assets/effects/product/effect_product_card_frame.png,effect_product_card_frame,商品卡片外部金蓝色发光边框特效，中心区域保持透明,保留原始 Alpha；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 25, 2026, 12_04_42 AM.png",effect_portal_swirl,assets/effects/search/effect_portal_swirl.png,effect_portal_swirl,搜索或商品出现时的金蓝旋涡特效,保留原始 Alpha；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 25, 2026, 12_10_12 AM.png",effect_product_fly_trail,assets/effects/product/effect_product_fly_trail.png,effect_product_fly_trail,商品卡片从购物包飞出时的运动拖尾,保留原始 Alpha；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 25, 2026, 12_12_22 AM.png",effect_reward_star,assets/effects/reward/effect_reward_star.png,effect_reward_star,成长奖励、升级或底部奖励按钮使用的发光星星,保留原始 Alpha；已按透明内容裁剪并保留边缘留白
+"ChatGPT Image Jun 25, 2026, 01_03_40 AM.png",avatar_idle_default,assets/avatar/states/default/avatar_idle_default.png,avatar_idle_default,默认服装下的真正中性待机人物,使用 GrabCut 去除伪棋盘格背景；生成真实 Alpha；统一为 1200×1600 画布和脚底锚点

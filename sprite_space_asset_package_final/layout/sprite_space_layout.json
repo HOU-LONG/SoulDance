@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "reference_size_px": {
+    "width": 941,
+    "height": 1672
+  },
+  "coordinate_system": {
+    "type": "normalized_screen",
+    "range": "0.0..1.0",
+    "safe_area": "状态栏和导航栏通过 Compose WindowInsets 处理；坐标基于安全区域内页面。"
+  },
+  "compose_regions": {
+    "top_profile": {
+      "x": 0.04,
+      "y": 0.055,
+      "width": 0.39,
+      "height": 0.08,
+      "anchor": "top_start"
+    },
+    "top_actions": {
+      "x": 0.75,
+      "y": 0.055,
+      "width": 0.2,
+      "height": 0.07,
+      "anchor": "top_end"
+    },
+    "speech_bubble": {
+      "x": 0.5,
+      "y": 0.185,
+      "width": 0.34,
+      "height": 0.065,
+      "anchor": "top_center"
+    },
+    "avatar_stage": {
+      "x": 0.5,
+      "y": 0.455,
+      "width": 0.94,
+      "height": 0.49,
+      "anchor": "center"
+    },
+    "sprite_profile": {
+      "x": 0.5,
+      "y": 0.735,
+      "width": 0.64,
+      "height": 0.1,
+      "anchor": "center"
+    },
+    "bottom_actions": {
+      "x": 0.5,
+      "y": 0.865,
+      "width": 0.9,
+      "height": 0.125,
+      "anchor": "center"
+    },
+    "daily_task": {
+      "x": 0.5,
+      "y": 0.965,
+      "width": 0.9,
+      "height": 0.055,
+      "anchor": "bottom_center"
+    }
+  },
+  "asset_placements": [
+    {
+      "asset_id": "room_background",
+      "region": "screen",
+      "x": 0.0,
+      "y": 0.0,
+      "width": 1.0,
+      "height": 1.0,
+      "anchor": "top_start",
+      "z_index": 0,
+      "content_scale": "crop"
+    },
+    {
+      "asset_id": "smart_guide_blackboard",
+      "region": "screen",
+      "x": 0.035,
+      "y": 0.365,
+      "width": 0.2,
+      "anchor": "top_start",
+      "z_index": 10
+    },
+    {
+      "asset_id": "discovery_globe",
+      "region": "screen",
+      "x": 0.055,
+      "y": 0.515,
+      "width": 0.25,
+      "anchor": "top_start",
+      "z_index": 25
+    },
+    {
+      "asset_id": "shopping_bag",
+      "region": "screen",
+      "x": 0.7,
+      "y": 0.49,
+      "width": 0.25,
+      "anchor": "top_start",
+      "z_index": 25
+    },
+    {
+      "asset_id": "avatar_by_state",
+      "region": "screen",
+      "x": 0.5,
+      "y": 0.695,
+      "width": 0.48,
+      "anchor": "bottom_center",
+      "z_index": 30,
+      "resolver": "manifest/avatar_state_matrix.json"
+    },
+    {
+      "asset_id": "effect_search_scan_ring_blue",
+      "region": "screen",
+      "x": 0.585,
+      "y": 0.505,
+      "width": 0.19,
+      "anchor": "center",
+      "z_index": 45,
+      "visible_states": [
+        "SEARCHING"
+      ],
+      "animation": "rotate_clockwise_and_pulse"
+    },
+    {
+      "asset_id": "effect_search_orbit_ring_gold_blue",
+      "region": "screen",
+      "x": 0.585,
+      "y": 0.505,
+      "width": 0.23,
+      "anchor": "center",
+      "z_index": 46,
+      "visible_states": [
+        "SEARCHING"
+      ],
+      "animation": "rotate_counterclockwise"
+    },
+    {
+      "asset_id": "effect_portal_swirl",
+      "region": "screen",
+      "x": 0.59,
+      "y": 0.505,
+      "width": 0.27,
+      "anchor": "center",
+      "z_index": 47,
+      "visible_states": [
+        "SEARCHING",
+        "PRESENTING"
+      ],
+      "animation": "fade_and_scale"
+    },
+    {
+      "asset_id": "effect_product_card_frame",
+      "region": "screen",
+      "x": 0.69,
+      "y": 0.43,
+      "width": 0.36,
+      "anchor": "center",
+      "z_index": 61,
+      "visible_states": [
+        "PRESENTING"
+      ],
+      "note": "Compose 商品卡片放在框内，不得把商品文字烘焙进该图片。"
+    },
+    {
+      "asset_id": "effect_reward_star",
+      "region": "bottom_actions",
+      "x": 0.5,
+      "y": 0.42,
+      "width": 0.21,
+      "anchor": "center",
+      "z_index": 70,
+      "visible_states": [
+        "ALL"
+      ]
+    }
+  ],
+  "dynamic_animation_paths": {
+    "product_card_from_bag": {
+      "start": {
+        "x": 0.585,
+        "y": 0.505
+      },
+      "end": {
+        "x": 0.69,
+        "y": 0.43
+      },
+      "trail_asset_id": "effect_product_fly_trail"
+    },
+    "product_card_to_cart": {
+      "start": "current_product_card_center",
+      "end": "runtime_cart_icon_center",
+      "trail_asset_id": "effect_product_fly_trail"
+    }
+  }
+}

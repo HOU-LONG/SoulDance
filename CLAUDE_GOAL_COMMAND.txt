@@ -1,0 +1,16 @@
+/goal 在当前 Android Kotlin + Jetpack Compose 项目中，将项目根目录内已解压的精灵空间素材包（以包含 manifest/asset_manifest.json、manifest/avatar_state_matrix.json、layout/sprite_space_layout.json、reference/design_reference.png、AGENTS.md 为识别依据）真正实现为可运行、可交互、可接现有后端的“2D 换装养成型智能导购精灵空间页”，并持续迭代，直到以下全部条件均有可验证证据成立：
+
+1. 先审计现有工程、导航、ViewModel、RealtimeEvent、商品模型、网络流式通信和购物车逻辑；复用现有实现，不创建冲突的平行系统，不破坏现有聊天、推荐和加购功能。
+2. 严格按素材包的 asset_manifest、avatar_state_matrix 和 layout 文件使用真实素材；reference/design_reference.png 仅用于视觉比对，禁止整图套壳；所有文字、数字、按钮、进度条、任务卡和商品内容必须由 Compose 动态绘制。
+3. 页面可从现有 App 导航真实进入，包含暖色房间背景、顶部用户卡与操作按钮、Compose 气泡、左侧好物发现道具、中央完整人物、右侧购物袋、精灵名称/等级/亲密度、装扮/成长/导购三个入口和每日任务栏；人物、道具不被裁切，系统状态栏和导航栏安全区正确。
+4. 中央人物封装为独立 AvatarStage/TwoDAvatarRenderer，页面其余组件不依赖 2D 实现，以便未来替换 3D。状态至少支持 IDLE、LISTENING、THINKING、SEARCHING、PRESENTING、CELEBRATING、LEVEL_UP、ERROR，并严格使用状态矩阵中的对应素材；状态切换时人物脚底和中心不明显跳动。
+5. 实现克制且可运行的动画：待机轻微呼吸/漂浮，气泡淡入淡出，SEARCHING 时扫描环和轨道光效位于购物包附近，PRESENTING 时商品卡片从购物包方向进入，CELEBRATING/LEVEL_UP 时显示奖励反馈；动画不得遮挡主要按钮或持续消耗不必要资源。
+6. “导购”入口能打开现有或新适配的文字/语音输入区域；提交请求后复用现有后端链路。用户输入/录音、请求发送、TextDelta、ProductsStart、ProductItem、ProductsDone、加购成功和 Error 必须驱动对应人物状态、气泡和商品层变化。
+7. 商品返回后显示真正的 Compose 悬浮商品卡片，至少包含图片、名称、价格、匹配度/推荐理由以及详情、对比、加入购物车操作；加入购物车必须调用现有购物车逻辑，成功后有庆祝反馈，失败时可恢复并提示。
+8. “装扮”入口至少能在 DEFAULT 与现有 HOME_ADVISOR 素材之间切换并保存当前选择；缺失服装状态按 manifest 的 fallback 处理，不伪造或误用素材。
+9. 布局使用 BoxWithConstraints、Alignment、WindowInsets、相对尺寸和集中式 placement 配置；不得依赖 941×1672 固定像素或大量散落 Magic Number。在 360×800dp、393×873dp、412×915dp Preview/设备尺寸下无主要元素重叠、裁切或异常空白，字体放大后核心操作仍可用。
+10. 为状态映射、亲密度进度、素材 resolver 和关键 ViewModel 流转补充测试；为主要按钮和商品交互提供稳定 testTag。执行项目实际可用的构建和测试命令，至少要求 Debug 构建退出码为 0，新增相关测试退出码为 0。
+11. 如果有可用模拟器或真机，安装并启动页面，使用 adb 截取 IDLE、SEARCHING、PRESENTING 三张运行截图，与 reference/design_reference.png 和布局清单逐项比较并继续调整；如果环境没有设备，必须提供三个对应 Compose Preview 并明确说明设备验证缺失。
+12. 每轮结束前都必须在回复中明确列出：已完成项、仍不满足的验收项、实际执行的构建/测试命令及退出结果、截图或 Preview 路径、下一轮要修复的最高优先级问题。不要仅声明“完成”；只有当全部验收条件都有 transcript 中可见证据时才允许结束。
+
+不得删除已有功能、不得使用未登记素材替代缺失素材、不得用占位页面冒充完成、不得以“需要用户确认下一步”为理由停止；遇到普通编译、布局、资源或测试问题应自行定位并继续迭代。只有遇到无法自行解决的外部阻塞（缺少密钥、后端不可达且无可用假数据、系统权限限制、资源文件实际缺失）时，才可停止并准确报告阻塞、已验证事实和最小人工动作。最多持续 30 轮；若 30 轮后仍未全部满足，输出完整差距报告和可继续执行的下一步，而不是声称目标已达成。

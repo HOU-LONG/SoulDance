@@ -1,0 +1,39 @@
+// Replace package name before use.
+package your.package.ui.spritespace
+
+import androidx.annotation.DrawableRes
+
+enum class AvatarVisualState {
+    IDLE, LISTENING, THINKING, SEARCHING, PRESENTING,
+    CELEBRATING, LEVEL_UP, ERROR
+}
+
+enum class OutfitType {
+    DEFAULT, HOME_ADVISOR
+}
+
+object SpriteSpaceAssetCatalog {
+
+    @DrawableRes
+    fun avatar(
+        state: AvatarVisualState,
+        outfit: OutfitType,
+    ): Int {
+        if (outfit == OutfitType.HOME_ADVISOR &&
+            (state == AvatarVisualState.IDLE || state == AvatarVisualState.PRESENTING)
+        ) {
+            return R.drawable.avatar_presenting_home_advisor
+        }
+
+        return when (state) {
+            AvatarVisualState.IDLE -> R.drawable.avatar_idle_default
+            AvatarVisualState.LISTENING -> R.drawable.avatar_listening_default
+            AvatarVisualState.THINKING -> R.drawable.avatar_thinking_default
+            AvatarVisualState.SEARCHING -> R.drawable.avatar_searching_default
+            AvatarVisualState.PRESENTING -> R.drawable.avatar_presenting_default
+            AvatarVisualState.CELEBRATING,
+            AvatarVisualState.LEVEL_UP -> R.drawable.avatar_celebrating_default
+            AvatarVisualState.ERROR -> R.drawable.avatar_apologizing_default
+        }
+    }
+}

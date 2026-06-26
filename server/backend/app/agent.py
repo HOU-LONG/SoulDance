@@ -908,9 +908,18 @@ class ShopGuideAgent:
 
     async def _build_comparison_events(self, user_id: str, request: ChatRequest) -> list[dict]:
         context = self.sessions.get(user_id, request.session_id)
-        product_ids = _resolve_comparison_product_ids(request.message, context)
+        # Resolve named products and fuzzy references from user text first.
+        # Fall back to context-event-derived product_ids only when neither is present.
+        resolved_ids = _resolve_comparison_named_targets(request.message, self.product_map, context)
+        if resolved_ids and len(resolved_ids) >= 2:
+            product_ids = resolved_ids
+        else:
+            product_ids = _resolve_comparison_product_ids(request.message, context)
         products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
-        if context.last_plan:
+        # Only apply hard_filter when product IDs came from context events.
+        # Explicitly resolved named+fuzzy targets should not be gated by a
+        # previous turn's price/category constraints — the user named them.
+        if context.last_plan and not resolved_ids:
             products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
         message_id = _message_id()
         if len(products) < 2:
@@ -2032,6 +2041,53 @@ def _filter_recovery_event(message_id: str, plan: RetrievalPlan) -> dict:
         )
     return {"type": "filter_recovery_options", "message_id": message_id, "recovery_id": recovery_id, "options": options}
 
+
+
+def _resolve_comparison_named_targets(text: str, product_map: dict, context: SessionContext) -> list[str]:
+    """Resolve named products and fuzzy deictic references in comparison text.
+
+    Returns explicit product_ids when the user mentions a named product
+    (brand + title keyword match) or a fuzzy reference (e.g. "刚才那个便宜的").
+    Returns an empty list when neither is found — the caller should fall back
+    to ``_resolve_comparison_product_ids``.
+    """
+    ids: list[str] = []
+
+    # ── fuzzy deictic references → anchor lookup ──
+    _FUZZY_MARKERS: list[tuple[str, str]] = [
+        ("刚才那个便宜的", "last_cheaper_alternative"),
+        ("刚刚那个便宜的", "last_cheaper_alternative"),
+        ("那个便宜的", "last_cheaper_alternative"),
+        ("那个平替", "last_cheaper_alternative"),
+    ]
+    for marker, anchor_key in _FUZZY_MARKERS:
+        if marker in text:
+            anchor_id = context.reference_anchors.get(anchor_key)
+            if anchor_id and anchor_id in product_map:
+                ids.append(anchor_id)
+            break
+
+    # ── named product → catalog search by brand + keyword ──
+    for pid, product in product_map.items():
+        if pid in ids:
+            continue
+        if not product.brand or product.brand not in text:
+            continue
+        # Require at least one distinctive keyword from the title or sub_category
+        # to avoid matching every product of the same brand (e.g. 雅诗兰黛).
+        keywords: list[str] = []
+        if product.sub_category:
+            keywords.append(product.sub_category)
+        # Break the title into overlapping 2-4 char n-grams as discriminators
+        for n in (4, 3, 2):
+            for i in range(len(product.title) - n + 1):
+                keywords.append(product.title[i : i + n])
+
+        if any(kw in text and len(kw) >= 2 for kw in keywords):
+            ids.append(pid)
+            break
+
+    return ids
 
 
 def _resolve_comparison_product_ids(text: str, context: SessionContext) -> list[str]:

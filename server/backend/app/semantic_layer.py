@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .cart_intent import _detect_quantity as _detect_cart_quantity
+from .cart_intent import _detect_cart_action, _detect_quantity as _detect_cart_quantity, _normalize_cart_action
 from .constraint_filter import dedupe, extract_excluded_brands, extract_included_brands
 from .models import CartOperation, ChatRequest, ConstraintEdits, HardConstraints, ProductReference, RetrievalPlan, SemanticFrame, SessionContext
 from .utils import extract_json
@@ -516,65 +516,6 @@ def _detect_index(text: str) -> int | None:
             return index
     return None
 
-
-def _detect_cart_action(text: str) -> str:
-    if any(word in text for word in ["不要这个品牌", "不要这个牌子"]):
-        return "get_cart"
-    if any(
-        word in text
-        for word in [
-            "清空购物车",
-            "购物车清空",
-            "清一下购物车",
-            "购物车清一下",
-            "全部删掉",
-            "全部删除",
-            "都删掉",
-            "都删除",
-            "全删了",
-            "不要了",
-        ]
-    ):
-        return "clear_cart"
-    if any(word in text for word in ["下单", "结算"]):
-        return "checkout"
-    if any(word in text for word in ["删掉", "删除", "移除"]):
-        return "remove"
-    if any(word in text for word in ["数量", "改成", "改为"]):
-        return "update_quantity"
-    # view_cart must be checked BEFORE add_to_cart so that "查看购物车"
-    # does not match on the bare "购物车" substring.
-    if any(word in text for word in ["查看购物车", "看看购物车", "购物车里有什么", "购物车有什么", "看一下购物车", "购物车有什么东西"]):
-        return "view_cart"
-    # SKU switching
-    if any(word in text for word in ["换成", "换规格", "切换规格"]):
-        return "update_sku"
-    if any(word in text for word in ["购物车", "加购", "加入", "加到", "添加", "放购物车"]):
-        return "add_to_cart"
-    if re.search(
-        r"就这个|要这个|这个要|这款要|要这款|就它了|就这款|刚才.*(?:要|来|买)|(?:来|买)[一两二三四五六七八九十\\d]+[件个份瓶盒包袋罐条杯](?:这个|这款|它|咖啡)?$",
-        text or "",
-    ):
-        return "add_to_cart"
-    return "get_cart"
-
-
-def _normalize_cart_action(action: str) -> str:
-    if action in {"add", "add_to_cart"}:
-        return "add_to_cart"
-    if action in {"update", "set_quantity", "update_quantity"}:
-        return "update_quantity"
-    if action in {"delete", "remove"}:
-        return "remove"
-    if action in {"checkout", "order"}:
-        return "checkout"
-    if action in {"clear", "clear_cart", "empty_cart"}:
-        return "clear_cart"
-    if action in {"view", "view_cart", "get_cart"}:
-        return "get_cart"
-    if action == "update_sku":
-        return "update_sku"
-    return "get_cart"
 
 
 def _detect_quantity(text: str) -> int | None:

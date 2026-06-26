@@ -924,9 +924,10 @@ class ShopGuideAgent:
             product_ids = _resolve_comparison_product_ids(request.message, context)
         products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
         # Only apply hard_filter when product IDs came from context events.
-        # Explicitly resolved named+fuzzy targets should not be gated by a
-        # previous turn's price/category constraints — the user named them.
-        if context.last_plan and not resolved_ids:
+        # Explicitly resolved named+fuzzy targets (≥2) should not be gated
+        # by a previous turn's price/category constraints — the user named them.
+        used_resolved = resolved_ids and len(resolved_ids) >= 2
+        if context.last_plan and not used_resolved:
             products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
         message_id = _message_id()
         if len(products) < 2:
@@ -1183,7 +1184,7 @@ class ShopGuideAgent:
         action = _normalize_cart_action(frame.cart_operation.action)
         quantity = max(frame.cart_operation.quantity, 0)
         product_id = None
-        if action in {"get_cart", "view_cart", "clear_cart", "checkout"}:
+        if action in {"get_cart", "clear_cart", "checkout"}:
             return self._execute_cart_action(user_id, request.session_id, action, None, quantity, cart)
         if action == "update_sku":
             if not product_id:
@@ -2170,6 +2171,12 @@ def _resolve_comparison_named_targets(text: str, product_map: dict, context: Ses
             for i in range(len(product.title) - n + 1):
                 keywords.append(product.title[i : i + n])
 
+        # Require the brand sub-match to be more specific than just the
+        # brand prefix appearing in the title (e.g. "雅诗兰黛小棕瓶" should
+        # match p_beauty_001, not every 雅诗兰黛 product whose title starts
+        # with the brand name).  For now we stop at the first strong match;
+        # multi-named-product comparison (like "雅诗兰黛和兰蔻") would need
+        # a dedicated product-mention extractor rather than n-gram substring.
         if any(kw in text and len(kw) >= 2 for kw in keywords):
             ids.append(pid)
             break

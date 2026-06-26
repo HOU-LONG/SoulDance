@@ -518,7 +518,10 @@ def _fallback_selected_products(candidates: list[RankedProduct]) -> list[RankedP
     # room — the cheapest match stays available as a replacement.
     if len(selected) >= 3:
         prices = [item.product.price for item in selected]
-        if max(prices) / min(prices) >= 2.0:
+        min_price = min(prices)
+        if min_price <= 0:
+            return selected  # guard against zero/negative prices producing invalid ratios
+        if max(prices) / min_price >= 2.0:
             by_price = sorted(selected, key=lambda item: item.product.price)
             mid = by_price[len(by_price) // 2]
             result = [mid]

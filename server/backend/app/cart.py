@@ -65,28 +65,47 @@ class CartService:
 
     def _db_get(self, user_id, session_id):
         raw = self._repo.get(user_id, session_id)
+        sku_map = self._sku_selections.get(session_id, {})
         items = []
         total = 0.0
+        total_count = 0
         for row in raw["items"]:
             product_id = row["product_id"]
             quantity = row["quantity"]
             product = self.products.get(product_id)
             if product is None:
                 continue
-            amount = product.price * quantity
+            selected_sku_id = sku_map.get(product_id)
+            selected_sku = None
+            unit_price = product.price
+            if selected_sku_id:
+                for sku in product.skus:
+                    if sku.sku_id == selected_sku_id:
+                        selected_sku = sku
+                        unit_price = sku.price
+                        break
+            amount = unit_price * quantity
             total += amount
-            items.append({
+            total_count += quantity
+            item = {
                 "product_id": product_id,
                 "name": product.title,
                 "brand": product.brand,
-                "price": product.price,
+                "price": unit_price,
                 "quantity": quantity,
                 "amount": amount,
                 "main_image_url": product_image_url(product.image_path),
                 "image_url": product_image_url(product.image_path),
                 "selected": True,
-            })
-        return {"session_id": session_id, "items": items, "total_amount": total}
+            }
+            if selected_sku is not None:
+                item["selected_sku"] = {
+                    "sku_id": selected_sku.sku_id,
+                    "properties": selected_sku.properties,
+                    "unit_price": selected_sku.price,
+                }
+            items.append(item)
+        return {"session_id": session_id, "items": items, "total_amount": total, "total_count": total_count}
 
     def get(self, user_id: str, session_id: str) -> dict:
         if self._repo is not None:
@@ -105,9 +124,39 @@ class CartService:
         SKU property matches — the caller should present a clarification
         with the available options.
         """
+        if self._repo is not None:
+            return self._db_update_sku(user_id, session_id, product_id, property_value)
+        return self._file_update_sku(user_id, session_id, product_id, property_value)
+
+    def _db_update_sku(self, user_id, session_id, product_id, property_value):
+        self._validate_product(product_id)
+        cart = self._repo.get(user_id, session_id)
+        if not any(row["product_id"] == product_id for row in cart.get("items", [])):
+            raise ValueError(f"product {product_id} is not in cart")
         product = self.products.get(product_id)
-        if product is None:
-            raise ValueError(f"product {product_id} not found")
+        matched: str | None = None
+        for sku in product.skus:
+            for value in sku.properties.values():
+                if property_value in value:
+                    matched = sku.sku_id
+                    break
+            if matched:
+                break
+        if matched is None:
+            options = [
+                ", ".join(f"{k}: {v}" for k, v in sku.properties.items())
+                for sku in product.skus
+            ]
+            raise ValueError(
+                f"no SKU matching '{property_value}' for {product.title}. "
+                f"Available: {'; '.join(options)}"
+            )
+        self._sku_selections.setdefault(session_id, {})[product_id] = matched
+        self._log_action(session_id, "update_sku", product_id, 0)
+        return self._db_get(user_id, session_id)
+
+    def _file_update_sku(self, user_id, session_id, product_id, property_value):
+        product = self.products.get(product_id)
         if product_id not in self._carts.get(session_id, {}):
             raise ValueError(f"product {product_id} is not in cart")
         matched: str | None = None
@@ -248,12 +297,14 @@ class CartService:
     def _file_remove(self, user_id, session_id, product_id):
         self._validate_product(product_id)
         self._carts.setdefault(session_id, {}).pop(product_id, None)
+        self._sku_selections.get(session_id, {}).pop(product_id, None)
         self._log_action(session_id, "remove", product_id, 0)
         self._save_one(user_id, session_id)
         return self.get(user_id, session_id)
 
     def _file_clear(self, user_id, session_id):
         self._carts[session_id] = {}
+        self._sku_selections[session_id] = {}
         self._log_action(session_id, "clear", None, 0)
         self._save_one(user_id, session_id)
         return self.get(user_id, session_id)
@@ -346,6 +397,10 @@ class CartService:
                                     str(ik): dict(iv) for ik, iv in raw_idempotency.items()
                                     if isinstance(iv, dict)
                                 }
+                        if "sku_selections" in data:
+                            raw_sku = data["sku_selections"]
+                            if isinstance(raw_sku, dict):
+                                self._sku_selections[session_id] = dict(raw_sku)
                 except Exception:
                     logger.warning("Failed to load cart %s/%s, skipping", user_id, session_id, exc_info=True)
                     continue
@@ -357,6 +412,7 @@ class CartService:
         tmp_path = path.with_suffix(".tmp")
         payload = {
             "cart": self._carts.get(session_id, {}),
+            "sku_selections": self._sku_selections.get(session_id, {}),
             "audit_log": self._audit_log.get(session_id, []),
             "idempotency_results": self._idempotency_results.get(session_id, {}),
         }

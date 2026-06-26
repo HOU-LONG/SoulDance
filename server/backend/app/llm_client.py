@@ -512,7 +512,21 @@ def _fallback_selected_products(candidates: list[RankedProduct]) -> list[RankedP
         limit = 3
     else:
         limit = 1
-    return same_tier[:limit]
+    selected = same_tier[:limit]
+    # When 3+ same-tier candidates have a ≥2× price spread, promote a
+    # mid-price product to primary so cheaper-alternative follow-ups have
+    # room — the cheapest match stays available as a replacement.
+    if len(selected) >= 3:
+        prices = [item.product.price for item in selected]
+        if max(prices) / min(prices) >= 2.0:
+            by_price = sorted(selected, key=lambda item: item.product.price)
+            mid = by_price[len(by_price) // 2]
+            result = [mid]
+            for item in selected:
+                if item.product.product_id != mid.product.product_id:
+                    result.append(item)
+            return result
+    return selected
 
 
 async def _empty_json_fallback(*_args: Any, **_kwargs: Any) -> str:

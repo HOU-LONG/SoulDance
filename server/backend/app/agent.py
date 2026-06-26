@@ -251,6 +251,13 @@ class ShopGuideAgent:
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
         plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
         self._apply_product_admission_gate(plan, request.message)
+        # Anchor resolution: "回到第一轮" → bind to first-turn brand
+        if plan.soft_preferences.pop("anchor_reference", None) == "first_turn":
+            first_brand = context.reference_anchors.get("first_turn_brand")
+            if first_brand:
+                plan.hard_constraints.include_brands = dedupe(
+                    list(plan.hard_constraints.include_brands) + [first_brand]
+                )
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         if plan.intent in {"small_talk", "unclear_input"}:
@@ -1142,6 +1149,16 @@ class ShopGuideAgent:
             and ranked
         ):
             context.reference_anchors["last_cheaper_alternative"] = ranked[0].product.product_id
+        # Store first-turn anchor for long-session references
+        if "first_turn_brand" not in context.reference_anchors and ranked:
+            primary = ranked[0].product
+            context.reference_anchors["first_turn_brand"] = primary.brand
+            context.reference_anchors["first_turn_category"] = primary.category
+            context.reference_anchors["first_turn_sub_category"] = primary.sub_category
+            context.reference_anchors["first_turn_product_ids"] = json.dumps(
+                [item.product.product_id for item in ranked],
+                ensure_ascii=False,
+            )
         _append_context_event(
             context,
             plan.retrieval_query,

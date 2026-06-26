@@ -147,6 +147,16 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
         soft["skin_type"] = "油皮"
     if "敏感肌" in text:
         soft["skin_type"] = "敏感肌"
+    if "干性皮肤" in text or "干皮" in text or "干性" in text:
+        soft["skin_type"] = "干性"
+    if "秋冬" in text:
+        soft["season"] = "秋冬"
+    if "春天" in text or "春季" in text:
+        soft["season"] = "春季"
+    if "夏天" in text or "夏季" in text:
+        soft["season"] = "夏季"
+    if "冬天" in text or "冬季" in text:
+        soft["season"] = "冬季"
     if "保湿" in text or "修护" in text:
         soft["effect"] = "保湿修护"
     if "女朋友" in text or "女生" in text:
@@ -163,6 +173,9 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
         soft["gift_style"] = "稳妥不踩雷"
     if "实用" in text:
         soft["gift_style"] = "实用"
+    # Long-session anchor resolution
+    if any(phrase in text for phrase in ["回到第一轮", "最开始那个", "第一轮那个", "回到最开始"]):
+        soft["anchor_reference"] = "first_turn"
     if request.type == "product_followup":
         intent = "product_followup"
     return SemanticFrame(intent=intent, constraint_edits=edits)

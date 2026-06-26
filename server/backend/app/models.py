@@ -331,6 +331,7 @@ class SessionContext(BaseModel):
     last_recommendations: list[dict[str, object]] = Field(default_factory=list)
     negative_feedback: list[str] = Field(default_factory=list)
     recent_cart_product_id: str | None = None
+    reference_anchors: dict[str, str] = Field(default_factory=dict)
     schema_version: int = 1
     last_activity_at: str = ""
 

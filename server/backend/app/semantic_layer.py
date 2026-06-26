@@ -169,12 +169,21 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
 
 
 def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, Any]) -> SemanticFrame | None:
-    if request.type != "user_message" or not context_payload.get("has_focus_product"):
+    if request.type != "user_message":
+        return None
+    # 检查是否有必要的上下文：需要 has_focus_product 或者有 last_plan + last_product_ids
+    has_context = (
+        context_payload.get("has_focus_product") or
+        (context_payload.get("last_plan") and context_payload.get("last_product_ids"))
+    )
+    if not has_context:
         return None
     text = request.message or ""
     edits = ConstraintEdits()
     response_goal = None
-    if any(word in text for word in ["再便宜", "便宜点", "更便宜", "价格低", "低价"]):
+    has_cheaper_cue = any(word in text for word in ["再便宜", "便宜点", "更便宜", "价格低", "低价"])
+    has_alternative_cue = any(word in text for word in ["替代品", "平替"])
+    if has_cheaper_cue or has_alternative_cue:
         edits.add.soft_preferences["price_preference"] = "更便宜"
         response_goal = "recommend_cheaper_alternative"
     if any(word in text for word in ["更贵", "贵一点", "高端", "高价位", "价位高"]):

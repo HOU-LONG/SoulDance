@@ -1125,6 +1125,14 @@ class ShopGuideAgent:
             context.state.active_focus.type = "product"
             context.state.active_focus.product_id = ranked[0].product.product_id
             context.state.active_focus.source = "recommendation"
+
+        # If this is a cheaper alternative follow-up, save the anchor
+        if (
+            plan.intent == "product_followup"
+            and plan.soft_preferences.get("price_preference") == "更便宜"
+            and ranked
+        ):
+            context.reference_anchors["last_cheaper_alternative"] = ranked[0].product.product_id
         _append_context_event(
             context,
             plan.retrieval_query,

@@ -529,6 +529,13 @@ def _detect_cart_action(text: str) -> str:
         return "remove"
     if any(word in text for word in ["数量", "改成", "改为"]):
         return "update_quantity"
+    # view_cart must be checked BEFORE add_to_cart so that "查看购物车"
+    # does not match on the bare "购物车" substring.
+    if any(word in text for word in ["查看购物车", "看看购物车", "购物车里有什么", "购物车有什么", "看一下购物车", "购物车有什么东西"]):
+        return "view_cart"
+    # SKU switching
+    if any(word in text for word in ["换成", "换规格", "切换规格"]):
+        return "update_sku"
     if any(word in text for word in ["购物车", "加购", "加入", "加到", "添加", "放购物车"]):
         return "add_to_cart"
     if re.search(
@@ -550,6 +557,10 @@ def _normalize_cart_action(action: str) -> str:
         return "checkout"
     if action in {"clear", "clear_cart", "empty_cart"}:
         return "clear_cart"
+    if action in {"view", "view_cart", "get_cart"}:
+        return "get_cart"
+    if action == "update_sku":
+        return "update_sku"
     return "get_cart"
 
 

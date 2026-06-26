@@ -25,6 +25,7 @@ class CartService:
     ):
         self.products = {product.product_id: product for product in products}
         self._carts: dict[str, dict[str, int]] = {}
+        self._sku_selections: dict[str, dict[str, str]] = {}
         self._audit_log: dict[str, list[dict]] = {}
         self._idempotency_results: dict[str, dict[str, dict]] = {}
         self.persist_path = Path(persist_path) if persist_path else None
@@ -97,6 +98,40 @@ class CartService:
             return self._db_update_quantity(user_id, session_id, product_id, quantity)
         return self._file_update_quantity(user_id, session_id, product_id, quantity)
 
+    def update_sku(self, user_id: str, session_id: str, product_id: str, property_value: str) -> dict:
+        """Select a product SKU whose properties contain ``property_value``.
+
+        Returns the updated cart snapshot.  Raises ``ValueError`` when no
+        SKU property matches — the caller should present a clarification
+        with the available options.
+        """
+        product = self.products.get(product_id)
+        if product is None:
+            raise ValueError(f"product {product_id} not found")
+        if product_id not in self._carts.get(session_id, {}):
+            raise ValueError(f"product {product_id} is not in cart")
+        matched: str | None = None
+        for sku in product.skus:
+            for value in sku.properties.values():
+                if property_value in value:
+                    matched = sku.sku_id
+                    break
+            if matched:
+                break
+        if matched is None:
+            options = [
+                ", ".join(f"{k}: {v}" for k, v in sku.properties.items())
+                for sku in product.skus
+            ]
+            raise ValueError(
+                f"no SKU matching '{property_value}' for {product.title}. "
+                f"Available: {'; '.join(options)}"
+            )
+        self._sku_selections.setdefault(session_id, {})[product_id] = matched
+        self._log_action(session_id, "update_sku", product_id, 0)
+        self._save_one(user_id, session_id)
+        return self.get(user_id, session_id)
+
     def remove(self, user_id: str, session_id: str, product_id: str) -> dict:
         if self._repo is not None:
             return self._db_remove(user_id, session_id, product_id)
@@ -159,26 +194,43 @@ class CartService:
 
     def _file_get(self, user_id, session_id):
         cart = self._carts.setdefault(session_id, {})
+        sku_map = self._sku_selections.get(session_id, {})
         items = []
         total = 0.0
+        total_count = 0
         for product_id, quantity in cart.items():
             product = self.products[product_id]
-            amount = product.price * quantity
+            selected_sku_id = sku_map.get(product_id)
+            selected_sku = None
+            unit_price = product.price
+            if selected_sku_id:
+                for sku in product.skus:
+                    if sku.sku_id == selected_sku_id:
+                        selected_sku = sku
+                        unit_price = sku.price
+                        break
+            amount = unit_price * quantity
             total += amount
-            items.append(
-                {
-                    "product_id": product.product_id,
-                    "name": product.title,
-                    "brand": product.brand,
-                    "price": product.price,
-                    "quantity": quantity,
-                    "amount": amount,
-                    "main_image_url": product_image_url(product.image_path),
-                    "image_url": product_image_url(product.image_path),
-                    "selected": True,
+            total_count += quantity
+            item = {
+                "product_id": product.product_id,
+                "name": product.title,
+                "brand": product.brand,
+                "price": unit_price,
+                "quantity": quantity,
+                "amount": amount,
+                "main_image_url": product_image_url(product.image_path),
+                "image_url": product_image_url(product.image_path),
+                "selected": True,
+            }
+            if selected_sku is not None:
+                item["selected_sku"] = {
+                    "sku_id": selected_sku.sku_id,
+                    "properties": selected_sku.properties,
+                    "unit_price": selected_sku.price,
                 }
-            )
-        return {"session_id": session_id, "items": items, "total_amount": total}
+            items.append(item)
+        return {"session_id": session_id, "items": items, "total_amount": total, "total_count": total_count}
 
     def _file_update_quantity(self, user_id, session_id, product_id, quantity):
         self._validate_product(product_id)

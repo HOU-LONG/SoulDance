@@ -1166,8 +1166,17 @@ class ShopGuideAgent:
         action = _normalize_cart_action(frame.cart_operation.action)
         quantity = max(frame.cart_operation.quantity, 0)
         product_id = None
-        if action in {"get_cart", "clear_cart", "checkout"}:
+        if action in {"get_cart", "view_cart", "clear_cart", "checkout"}:
             return self._execute_cart_action(user_id, request.session_id, action, None, quantity, cart)
+        if action == "update_sku":
+            if not product_id:
+                resolution = self.reference_resolver.resolve(
+                    frame.cart_operation.target,
+                    context,
+                    cart.get(user_id, request.session_id),
+                )
+                product_id = resolution.product_id
+            return self._handle_update_sku(user_id, request.session_id, product_id, request.message, cart)
         has_named_product_hint = False
         if action in {"add_to_cart", "update_quantity"}:
             has_named_product_hint = _has_explicit_product_hint(request.message, self.products)
@@ -1251,6 +1260,67 @@ class ShopGuideAgent:
             "candidates": candidate_payload,
             "message": text,
         }
+
+    def _handle_update_sku(
+        self,
+        user_id: str,
+        session_id: str,
+        product_id: str | None,
+        message: str,
+        cart: CartService,
+    ) -> dict:
+        """Resolve SKU selection from a natural-language expression and apply it."""
+        if not product_id:
+            snapshot = cart.get(user_id, session_id)
+            return {
+                "action": "update_sku",
+                "product_id": None,
+                "cart": snapshot,
+                "success": False,
+                "message": "我没找到要切换规格的商品。请先把它加入购物车，或告诉我商品名称。",
+            }
+        # Extract SKU property value: e.g. "50ml" from "换成 50ml 的"
+        sku_match = re.search(r"(\d+ml)", message or "")
+        if not sku_match:
+            product = cart.products.get(product_id)
+            options = [
+                ", ".join(f"{k}: {v}" for k, v in sku.properties.items())
+                for sku in (product.skus if product else [])
+            ]
+            snapshot = cart.get(user_id, session_id)
+            return {
+                "action": "update_sku",
+                "product_id": product_id,
+                "cart": snapshot,
+                "success": False,
+                "message": f"我没找到规格参数。可选规格有：{'；'.join(options)}" if options else "该商品暂无可选规格。",
+                "candidates": options,
+            }
+        property_value = sku_match.group(1).strip()
+        try:
+            snapshot = cart.update_sku(user_id, session_id, product_id, property_value)
+            return {
+                "action": "update_sku",
+                "product_id": product_id,
+                "cart": snapshot,
+                "success": True,
+                "message": f"已切换到 {property_value} 规格。",
+            }
+        except ValueError as exc:
+            snapshot = cart.get(user_id, session_id)
+            product = cart.products.get(product_id)
+            options = [
+                ", ".join(f"{k}: {v}" for k, v in sku.properties.items())
+                for sku in (product.skus if product else [])
+            ]
+            return {
+                "action": "update_sku",
+                "product_id": product_id,
+                "cart": snapshot,
+                "success": False,
+                "message": str(exc),
+                "candidates": options,
+            }
 
     def execute_cart_action(
         self,

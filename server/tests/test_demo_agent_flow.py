@@ -180,10 +180,10 @@ def test_five_scene_demo_flow_regression():
     assert turn10_item is not None, f"Turn 10 updated item should exist, got {turn10_event}"
     selected_sku = turn10_item.get("selected_sku") or turn10_item.get("sku") or turn10_item.get("sku_id")
     assert selected_sku is not None, f"Turn 10 should have a selected SKU, got {turn10_item}"
-    # Flexible key matching: assert that *some* property equals "50ml"
+    # Flexible key matching: SKU property values like "50ml 加大装" contain "50ml"
     if isinstance(selected_sku, dict):
-        assert any(v == "50ml" for v in selected_sku.values()), (
-            f"Turn 10 selected SKU should have a property equal to '50ml', got {selected_sku}"
+        assert any("50ml" in str(v) for v in selected_sku.values()), (
+            f"Turn 10 selected SKU should have a property containing '50ml', got {selected_sku}"
         )
     else:
         assert "50" in str(selected_sku) or "50ml" in str(selected_sku).lower(), (

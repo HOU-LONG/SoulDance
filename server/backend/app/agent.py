@@ -2155,31 +2155,51 @@ def _resolve_comparison_named_targets(text: str, product_map: dict, context: Ses
                 ids.append(anchor_id)
             break
 
-    # ── named product → catalog search by brand + keyword ──
-    for pid, product in product_map.items():
-        if pid in ids:
-            continue
-        if not product.brand or product.brand not in text:
-            continue
-        # Require at least one distinctive keyword from the title or sub_category
-        # to avoid matching every product of the same brand (e.g. 雅诗兰黛).
-        keywords: list[str] = []
-        if product.sub_category:
-            keywords.append(product.sub_category)
-        # Break the title into overlapping 2-4 char n-grams as discriminators
-        for n in (4, 3, 2):
-            for i in range(len(product.title) - n + 1):
-                keywords.append(product.title[i : i + n])
+    # ── named product → scored by _product_mention_score ──
+    # Replace brute-force n-gram matching with the existing hierarchical
+    # scorer used by the cart path.
+    normalized = _normalize_product_match_text(text)
+    if normalized:
+        # Fast path: brands with exactly one product — mentioning the brand
+        # name alone is sufficient.
+        unique_pids = _unique_brand_product_ids_for_message(normalized, list(product_map.values()))
+        for pid in unique_pids:
+            if pid not in ids and pid in product_map:
+                ids.append(pid)
 
-        # Require the brand sub-match to be more specific than just the
-        # brand prefix appearing in the title (e.g. "雅诗兰黛小棕瓶" should
-        # match p_beauty_001, not every 雅诗兰黛 product whose title starts
-        # with the brand name).  For now we stop at the first strong match;
-        # multi-named-product comparison (like "雅诗兰黛和兰蔻") would need
-        # a dedicated product-mention extractor rather than n-gram substring.
-        if any(kw in text and len(kw) >= 2 for kw in keywords):
-            ids.append(pid)
-            break
+        # Infer the expected sub_category from any fuzzy-deictic anchor product
+        # already resolved (e.g. "刚才那个便宜的" → p_beauty_018 → 精华).
+        # This prevents a brand-only match from capturing unrelated products
+        # of the same brand (e.g. 雅诗兰黛粉底液 when the user is in a 精华 flow).
+        anchor_sub_cat: str | None = None
+        for anchor_id in ids:
+            anchor = product_map.get(anchor_id)
+            if anchor is not None:
+                anchor_sub_cat = _normalize_product_match_text(anchor.sub_category)
+                break
+
+        scored: list[tuple[int, str]] = []
+        for pid, product in product_map.items():
+            if pid in ids:
+                continue
+            if not product.brand or product.brand not in text:
+                continue
+            score = _product_mention_score(normalized, product)
+            # Require a score above the brand-only threshold (55).
+            # When we have an anchor sub_category, also require that the
+            # product shares it — this is the key guard that keeps brand-only
+            # matches (which score the same regardless of sub_category) from
+            # leaking unrelated products into the comparison.
+            if score >= 55 and (
+                anchor_sub_cat is None
+                or _normalize_product_match_text(product.sub_category) == anchor_sub_cat
+            ):
+                scored.append((score, pid))
+        scored.sort(reverse=True)
+        for _, pid in scored:
+            if pid not in ids:
+                ids.append(pid)
+        ids = ids[:3]  # cap to keep comparison manageable
 
     return ids
 

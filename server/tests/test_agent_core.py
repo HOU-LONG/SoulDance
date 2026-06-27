@@ -1184,6 +1184,59 @@ def test_contextual_short_cheaper_followup_keeps_product_context():
         assert "filter_recovery_options" in [event["type"] for event in second_events]
 
 
+def test_cheaper_alternative_cues_work():
+    """Test that "替代品" and "平替" cues work for cheaper alternatives."""
+    products = load_products("ecommerce_agent_dataset")
+    agent = ShopGuideAgent(products, FakeLLMClient())
+
+    # First recommendation
+    first_events = asyncio.run(
+        agent.handle_message("anonymous", ChatRequest(
+                type="user_message",
+                session_id="test_cheaper_alternatives",
+                message="我是干性皮肤，想找一款适合秋冬用的保湿精华，预算500以内",
+            )
+        )
+    )
+    primary = next(event for event in first_events if event.get("type") == "product_item")
+    assert primary
+
+    # Test with "替代品"
+    second_events = asyncio.run(
+        agent.handle_message("anonymous", ChatRequest(
+                type="user_message",
+                session_id="test_cheaper_alternatives",
+                message="有没有便宜一点的替代品？",
+            )
+        )
+    )
+
+    states = [event for event in second_events if event["type"] == "assistant_state"]
+    assert states[0]["intent"] == "product_followup"
+
+    # Reset and test with "平替"
+    third_events = asyncio.run(
+        agent.handle_message("anonymous", ChatRequest(
+                type="user_message",
+                session_id="test_pingti",
+                message="我是干性皮肤，想找一款适合秋冬用的保湿精华，预算500以内",
+            )
+        )
+    )
+
+    fourth_events = asyncio.run(
+        agent.handle_message("anonymous", ChatRequest(
+                type="user_message",
+                session_id="test_pingti",
+                message="有没有平替？",
+            )
+        )
+    )
+
+    states = [event for event in fourth_events if event["type"] == "assistant_state"]
+    assert states[0]["intent"] == "product_followup"
+
+
 def test_short_cheaper_followup_without_context_does_not_recommend_random_products():
     products = load_products("ecommerce_agent_dataset")
     agent = ShopGuideAgent(products, FakeLLMClient())

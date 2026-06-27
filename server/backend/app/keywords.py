@@ -6,6 +6,6 @@
 
 PRODUCT_REQUEST_MARKERS = ("推荐", "找", "买", "想要", "想买", "我要", "要一", "要个", "来一", "有没有")
 EXPLAIN_FOCUS_MARKERS = ("刚刚那个是什么", "刚才那个是什么", "为什么推荐", "介绍一下", "这个是什么")
-CHEAPER_ALTERNATIVE_MARKERS = ("更便宜", "便宜点", "便宜的", "价格低")
+CHEAPER_ALTERNATIVE_MARKERS = ("更便宜", "便宜点", "便宜的", "价格低", "替代品", "平替")
 MORE_EXPENSIVE_ALTERNATIVE_MARKERS = ("更贵", "贵一点", "高端", "高价位", "价位高")
 DIFFERENT_BRAND_MARKERS = ("不要这个品牌", "换个品牌", "别的品牌", "不要这个牌子")

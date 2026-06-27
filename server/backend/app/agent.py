@@ -311,6 +311,13 @@ class ShopGuideAgent:
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
         plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
         self._apply_product_admission_gate(plan, request.message)
+        # Anchor resolution: "回到第一轮" → bind to first-turn brand
+        if plan.soft_preferences.pop("anchor_reference", None) == "first_turn":
+            first_brand = context.reference_anchors.get("first_turn_brand")
+            if first_brand:
+                plan.hard_constraints.include_brands = dedupe(
+                    list(plan.hard_constraints.include_brands) + [first_brand]
+                )
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
         if plan.intent in {"small_talk", "unclear_input"}:
@@ -970,27 +977,22 @@ class ShopGuideAgent:
         self, user_id: str, request: ChatRequest, plan: RetrievalPlan | None = None
     ) -> list[dict]:
         context = self.sessions.get(user_id, request.session_id)
-        uses_current_plan = _is_explicit_current_comparison(plan, request.message)
-        comparison_plan = (
-            _comparison_plan_for_current_request(plan, request.message, self.taxonomy, self.products)
-            if uses_current_plan and plan
-            else None
-        )
-        if uses_current_plan and comparison_plan:
-            ranked = await self.retrieve_and_rank(
-                comparison_plan,
-                user_id=user_id,
-                limit=8,
-                session_id=request.session_id,
-            )
-            products = _comparison_products_from_ranked(ranked, comparison_plan)
-            context.last_plan = comparison_plan
+        # Resolve named products and fuzzy references from user text first.
+        # Fall back to context-event-derived product_ids only when neither is present.
+        resolved_ids = _resolve_comparison_named_targets(request.message, self.product_map, context)
+        if resolved_ids and len(resolved_ids) >= 2:
+            product_ids = resolved_ids
         else:
             product_ids = _resolve_comparison_product_ids(request.message, context)
-            products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
-            if context.last_plan:
-                products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
-            comparison_plan = context.last_plan
+        products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
+        # Only apply hard_filter when product IDs came from context events.
+        # Explicitly resolved named+fuzzy targets (≥2) should not be gated
+        # by a previous turn's price/category constraints — the user named them.
+        used_resolved = resolved_ids and len(resolved_ids) >= 2
+        if context.last_plan and not used_resolved:
+            products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
+        # Preserve the dynamic comparison plan from main for downstream use
+        comparison_plan = context.last_plan
         message_id = _message_id()
         if len(products) < 2:
             text = insufficient_comparison_products_text()
@@ -1209,6 +1211,24 @@ class ShopGuideAgent:
             context.state.active_focus.type = "product"
             context.state.active_focus.product_id = ranked[0].product.product_id
             context.state.active_focus.source = "recommendation"
+
+        # If this is a cheaper alternative follow-up, save the anchor
+        if (
+            plan.intent == "product_followup"
+            and plan.soft_preferences.get("price_preference") == "更便宜"
+            and ranked
+        ):
+            context.reference_anchors["last_cheaper_alternative"] = ranked[0].product.product_id
+        # Store first-turn anchor for long-session references
+        if "first_turn_brand" not in context.reference_anchors and ranked:
+            primary = ranked[0].product
+            context.reference_anchors["first_turn_brand"] = primary.brand
+            context.reference_anchors["first_turn_category"] = primary.category
+            context.reference_anchors["first_turn_sub_category"] = primary.sub_category
+            context.reference_anchors["first_turn_product_ids"] = json.dumps(
+                [item.product.product_id for item in ranked],
+                ensure_ascii=False,
+            )
         _append_context_event(
             context,
             plan.retrieval_query,
@@ -1235,6 +1255,15 @@ class ShopGuideAgent:
         product_id = None
         if action in {"get_cart", "clear_cart", "checkout"}:
             return self._execute_cart_action(user_id, request.session_id, action, None, quantity, cart)
+        if action == "update_sku":
+            if not product_id:
+                resolution = self.reference_resolver.resolve(
+                    frame.cart_operation.target,
+                    context,
+                    cart.get(user_id, request.session_id),
+                )
+                product_id = resolution.product_id
+            return self._handle_update_sku(user_id, request.session_id, product_id, request.message, cart)
         has_named_product_hint = False
         if action in {"add_to_cart", "update_quantity"}:
             has_named_product_hint = _has_explicit_product_hint(request.message, self.products)
@@ -1318,6 +1347,67 @@ class ShopGuideAgent:
             "candidates": candidate_payload,
             "message": text,
         }
+
+    def _handle_update_sku(
+        self,
+        user_id: str,
+        session_id: str,
+        product_id: str | None,
+        message: str,
+        cart: CartService,
+    ) -> dict:
+        """Resolve SKU selection from a natural-language expression and apply it."""
+        if not product_id:
+            snapshot = cart.get(user_id, session_id)
+            return {
+                "action": "update_sku",
+                "product_id": None,
+                "cart": snapshot,
+                "success": False,
+                "message": "我没找到要切换规格的商品。请先把它加入购物车，或告诉我商品名称。",
+            }
+        # Extract SKU property value: e.g. "50ml" from "换成 50ml 的"
+        sku_match = re.search(r"(\d+ml)", message or "")
+        if not sku_match:
+            product = cart.products.get(product_id)
+            options = [
+                ", ".join(f"{k}: {v}" for k, v in sku.properties.items())
+                for sku in (product.skus if product else [])
+            ]
+            snapshot = cart.get(user_id, session_id)
+            return {
+                "action": "update_sku",
+                "product_id": product_id,
+                "cart": snapshot,
+                "success": False,
+                "message": f"我没找到规格参数。可选规格有：{'；'.join(options)}" if options else "该商品暂无可选规格。",
+                "candidates": options,
+            }
+        property_value = sku_match.group(1).strip()
+        try:
+            snapshot = cart.update_sku(user_id, session_id, product_id, property_value)
+            return {
+                "action": "update_sku",
+                "product_id": product_id,
+                "cart": snapshot,
+                "success": True,
+                "message": f"已切换到 {property_value} 规格。",
+            }
+        except ValueError as exc:
+            snapshot = cart.get(user_id, session_id)
+            product = cart.products.get(product_id)
+            options = [
+                ", ".join(f"{k}: {v}" for k, v in sku.properties.items())
+                for sku in (product.skus if product else [])
+            ]
+            return {
+                "action": "update_sku",
+                "product_id": product_id,
+                "cart": snapshot,
+                "success": False,
+                "message": str(exc),
+                "candidates": options,
+            }
 
     def execute_cart_action(
         self,
@@ -2108,6 +2198,79 @@ def _filter_recovery_event(message_id: str, plan: RetrievalPlan) -> dict:
         )
     return {"type": "filter_recovery_options", "message_id": message_id, "recovery_id": recovery_id, "options": options}
 
+
+
+def _resolve_comparison_named_targets(text: str, product_map: dict, context: SessionContext) -> list[str]:
+    """Resolve named products and fuzzy deictic references in comparison text.
+
+    Returns explicit product_ids when the user mentions a named product
+    (brand + title keyword match) or a fuzzy reference (e.g. "刚才那个便宜的").
+    Returns an empty list when neither is found — the caller should fall back
+    to ``_resolve_comparison_product_ids``.
+    """
+    ids: list[str] = []
+
+    # ── fuzzy deictic references → anchor lookup ──
+    _FUZZY_MARKERS: list[tuple[str, str]] = [
+        ("刚才那个便宜的", "last_cheaper_alternative"),
+        ("刚刚那个便宜的", "last_cheaper_alternative"),
+        ("那个便宜的", "last_cheaper_alternative"),
+        ("那个平替", "last_cheaper_alternative"),
+    ]
+    for marker, anchor_key in _FUZZY_MARKERS:
+        if marker in text:
+            anchor_id = context.reference_anchors.get(anchor_key)
+            if anchor_id and anchor_id in product_map:
+                ids.append(anchor_id)
+            break
+
+    # ── named product → scored by _product_mention_score ──
+    # Replace brute-force n-gram matching with the existing hierarchical
+    # scorer used by the cart path.
+    normalized = _normalize_product_match_text(text)
+    if normalized:
+        # Fast path: brands with exactly one product — mentioning the brand
+        # name alone is sufficient.
+        unique_pids = _unique_brand_product_ids_for_message(normalized, list(product_map.values()))
+        for pid in unique_pids:
+            if pid not in ids and pid in product_map:
+                ids.append(pid)
+
+        # Infer the expected sub_category from any fuzzy-deictic anchor product
+        # already resolved (e.g. "刚才那个便宜的" → p_beauty_018 → 精华).
+        # This prevents a brand-only match from capturing unrelated products
+        # of the same brand (e.g. 雅诗兰黛粉底液 when the user is in a 精华 flow).
+        anchor_sub_cat: str | None = None
+        for anchor_id in ids:
+            anchor = product_map.get(anchor_id)
+            if anchor is not None:
+                anchor_sub_cat = _normalize_product_match_text(anchor.sub_category)
+                break
+
+        scored: list[tuple[int, str]] = []
+        for pid, product in product_map.items():
+            if pid in ids:
+                continue
+            if not product.brand or product.brand not in text:
+                continue
+            score = _product_mention_score(normalized, product)
+            # Require a score above the brand-only threshold (55).
+            # When we have an anchor sub_category, also require that the
+            # product shares it — this is the key guard that keeps brand-only
+            # matches (which score the same regardless of sub_category) from
+            # leaking unrelated products into the comparison.
+            if score >= 55 and (
+                anchor_sub_cat is None
+                or _normalize_product_match_text(product.sub_category) == anchor_sub_cat
+            ):
+                scored.append((score, pid))
+        scored.sort(reverse=True)
+        for _, pid in scored:
+            if pid not in ids:
+                ids.append(pid)
+        ids = ids[:3]  # cap to keep comparison manageable
+
+    return ids
 
 
 def _resolve_comparison_product_ids(text: str, context: SessionContext) -> list[str]:

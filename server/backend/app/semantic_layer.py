@@ -58,7 +58,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .cart_intent import _detect_quantity as _detect_cart_quantity
+from .cart_intent import _detect_cart_action, _detect_quantity as _detect_cart_quantity, _normalize_cart_action
 from .constraint_filter import dedupe, extract_excluded_brands, extract_included_brands
 from .models import CartOperation, ChatRequest, ConstraintEdits, HardConstraints, ProductReference, RetrievalPlan, SemanticFrame, SessionContext
 from .utils import extract_json
@@ -223,6 +223,16 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
         soft["skin_type"] = "油皮"
     if "敏感肌" in text:
         soft["skin_type"] = "敏感肌"
+    if "干性皮肤" in text or "干皮" in text or "干性" in text:
+        soft["skin_type"] = "干性"
+    if "秋冬" in text:
+        soft["season"] = "秋冬"
+    if "春天" in text or "春季" in text:
+        soft["season"] = "春季"
+    if "夏天" in text or "夏季" in text:
+        soft["season"] = "夏季"
+    if "冬天" in text or "冬季" in text:
+        soft["season"] = "冬季"
     if "保湿" in text or "修护" in text:
         soft["effect"] = "保湿修护"
     if "女朋友" in text or "女生" in text:
@@ -239,18 +249,30 @@ def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
         soft["gift_style"] = "稳妥不踩雷"
     if "实用" in text:
         soft["gift_style"] = "实用"
+    # Long-session anchor resolution
+    if any(phrase in text for phrase in ["回到第一轮", "最开始那个", "第一轮那个", "回到最开始"]):
+        soft["anchor_reference"] = "first_turn"
     if request.type == "product_followup":
         intent = "product_followup"
     return SemanticFrame(intent=intent, constraint_edits=edits)
 
 
 def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, Any]) -> SemanticFrame | None:
-    if request.type != "user_message" or not context_payload.get("has_focus_product"):
+    if request.type != "user_message":
+        return None
+    # 检查是否有必要的上下文：需要 has_focus_product 或者有 last_plan + last_product_ids
+    has_context = (
+        context_payload.get("has_focus_product") or
+        (context_payload.get("last_plan") and context_payload.get("last_product_ids"))
+    )
+    if not has_context:
         return None
     text = request.message or ""
     edits = ConstraintEdits()
     response_goal = None
-    if any(word in text for word in ["再便宜", "便宜点", "更便宜", "价格低", "低价"]):
+    has_cheaper_cue = any(word in text for word in ["再便宜", "便宜点", "更便宜", "价格低", "低价"])
+    has_alternative_cue = any(word in text for word in ["替代品", "平替"])
+    if has_cheaper_cue or has_alternative_cue:
         edits.add.soft_preferences["price_preference"] = "更便宜"
         response_goal = "recommend_cheaper_alternative"
     if any(word in text for word in ["更贵", "贵一点", "高端", "高价位", "价位高"]):
@@ -593,54 +615,6 @@ def _detect_index(text: str) -> int | None:
             return index
     return None
 
-
-def _detect_cart_action(text: str) -> str:
-    if any(word in text for word in ["不要这个品牌", "不要这个牌子"]):
-        return "get_cart"
-    if any(
-        word in text
-        for word in [
-            "清空购物车",
-            "购物车清空",
-            "清一下购物车",
-            "购物车清一下",
-            "全部删掉",
-            "全部删除",
-            "都删掉",
-            "都删除",
-            "全删了",
-            "不要了",
-        ]
-    ):
-        return "clear_cart"
-    if any(word in text for word in ["下单", "结算"]):
-        return "checkout"
-    if any(word in text for word in ["删掉", "删除", "移除"]):
-        return "remove"
-    if any(word in text for word in ["数量", "改成", "改为"]):
-        return "update_quantity"
-    if any(word in text for word in ["购物车", "加购", "加入", "加到", "添加", "放购物车"]):
-        return "add_to_cart"
-    if re.search(
-        r"就这个|要这个|这个要|这款要|要这款|就它了|就这款|刚才.*(?:要|来|买)|(?:来|买)[一两二三四五六七八九十\\d]+[件个份瓶盒包袋罐条杯](?:这个|这款|它|咖啡)?$",
-        text or "",
-    ):
-        return "add_to_cart"
-    return "get_cart"
-
-
-def _normalize_cart_action(action: str) -> str:
-    if action in {"add", "add_to_cart"}:
-        return "add_to_cart"
-    if action in {"update", "set_quantity", "update_quantity"}:
-        return "update_quantity"
-    if action in {"delete", "remove"}:
-        return "remove"
-    if action in {"checkout", "order"}:
-        return "checkout"
-    if action in {"clear", "clear_cart", "empty_cart"}:
-        return "clear_cart"
-    return "get_cart"
 
 
 def _detect_quantity(text: str) -> int | None:

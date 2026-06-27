@@ -66,8 +66,8 @@ SoulDance/
 ## Demo Backend
 
 ```text
-HTTP API: https://continually-replication-allowing-editions.trycloudflare.com/
-WebSocket: wss://continually-replication-allowing-editions.trycloudflare.com/ws/chat
+HTTP API: https://missouri-traveling-seat-diverse.trycloudflare.com/
+WebSocket: wss://missouri-traveling-seat-diverse.trycloudflare.com/ws/chat
 ```
 
 The Cloudflare URL is a temporary tunnel endpoint. If it changes, update `client/.../AppConfig.kt` and rebuild the APK.

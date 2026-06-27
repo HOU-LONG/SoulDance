@@ -320,6 +320,33 @@ class SessionCompressionState(BaseModel):
     living_summary: LivingSummary = Field(default_factory=LivingSummary)
 
 
+class DisplayMessageProduct(BaseModel):
+    product_id: str
+    name: str
+    brand: str = ""
+    category: str = ""
+    sub_category: str = ""
+    price: float = 0.0
+    image_url: str = ""
+    main_image_url: str = ""
+    tags: list[str] = Field(default_factory=list)
+    reason: str = ""
+    is_primary: bool = False
+    derived_attributes: dict[str, Any] = Field(default_factory=dict)
+    positive_feedback_summary: list[str] = Field(default_factory=list)
+    negative_feedback_summary: list[str] = Field(default_factory=list)
+    risk_tags: list[str] = Field(default_factory=list)
+
+
+class DisplayMessage(BaseModel):
+    id: str = ""
+    role: str  # "user" | "assistant" | "system"
+    text: str = ""
+    created_at: str = ""
+    products: list[DisplayMessageProduct] = Field(default_factory=list)
+    quick_actions: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class SessionContext(BaseModel):
     session_id: str
     state: SessionState = Field(default_factory=SessionState)
@@ -334,10 +361,11 @@ class SessionContext(BaseModel):
     recent_cart_product_id: str | None = None
     reference_anchors: dict[str, str] = Field(default_factory=dict)
     dialog_turns: list[dict[str, str]] = Field(default_factory=list)
+    display_messages: list[DisplayMessage] = Field(default_factory=list)
     compression_state: SessionCompressionState = Field(default_factory=SessionCompressionState)
     entity_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     entity_params_order: list[str] = Field(default_factory=list)
-    schema_version: int = 2
+    schema_version: int = 3
     last_activity_at: str = ""
 
     def model_post_init(self, __context: Any) -> None:

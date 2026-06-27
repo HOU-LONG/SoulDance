@@ -35,7 +35,7 @@ from backend.app.models import ChatRequest
 
 
 class TimeoutStreamLLM(FakeLLMClient):
-    async def stream_response(self, user_message, plan, ranked_products, focus_product=None):
+    async def stream_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
         await asyncio.sleep(0.2)
         yield "too late"
 

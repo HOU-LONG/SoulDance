@@ -312,7 +312,7 @@ class SessionCompressionState(BaseModel):
     """
 
     user_id: str = "anonymous"
-    session_id: str = ""
+    session_id: str
     model_context_limit: int = 0
     last_total_tokens: int | None = None
     watermark_level: str = "maintain"
@@ -362,7 +362,7 @@ class SessionContext(BaseModel):
     reference_anchors: dict[str, str] = Field(default_factory=dict)
     dialog_turns: list[dict[str, str]] = Field(default_factory=list)
     display_messages: list[DisplayMessage] = Field(default_factory=list)
-    compression_state: SessionCompressionState = Field(default_factory=SessionCompressionState)
+    compression_state: SessionCompressionState = Field(default_factory=lambda: SessionCompressionState(session_id=""))
     entity_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     entity_params_order: list[str] = Field(default_factory=list)
     schema_version: int = 3

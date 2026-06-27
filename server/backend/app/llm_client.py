@@ -672,7 +672,7 @@ class LLMClientWithBreaker:
             plan,
             ranked_products,
             focus_product,
-            context,
+            context=context,
         )
 
     async def select_products(
@@ -701,7 +701,7 @@ class LLMClientWithBreaker:
         async for chunk in self.breaker.call_stream(
             self.client.stream_response,
             self._fallback.stream_response,
-            user_message, plan, ranked_products, focus_product, context,
+            user_message, plan, ranked_products, focus_product, context=context,
         ):
             yield chunk
 

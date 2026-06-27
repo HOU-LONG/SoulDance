@@ -12,7 +12,7 @@ class FailingLLM(FakeLLMClient):
         self.fail_count = fail_count
         self.calls = 0
 
-    async def generate_response(self, user_message, plan, ranked_products, focus_product=None):
+    async def generate_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
         self.calls += 1
         if self.calls <= self.fail_count:
             raise RuntimeError("LLM failure")
@@ -20,7 +20,7 @@ class FailingLLM(FakeLLMClient):
 
 
 class SuccessLLM(FakeLLMClient):
-    async def generate_response(self, user_message, plan, ranked_products, focus_product=None):
+    async def generate_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
         return "success"
 
 
@@ -152,11 +152,11 @@ async def test_wrapper_all_methods_are_wrapped():
             self.count += 1
             return "{}"
 
-        async def generate_response(self, user_message, plan, ranked_products, focus_product=None):
+        async def generate_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
             self.count += 1
             return "ok"
 
-        async def stream_response(self, user_message, plan, ranked_products, focus_product=None):
+        async def stream_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
             self.count += 1
             yield "ok"
 

@@ -12,6 +12,7 @@ import com.example.shopguideagent.data.catalog.ListProductCatalog;
 import com.example.shopguideagent.data.history.ChatHistoryRepository;
 import com.example.shopguideagent.data.history.ChatSessionUiModel;
 import com.example.shopguideagent.data.history.InMemoryChatHistoryStore;
+import com.google.gson.Gson;
 import com.example.shopguideagent.data.model.MessageRole;
 import com.example.shopguideagent.data.model.ProductFollowUpPayload;
 import com.example.shopguideagent.data.model.ProductUiModel;
@@ -121,7 +122,7 @@ public class ChatViewModelTest {
         ProductUiModel focused = product("focused-product", "Focused product", Arrays.asList("first"));
         ChatViewModel viewModel = new ChatViewModel(
                 new ListProductCatalog(Arrays.asList(focused)),
-                new ChatHistoryRepository(new InMemoryChatHistoryStore("")),
+                new ChatHistoryRepository(new InMemoryChatHistoryStore(), () -> "demo_user_a", new Gson()),
                 new NoopRealtimeChatWebSocketClient()
         );
 
@@ -138,7 +139,7 @@ public class ChatViewModelTest {
         ProductUiModel active = product("active-product", "Active product", Arrays.asList("first"));
         ChatViewModel viewModel = new ChatViewModel(
                 new ListProductCatalog(Arrays.asList(active)),
-                new ChatHistoryRepository(new InMemoryChatHistoryStore("")),
+                new ChatHistoryRepository(new InMemoryChatHistoryStore(), () -> "demo_user_a", new Gson()),
                 new NoopRealtimeChatWebSocketClient()
         );
 
@@ -158,7 +159,7 @@ public class ChatViewModelTest {
         ProductUiModel queryMatchedLater = product("query-matched-later", "Exact follow up query match", Arrays.asList("Exact follow up query match"));
         ChatViewModel viewModel = new ChatViewModel(
                 new ListProductCatalog(Arrays.asList(focused, sourceReplacement, queryMatchedLater)),
-                new ChatHistoryRepository(new InMemoryChatHistoryStore("")),
+                new ChatHistoryRepository(new InMemoryChatHistoryStore(), () -> "demo_user_a", new Gson()),
                 new NoopRealtimeChatWebSocketClient()
         );
 
@@ -409,7 +410,7 @@ public class ChatViewModelTest {
         ProductUiModel sunscreen = productWithImage("sunscreen", "Daily sunscreen", Arrays.asList("sunscreen", "outdoor"));
         return new ChatViewModel(
                 new ListProductCatalog(Arrays.asList(clean, sunscreen)),
-                new ChatHistoryRepository(new InMemoryChatHistoryStore("")),
+                new ChatHistoryRepository(new InMemoryChatHistoryStore(), () -> "demo_user_a", new Gson()),
                 new NoopRealtimeChatWebSocketClient()
         );
     }

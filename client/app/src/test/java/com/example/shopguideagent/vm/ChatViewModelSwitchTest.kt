@@ -40,7 +40,7 @@ class ChatViewModelSwitchTest {
         val fakeWebSocketClient = FakeRealtimeChatWebSocketClient()
         val viewModel = ChatViewModel(
             productCatalog = ListProductCatalog(emptyList()),
-            historyRepository = ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            historyRepository = ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             wsClient = fakeWebSocketClient,
             userSession = userSession,
             sessionsApi = fakeSessionsApi,
@@ -74,7 +74,7 @@ class ChatViewModelSwitchTest {
         val fakeWebSocketClient = FakeRealtimeChatWebSocketClient()
         val viewModel = ChatViewModel(
             productCatalog = ListProductCatalog(emptyList()),
-            historyRepository = ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            historyRepository = ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             wsClient = fakeWebSocketClient,
             userSession = userSession,
             sessionsApi = fakeSessionsApi,

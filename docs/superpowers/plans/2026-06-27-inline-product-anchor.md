@@ -37,9 +37,24 @@
 
 ---
 
+## 执行规则
+
+前端所有 UI 组件实现前，必须加载以下 skills 获取设计指导：
+
+| Skill | 用途 | 适用文件 |
+|-------|------|---------|
+| **`material-3`** | Material Design 3 组件规范：`ModalBottomSheet`、`Surface`、`TextButton`、`IconButton`、`NavigationBar` 的正确用法，tokens（`MaterialTheme.colorScheme`、`Typography`、`Shapes`）体系 | F3 (AiMessageBlock), F4 (ProductDetailSheet), F5 (ChatViewModel interactions) |
+| **`frontend-design`** | 视觉美学方向：字重层级、间距节奏、色彩系统、hover/active 过渡动效。确保锚点文字的蓝色/下划线样式与品牌色调一致，底部 Sheet 的信息层级清晰不拥挤 | F1 (parser 的 SpanStyle), F4 (Sheet 布局) |
+
+**加载规则：** 实现前端部分的 agent 或人工操作者，在写第一行 Kotlin 代码前必须先 `Skill` 加载上述 skill。
+
+---
+
 ## 前端改动
 
 ### F1. 文本解析器 — MarkdownTextFormatter
+
+> **Skill: frontend-design** — 确定锚点的视觉样式：品牌色取值、下划线粗细、hover 微动效。
 
 **文件:** `client/app/src/main/java/com/example/shopguideagent/ui/component/MarkdownTextFormatter.kt`
 
@@ -48,8 +63,9 @@
 - 正则匹配 `\[\[(.+?)#(.+?)\]\]` → 提取 `name` 和 `productId`
 - 替换为可点击的 `AnnotatedString` span：
   - `pushStringAnnotation(tag = "product_anchor", annotation = productId)`
-  - `withStyle(SpanStyle(color = BrandPrimary, textDecoration = TextDecoration.Underline))`
+  - `withStyle(SpanStyle(color = MaterialTheme.colorScheme.primary, textDecoration = TextDecoration.Underline))`
 - 点击时触发回调，传入 `productId`
+- 视觉约束：锚点与周围文本保持相同字号和行高，仅以颜色和半透明下划线区分
 
 ### F2. 消息数据模型扩展
 
@@ -66,25 +82,29 @@ ViewModel 在处理 `product_item` 事件时同步填充此 map。
 
 ### F3. 锚点渲染 — AiMessageBlock 改造
 
+> **Skill: material-3** — `Surface`、`ClickableText` 的 Material3 兼容用法。
+
 **文件:** `client/app/src/main/java/com/example/shopguideagent/ui/component/AiMessageBlock.kt`
 
-- 保留文本气泡（`AiMessageText`），但将 `renderMarkdownText` 替换为支持 `ClickableText` 的版本
-- 文本中检测到 `product_anchor` annotation 时，渲染为品牌色 + 下划线文字
+- 保留文本气泡（`AiMessageText`），但将 `renderMarkdownText` 替换为支持 `ClickableText` + `AnnotatedString` 的版本
+- 文本中检测到 `product_anchor` annotation 时，渲染为 `colorScheme.primary` + 半透明下划线文字
 - 点击 → 触发 `onProductAnchorTap(productId)`
 - 不再在文本下方渲染 `ProductCarousel`（移除独立卡片区域）
 
 ### F4. 商品详情展开面板
 
+> **Skills: material-3 + frontend-design** — `ModalBottomSheet` 的 Material3 标准用法 + 信息层级美学布局。
+
 **新建文件:** `client/app/src/main/java/com/example/shopguideagent/ui/component/ProductDetailSheet.kt`
 
-移动端用 `ModalBottomSheet`（Material3），桌面端可选 `DropdownMenu` 或内联展开。
+移动端用 `ModalBottomSheet`（Material3 `@OptIn(ExperimentalMaterial3Api::class)`），桌面端可选 `DropdownMenu` 或内联展开。
 
-内容：
-- 商品大图（`AsyncImage`，按需加载）
-- 完整标题
-- 价格 `¥XX.XX`
-- 评分 + 核心卖点
-- 操作按钮：`[加入购物车]` `[问更多]` `[关闭]`
+内容布局（自上而下）：
+- **图区**：商品大图（`AsyncImage`，按需加载），16:9 裁切，圆角 `MaterialTheme.shapes.medium`
+- **标题区**：`Text` 使用 `MaterialTheme.typography.titleLarge`
+- **价格 + 评分**：`¥XX.XX` 使用 `titleMedium` + `colorScheme.primary`，评分用小字 `bodySmall`
+- **核心卖点**：`FlowRow` 标签，使用 `SuggestionChip`（Material3）或 `AssistChip`
+- **操作按钮**：`[加入购物车]` — `Button` primary；`[问更多]` — `OutlinedButton`；`[关闭]` — `TextButton`。间距 12dp，底部安全区
 
 互斥规则：`ChatViewModel` 维护 `expandedProductId: String?` 状态，同时仅展开一个。
 

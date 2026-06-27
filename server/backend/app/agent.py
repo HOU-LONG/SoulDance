@@ -263,7 +263,48 @@ class ShopGuideAgent:
         return ranked
 
     async def handle_message(self, user_id: str, request: ChatRequest) -> list[dict]:
-        return [event async for event in self.stream_message(user_id, request)]
+        events = [event async for event in self.stream_message(user_id, request)]
+        context = self.sessions.get(user_id, request.session_id)
+        self._collect_assistant_reply(context, events)
+        await self._maybe_update_summary(context)
+        return events
+
+    def _collect_assistant_reply(self, context: SessionContext, events: list[dict]) -> None:
+        """Collect text_delta events into dialog_turns after stream completes."""
+        text_parts = [e.get("text", "") for e in events if e.get("type") == "text_delta"]
+        full = "".join(text_parts) if text_parts else "[回复]"
+        context.dialog_turns.append({"role": "assistant", "content": full[:2000]})
+        # Capacity: keep last 100 messages (50 full turns)
+        if len(context.dialog_turns) > 100:
+            context.dialog_turns = context.dialog_turns[-100:]
+
+    async def _maybe_update_summary(self, context: SessionContext) -> None:
+        """Generate a living summary when dialog grows beyond threshold."""
+        turns = context.dialog_turns
+        if len(turns) < 16:  # 8 full turns = 16 messages
+            return
+        last_at = context.compression_state.living_summary.updated_turn
+        if len(turns) - last_at < 6:  # at least 3 new turns since last summary
+            return
+        # Build history text from uncovered turns
+        history_lines = []
+        for t in turns[last_at:]:
+            role = "用户" if t["role"] == "user" else "助手"
+            history_lines.append(f"{role}: {t.get('content', '')[:500]}")
+        history_text = "\n".join(history_lines)
+
+        summary = await self.llm_client.generate_summary(history_text)
+        if not summary:
+            return
+
+        ls = context.compression_state.living_summary
+        if ls.text:
+            ls.text = ls.text + " " + summary
+        else:
+            ls.text = summary
+        ls.covered_part_ids.append(f"{last_at}-{len(turns)}")
+        ls.updated_turn = len(turns)
+        ls.source_token_count = len(history_text)
 
     async def compile_intent(self, user_id: str, request: ChatRequest):
         context = self.sessions.get(user_id, request.session_id)
@@ -272,6 +313,8 @@ class ShopGuideAgent:
 
     async def stream_message(self, user_id: str, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
         context = self.sessions.get(user_id, request.session_id)
+        # Append user message to dialog history before processing
+        context.dialog_turns.append({"role": "user", "content": request.message or ""})
         recovery_events = self._build_pending_recovery_events(context, request)
         if recovery_events is not None:
             for event in recovery_events:
@@ -479,6 +522,11 @@ class ShopGuideAgent:
         plan.intent = "product_followup"
         plan.retrieval_mode = "product_focus_retrieval"
         resolved_product_id = _resolve_context_product_id(context, request.message)
+        # Entity-params fallback: when the user references product attributes
+        # ("那个重的", "50ml的") and context cache has matching params
+        if not resolved_product_id and context.entity_params:
+            resolved_product_id = _resolve_from_entity_params(
+                request.message, context.entity_params)
         if resolved_product_id:
             context.focus_product_id = resolved_product_id
             context.state.active_focus.type = "product"
@@ -760,8 +808,9 @@ class ShopGuideAgent:
     ) -> str:
         if not ranked:
             return _no_match_text(plan)
+        ctx = self.sessions.get("anonymous", request.session_id)
         try:
-            text = await self.llm_client.generate_response(request.message, plan, ranked, focus_product)
+            text = await self.llm_client.generate_response(request.message, plan, ranked, focus_product, context=ctx)
             if text:
                 return text
         except Exception:
@@ -780,11 +829,12 @@ class ShopGuideAgent:
             for event in _text_delta_events(message_id, _no_match_text(plan)):
                 yield event
             return
+        ctx = self.sessions.get("anonymous", request.session_id)
         try:
             chunks: list[str] = []
             first_chunk = await run_with_timeout(
                 self._first_chunk_from_stream(
-                    self.llm_client.stream_response(request.message, plan, ranked, focus_product)
+                    self.llm_client.stream_response(request.message, plan, ranked, focus_product, context=ctx)
                 ),
                 timeout_seconds=DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS,
                 fallback=None,
@@ -796,7 +846,7 @@ class ShopGuideAgent:
                     yield event
                 return
             chunks.append(first_chunk)
-            async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product):
+            async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product, context=ctx):
                 if chunk:
                     chunks.append(chunk)
             streamed_text = "".join(chunks)
@@ -990,7 +1040,11 @@ class ShopGuideAgent:
         # by a previous turn's price/category constraints — the user named them.
         used_resolved = resolved_ids and len(resolved_ids) >= 2
         if context.last_plan and not used_resolved:
-            products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
+            products = [
+                product for product in products
+                if product.product_id in context.entity_params
+                or hard_filter(product, context.last_plan.hard_constraints)
+            ]
         # Preserve the dynamic comparison plan from main for downstream use
         comparison_plan = context.last_plan
         message_id = _message_id()
@@ -1026,7 +1080,7 @@ class ShopGuideAgent:
         }
         understanding = (
             f"我按你这次说的条件筛出 {len(products)} 款来比。"
-            if uses_current_plan
+            if used_resolved
             else f"我把你刚才看的 {len(products)} 款放在一起比。"
         )
         text = compose_markdown_sections(
@@ -1229,6 +1283,26 @@ class ShopGuideAgent:
                 [item.product.product_id for item in ranked],
                 ensure_ascii=False,
             )
+        # Cache product parameters for future reference
+        for item in ranked:
+            pid = item.product.product_id
+            if pid not in context.entity_params:
+                context.entity_params[pid] = {
+                    "price": item.product.price,
+                    "brand": item.product.brand,
+                    "category": item.product.category,
+                    "sub_category": item.product.sub_category,
+                }
+                context.entity_params_order.append(pid)
+        # LRU eviction: keep last 50
+        while len(context.entity_params_order) > 50:
+            oldest = context.entity_params_order.pop(0)
+            context.entity_params.pop(oldest, None)
+
+        # Track shopping domain
+        if plan.hard_constraints.category:
+            context.state.constraint_state.current_domain = plan.hard_constraints.category
+
         _append_context_event(
             context,
             plan.retrieval_query,
@@ -1887,6 +1961,20 @@ def _resolve_context_product_id(context: SessionContext, message: str) -> str | 
     return str(product_ids[0])
 
 
+def _resolve_from_entity_params(text: str, entity_params: dict[str, dict[str, Any]]) -> str | None:
+    """Match user attribute references against cached entity params.
+
+    When a follow-up message mentions a product attribute (e.g."那个重的",
+    "50ml的"), scans entity_params for matching values and returns the
+    first product_id whose cached attributes appear in the text.
+    """
+    for pid, attrs in entity_params.items():
+        for value in attrs.values():
+            if isinstance(value, (str, int, float)) and str(value) in text:
+                return pid
+    return None
+
+
 def _reference_index_from_text(text: str) -> int | None:
     markers = {
         "第一": 0,
@@ -1930,7 +2018,7 @@ def _reset_shopping_task(context: SessionContext) -> None:
     context.state.active_focus.type = None
     context.state.active_focus.product_id = None
     context.state.active_focus.source = None
-    context.state.recommendation_memory.items = []
+    context.state.recommendation_memory.items.clear()
     context.state.recommendation_memory.last_set_id = None
 
 

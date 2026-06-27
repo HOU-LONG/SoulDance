@@ -47,7 +47,7 @@ class BlockingResponseLLM(FakeLLMClient):
         self.generate_started = asyncio.Event()
         self.release_generate = asyncio.Event()
 
-    async def generate_response(self, user_message, plan, ranked_products, focus_product=None):
+    async def generate_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
         self.generate_started.set()
         await self.release_generate.wait()
         return "这是延迟生成的导购解释。"
@@ -58,11 +58,11 @@ class StreamingResponseLLM(FakeLLMClient):
         self.generate_called = False
         self.chunks = ["第一段", "第二段", "第三段"]
 
-    async def generate_response(self, user_message, plan, ranked_products, focus_product=None):
+    async def generate_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
         self.generate_called = True
         return "不应该等待完整回复"
 
-    async def stream_response(self, user_message, plan, ranked_products, focus_product=None):
+    async def stream_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
         for chunk in self.chunks:
             await asyncio.sleep(0)
             yield chunk

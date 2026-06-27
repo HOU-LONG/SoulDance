@@ -19,6 +19,8 @@ class ComparisonEngine:
         self._llm = llm_client
 
     async def compare(self, products: list[Product], user_message: str) -> ComparisonResult:
+        if not hasattr(self._llm, "_json_completion"):
+            return self._fallback_compare(products, user_message)
         try:
             raw = await self._llm._json_completion([
                 {"role": "system", "content": COMPARISON_SYSTEM_PROMPT},

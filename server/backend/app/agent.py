@@ -1040,7 +1040,7 @@ class ShopGuideAgent:
         }
         understanding = (
             f"我按你这次说的条件筛出 {len(products)} 款来比。"
-            if uses_current_plan
+            if used_resolved
             else f"我把你刚才看的 {len(products)} 款放在一起比。"
         )
         text = compose_markdown_sections(

@@ -178,6 +178,7 @@ class ShopGuideAgent:
         from .tools.bundle import ScenarioBundleTool
         from .tools.followup import ProductFollowupTool
         from .tools.small_talk import SmallTalkTool
+        from .tools.product_analysis import ProductAnalysisTool
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(RetrieveProductsTool(self))
         self.tool_registry.register(CartTool(self))
@@ -186,6 +187,7 @@ class ShopGuideAgent:
         self.tool_registry.register(ScenarioBundleTool(self))
         self.tool_registry.register(ProductFollowupTool(self))
         self.tool_registry.register(SmallTalkTool(self))
+        self.tool_registry.register(ProductAnalysisTool(self))
 
     def _record_feedback(self, session_id: str, signal_type: str, product_id: str = None,
                          action_label: str = None, context: dict = None) -> None:
@@ -360,6 +362,15 @@ class ShopGuideAgent:
             ):
                 yield event
             return
+        if ir.intent in {"small_talk", "unclear_input"} and _looks_like_single_product_analysis(request.message):
+            async for event in self.tool_registry.execute(
+                "product_analysis",
+                request,
+                context,
+                user_id=user_id,
+            ):
+                yield event
+            return
         if ir.intent in {"small_talk", "unclear_input"}:
             async for event in self.tool_registry.execute(
                 ir.intent,
@@ -400,6 +411,15 @@ class ShopGuideAgent:
                 context,
                 plan=plan,
                 context_action=context_action,
+                user_id=user_id,
+            ):
+                yield event
+            return
+        if ir.intent == "compare_products" and _looks_like_single_product_analysis(request.message):
+            async for event in self.tool_registry.execute(
+                "product_analysis",
+                request,
+                context,
                 user_id=user_id,
             ):
                 yield event
@@ -2818,6 +2838,15 @@ async def _stream_with_first_chunk_timeout(
         yield chunk
         # 首块拿到后，后续 chunk 用更宽松的间隔超时
         timeout = chunk_timeout
+
+
+def _looks_like_single_product_analysis(message: str) -> bool:
+    text = message or ""
+    # e.g. "如何看待...性价比", "这个...怎么样", "分析一下..."
+    return bool(
+        re.search(r"(性价比|怎么样|如何|分析一下|值得买吗|好不好)", text)
+        and not re.search(r"(对比|比较|哪个更|怎么选|第一款|第二款)", text)
+    )
 
 
 def _no_match_text(plan: RetrievalPlan) -> str:

@@ -33,7 +33,7 @@ data class UserProfileUiState(
 )
 
 data class SpiritProgressUiState(
-    val spiritName: String = "龙龙宝宝猪猪咪",
+    val spiritName: String = "灵舞",
     val level: Int = 22,
     val currentIntimacy: Int = 215,
     val requiredIntimacy: Int = 2000,

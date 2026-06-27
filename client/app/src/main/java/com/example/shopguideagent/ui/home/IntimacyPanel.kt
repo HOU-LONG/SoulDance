@@ -106,7 +106,7 @@ fun IntimacyPanel(
 private fun IntimacyPanelPreview() {
     ShopGuideAgentTheme {
         IntimacyPanel(
-            spriteName = "龙龙宝宝猪猪咪",
+            spriteName = "灵舞",
             level = 22,
             intimacy = 215,
             intimacyMax = 2000,

@@ -168,7 +168,7 @@ class DoubaoLLMClient:
                     'content': json.dumps(
                         {
                             'message': user_message,
-                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product),
+                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=None),
                         },
                         ensure_ascii=False,
                     ),
@@ -220,7 +220,7 @@ class DoubaoLLMClient:
                     'content': json.dumps(
                         {
                             'message': user_message,
-                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product),
+                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=None),
                         },
                         ensure_ascii=False,
                     ),
@@ -436,10 +436,56 @@ def _is_unsupported_stream_options_error(exc: Exception) -> bool:
     return 'stream_options' in text and ('not supported' in text or 'unknown' in text or 'invalid' in text)
 
 
+def _constraint_sentence(plan: RetrievalPlan | None) -> str:
+    """从 RetrievalPlan 中提取硬约束，生成用户条件摘要短句。
+
+    用于注入 Response Prompt，让 LLM 明确知道当前生效的筛选条件。
+    """
+    if plan is None:
+        return ""
+    parts = []
+    h = plan.hard_constraints
+    if h.price_max is not None:
+        parts.append(f"预算{h.price_max:.0f}以内")
+    if h.price_min is not None:
+        parts.append(f"预算{h.price_min:.0f}以上")
+    if h.exclude_brands:
+        parts.append(f"排除品牌{'、'.join(h.exclude_brands)}")
+    if h.include_brands:
+        parts.append(f"指定品牌{'、'.join(h.include_brands)}")
+    for k, v in plan.soft_preferences.items():
+        if k not in ("anchor_reference", "price_preference"):
+            parts.append(str(v))
+    return "已知用户条件：" + "、".join(parts) + "。" if parts else ""
+
+
+def _build_recent_context_text(context: SessionContext | None) -> str:
+    """从 SessionContext 中构建最近对话上下文文本。
+
+    优先包含 living_summary（压缩摘要），然后拼接最近 10 条消息（5 轮完整对话）。
+    当 context 为 None 或没有 dialog_turns 时返回空字符串。
+    """
+    if context is None or not context.dialog_turns:
+        return ""
+    parts = []
+    # Phase 2 压缩摘要（Phase 1 中为占位符，通常为空）
+    ls = context.compression_state.living_summary
+    if ls.text:
+        parts.append(f"[之前对话摘要] {ls.text}")
+    # 最近 10 条消息（5 轮完整对话）
+    recent = context.dialog_turns[-10:]
+    for turn in recent:
+        role = "用户" if turn.get("role") == "user" else "助手"
+        parts.append(f"{role}：{turn.get('content', '')}")
+    return "\n".join(parts)
+
+
 def _response_evidence_payload(
     plan: RetrievalPlan,
     ranked_products: list[RankedProduct],
     focus_product: Product | None = None,
+    *,
+    context: SessionContext | None = None,
 ) -> dict[str, Any]:
     products = [
         {
@@ -461,6 +507,8 @@ def _response_evidence_payload(
     return {
         'allowed_products': products,
         'selected_primary': products[0]['product_id'] if products else None,
+        'recent_context_text': _build_recent_context_text(context),
+        'constraint_note': _constraint_sentence(plan),
         'response_contract': {
             'kind': 'recommendation_markdown_v2',
             'required_sections': ['理解', '结论', '主推', '下一步'],

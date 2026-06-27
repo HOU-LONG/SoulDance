@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from functools import lru_cache
+import uuid
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +23,7 @@ from .identity import get_current_user_id, is_valid_user_id, ANONYMOUS_USER_ID
 from .image_assets import product_image_url_auto as product_image_url
 from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
-from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
+from .models import CartActionRequest, ChatRequest, DisplayMessage, FeedbackEvent, OrderActionRequest
 from .order_service import OrderError, OrderService
 from .rag.fusion import HybridRetriever
 from .rag.reranker import build_reranker
@@ -303,6 +305,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                 async def send_cart_tool_events(compiled_ir=None) -> bool:
                     handled = False
                     context = agent.sessions.get(user_id, request.session_id)
+                    cart_events: list[dict] = []
                     async for event in agent.tool_registry.execute(
                         "cart_operation",
                         request,
@@ -312,10 +315,12 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                         user_id=user_id,
                     ):
                         handled = True
+                        cart_events.append(event)
                         await websocket.send_json(envelope.wrap(event))
                         metrics.increment("ws.events.sent")
                     if handled:
                         session_store.save(user_id, request.session_id)
+                        _record_cart_display_message(context, request, cart_events)
                     return handled
 
                 if request.type == "cart_action":
@@ -489,6 +494,20 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                 request.idempotency_key,
             ).model_dump(mode="json")
         )
+
+    def _record_cart_display_message(context, request, events):
+        text = request.message or f"购物车操作: {request.action}"
+        result_parts = []
+        for event in events:
+            if event.get("type") == "cart_update" and event.get("message"):
+                result_parts.append(event["message"])
+        display = DisplayMessage(
+            id=str(uuid.uuid4()),
+            role="system",
+            text=f"{text}\n{'; '.join(result_parts)}" if result_parts else text,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        context.display_messages.append(display)
 
     return app
 

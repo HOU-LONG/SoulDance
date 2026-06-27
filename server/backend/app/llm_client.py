@@ -380,6 +380,10 @@ class FakeLLMClient:
             ensure_ascii=False,
         )
 
+    async def generate_summary(self, history_text: str) -> str:
+        """Return a fixed summary for testing. Production override uses real LLM."""
+        return "前几轮为购物咨询对话，用户当前需求如上。"
+
     async def classify_contextual_followup(self, message: str, context: dict[str, Any]) -> str:
         return json.dumps({'intent': 'unclear_input'}, ensure_ascii=False)
 

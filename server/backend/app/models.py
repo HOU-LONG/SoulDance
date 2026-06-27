@@ -160,6 +160,7 @@ class ConstraintState(BaseModel):
     hard: HardConstraints = Field(default_factory=HardConstraints)
     soft: dict[str, str] = Field(default_factory=dict)
     source_turns: list[dict[str, Any]] = Field(default_factory=list)
+    current_domain: str | None = None
 
 
 class CartMemory(BaseModel):
@@ -334,6 +335,8 @@ class SessionContext(BaseModel):
     reference_anchors: dict[str, str] = Field(default_factory=dict)
     dialog_turns: list[dict[str, str]] = Field(default_factory=list)
     compression_state: SessionCompressionState = Field(default_factory=SessionCompressionState)
+    entity_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    entity_params_order: list[str] = Field(default_factory=list)
     schema_version: int = 2
     last_activity_at: str = ""
 

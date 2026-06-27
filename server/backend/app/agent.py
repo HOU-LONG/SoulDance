@@ -266,6 +266,7 @@ class ShopGuideAgent:
         events = [event async for event in self.stream_message(user_id, request)]
         context = self.sessions.get(user_id, request.session_id)
         self._collect_assistant_reply(context, events)
+        self._maybe_update_summary(context)
         return events
 
     def _collect_assistant_reply(self, context: SessionContext, events: list[dict]) -> None:
@@ -276,6 +277,35 @@ class ShopGuideAgent:
         # Capacity: keep last 100 messages (50 full turns)
         if len(context.dialog_turns) > 100:
             context.dialog_turns = context.dialog_turns[-100:]
+
+    def _maybe_update_summary(self, context: SessionContext) -> None:
+        """Generate a living summary when dialog grows beyond threshold."""
+        turns = context.dialog_turns
+        if len(turns) < 16:  # 8 full turns = 16 messages
+            return
+        last_at = context.compression_state.living_summary.updated_turn
+        if len(turns) - last_at < 6:  # at least 3 new turns since last summary
+            return
+        # Build history text from uncovered turns
+        history_lines = []
+        for t in turns[last_at:]:
+            role = "用户" if t["role"] == "user" else "助手"
+            history_lines.append(f"{role}: {t.get('content', '')[:500]}")
+        history_text = "\n".join(history_lines)
+
+        import asyncio as _asyncio
+        summary = _asyncio.run(self.llm_client.generate_summary(history_text))
+        if not summary:
+            return
+
+        ls = context.compression_state.living_summary
+        if ls.text:
+            ls.text = ls.text + " " + summary
+        else:
+            ls.text = summary
+        ls.covered_part_ids.append(f"{last_at}-{len(turns)}")
+        ls.updated_turn = len(turns)
+        ls.source_token_count = len(history_text)
 
     async def compile_intent(self, user_id: str, request: ChatRequest):
         context = self.sessions.get(user_id, request.session_id)
@@ -1243,6 +1273,26 @@ class ShopGuideAgent:
                 [item.product.product_id for item in ranked],
                 ensure_ascii=False,
             )
+        # Cache product parameters for future reference
+        for item in ranked:
+            pid = item.product.product_id
+            if pid not in context.entity_params:
+                context.entity_params[pid] = {
+                    "price": item.product.price,
+                    "brand": item.product.brand,
+                    "category": item.product.category,
+                    "sub_category": item.product.sub_category,
+                }
+                context.entity_params_order.append(pid)
+        # LRU eviction: keep last 50
+        while len(context.entity_params_order) > 50:
+            oldest = context.entity_params_order.pop(0)
+            context.entity_params.pop(oldest, None)
+
+        # Track shopping domain
+        if plan.hard_constraints.category:
+            context.state.constraint_state.current_domain = plan.hard_constraints.category
+
         _append_context_event(
             context,
             plan.retrieval_query,
@@ -1944,6 +1994,8 @@ def _reset_shopping_task(context: SessionContext) -> None:
     context.state.active_focus.type = None
     context.state.active_focus.product_id = None
     context.state.active_focus.source = None
+    context.state.recommendation_memory.items.clear()
+    context.state.recommendation_memory.last_set_id = None
     context.state.recommendation_memory.items = []
     context.state.recommendation_memory.last_set_id = None
 

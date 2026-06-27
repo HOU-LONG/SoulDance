@@ -60,6 +60,7 @@ agent.py 就是指挥家，LLM/RAG/Cart/Order 是各个乐器组。
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from collections.abc import AsyncIterator
 import json
 import re
@@ -95,6 +96,8 @@ from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, St
 from .models import (
     ChatRequest,
     ContextEvent,
+    DisplayMessage,
+    DisplayMessageProduct,
     HardConstraints,
     PendingClarification,
     PendingRecovery,
@@ -315,6 +318,24 @@ class ShopGuideAgent:
         context = self.sessions.get(user_id, request.session_id)
         # Append user message to dialog history before processing
         context.dialog_turns.append({"role": "user", "content": request.message or ""})
+
+        # Record user display message
+        user_display = DisplayMessage(
+            id=_message_id(),
+            role="user",
+            text=request.message or "",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        context.display_messages.append(user_display)
+
+        collected: list[dict] = []
+        async for event in self._do_stream_message(user_id, request, compiled_ir, context):
+            collected.append(event)
+            yield event
+
+        self._record_display_messages(context, collected)
+
+    async def _do_stream_message(self, user_id: str, request: ChatRequest, compiled_ir, context: SessionContext) -> AsyncIterator[dict]:
         recovery_events = self._build_pending_recovery_events(context, request)
         if recovery_events is not None:
             for event in recovery_events:
@@ -426,6 +447,32 @@ class ShopGuideAgent:
             user_id=user_id,
         ):
             yield event
+
+    def _record_display_messages(self, context: SessionContext, events: list[dict]) -> None:
+        """Build one assistant DisplayMessage from collected stream events."""
+        assistant = DisplayMessage(
+            id=_message_id(),
+            role="assistant",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        has_content = False
+        for event in events:
+            etype = event.get("type")
+            if etype in {"text_delta", "focus_text_delta"}:
+                assistant.text += event.get("text", "")
+                has_content = True
+            elif etype in {"product_item", "replacement_product"}:
+                raw = event.get("product", {})
+                if raw:
+                    assistant.products.append(DisplayMessageProduct(**raw))
+                    has_content = True
+            elif etype == "quick_actions":
+                assistant.quick_actions = event.get("actions", [])
+            elif etype == "cart_update" and event.get("message"):
+                assistant.text += ("\n" if assistant.text else "") + event.get("message")
+                has_content = True
+        if has_content:
+            context.display_messages.append(assistant)
 
     def _build_pending_recovery_events(self, context: SessionContext, request: ChatRequest) -> list[dict] | None:
         pending = context.state.pending_recovery

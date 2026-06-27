@@ -158,6 +158,8 @@ class DoubaoLLMClient:
         plan: RetrievalPlan,
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
+        *,
+        context=None,
     ) -> str:
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -168,7 +170,7 @@ class DoubaoLLMClient:
                     'content': json.dumps(
                         {
                             'message': user_message,
-                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=None),
+                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=context),
                         },
                         ensure_ascii=False,
                     ),
@@ -210,6 +212,8 @@ class DoubaoLLMClient:
         plan: RetrievalPlan,
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
+        *,
+        context=None,
     ):
         stream_kwargs: dict[str, Any] = {
             'model': self.model,
@@ -220,7 +224,7 @@ class DoubaoLLMClient:
                     'content': json.dumps(
                         {
                             'message': user_message,
-                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=None),
+                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=context),
                         },
                         ensure_ascii=False,
                     ),
@@ -308,6 +312,20 @@ class DoubaoLLMClient:
             )
 
 
+    async def generate_summary(self, history_text: str) -> str:
+        """Generate a 1-2 sentence Chinese summary of shopping dialog history."""
+        prompt_path = Path(__file__).parent / "prompts" / "v1" / "summary.txt"
+        user_content = prompt_path.read_text(encoding="utf-8").replace("{history_text}", history_text)
+        raw = await self._json_completion(
+            [
+                {"role": "system", "content": "你是对话摘要器。"},
+                {"role": "user", "content": user_content},
+            ],
+            temperature=0,
+        )
+        return (raw or "").strip()[:200]
+
+
 class FakeLLMClient:
     async def parse_semantic_frame(
         self,
@@ -323,6 +341,8 @@ class FakeLLMClient:
         plan: RetrievalPlan,
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
+        *,
+        context=None,
     ) -> str:
         if not ranked_products:
             return (
@@ -393,8 +413,10 @@ class FakeLLMClient:
         plan: RetrievalPlan,
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
+        *,
+        context=None,
     ):
-        text = await self.generate_response(user_message, plan, ranked_products, focus_product)
+        text = await self.generate_response(user_message, plan, ranked_products, focus_product, context=context)
         for index in range(0, len(text), 12):
             yield text[index : index + 12]
 
@@ -640,6 +662,8 @@ class LLMClientWithBreaker:
         plan: RetrievalPlan,
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
+        *,
+        context=None,
     ) -> str:
         return await self.breaker.call(
             self.client.generate_response,
@@ -648,6 +672,7 @@ class LLMClientWithBreaker:
             plan,
             ranked_products,
             focus_product,
+            context,
         )
 
     async def select_products(
@@ -670,11 +695,13 @@ class LLMClientWithBreaker:
         plan: RetrievalPlan,
         ranked_products: list[RankedProduct],
         focus_product: Product | None = None,
+        *,
+        context=None,
     ):
         async for chunk in self.breaker.call_stream(
             self.client.stream_response,
             self._fallback.stream_response,
-            user_message, plan, ranked_products, focus_product,
+            user_message, plan, ranked_products, focus_product, context,
         ):
             yield chunk
 
@@ -690,6 +717,13 @@ class LLMClientWithBreaker:
             user_message, intent, context,
         ):
             yield chunk
+
+    async def generate_summary(self, history_text: str) -> str:
+        return await self.breaker.call(
+            self.client.generate_summary,
+            self._fallback.generate_summary,
+            history_text,
+        )
 
     async def _json_completion(
         self,

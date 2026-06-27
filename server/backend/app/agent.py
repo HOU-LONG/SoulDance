@@ -266,7 +266,7 @@ class ShopGuideAgent:
         events = [event async for event in self.stream_message(user_id, request)]
         context = self.sessions.get(user_id, request.session_id)
         self._collect_assistant_reply(context, events)
-        self._maybe_update_summary(context)
+        await self._maybe_update_summary(context)
         return events
 
     def _collect_assistant_reply(self, context: SessionContext, events: list[dict]) -> None:
@@ -278,7 +278,7 @@ class ShopGuideAgent:
         if len(context.dialog_turns) > 100:
             context.dialog_turns = context.dialog_turns[-100:]
 
-    def _maybe_update_summary(self, context: SessionContext) -> None:
+    async def _maybe_update_summary(self, context: SessionContext) -> None:
         """Generate a living summary when dialog grows beyond threshold."""
         turns = context.dialog_turns
         if len(turns) < 16:  # 8 full turns = 16 messages
@@ -293,8 +293,7 @@ class ShopGuideAgent:
             history_lines.append(f"{role}: {t.get('content', '')[:500]}")
         history_text = "\n".join(history_lines)
 
-        import asyncio as _asyncio
-        summary = _asyncio.run(self.llm_client.generate_summary(history_text))
+        summary = await self.llm_client.generate_summary(history_text)
         if not summary:
             return
 
@@ -523,6 +522,11 @@ class ShopGuideAgent:
         plan.intent = "product_followup"
         plan.retrieval_mode = "product_focus_retrieval"
         resolved_product_id = _resolve_context_product_id(context, request.message)
+        # Entity-params fallback: when the user references product attributes
+        # ("那个重的", "50ml的") and context cache has matching params
+        if not resolved_product_id and context.entity_params:
+            resolved_product_id = _resolve_from_entity_params(
+                request.message, context.entity_params)
         if resolved_product_id:
             context.focus_product_id = resolved_product_id
             context.state.active_focus.type = "product"
@@ -804,8 +808,9 @@ class ShopGuideAgent:
     ) -> str:
         if not ranked:
             return _no_match_text(plan)
+        ctx = self.sessions.get("anonymous", request.session_id)
         try:
-            text = await self.llm_client.generate_response(request.message, plan, ranked, focus_product)
+            text = await self.llm_client.generate_response(request.message, plan, ranked, focus_product, context=ctx)
             if text:
                 return text
         except Exception:
@@ -824,11 +829,12 @@ class ShopGuideAgent:
             for event in _text_delta_events(message_id, _no_match_text(plan)):
                 yield event
             return
+        ctx = self.sessions.get("anonymous", request.session_id)
         try:
             chunks: list[str] = []
             first_chunk = await run_with_timeout(
                 self._first_chunk_from_stream(
-                    self.llm_client.stream_response(request.message, plan, ranked, focus_product)
+                    self.llm_client.stream_response(request.message, plan, ranked, focus_product, context=ctx)
                 ),
                 timeout_seconds=DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS,
                 fallback=None,
@@ -840,7 +846,7 @@ class ShopGuideAgent:
                     yield event
                 return
             chunks.append(first_chunk)
-            async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product):
+            async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product, context=ctx):
                 if chunk:
                     chunks.append(chunk)
             streamed_text = "".join(chunks)
@@ -1034,7 +1040,11 @@ class ShopGuideAgent:
         # by a previous turn's price/category constraints — the user named them.
         used_resolved = resolved_ids and len(resolved_ids) >= 2
         if context.last_plan and not used_resolved:
-            products = [product for product in products if hard_filter(product, context.last_plan.hard_constraints)]
+            products = [
+                product for product in products
+                if product.product_id in context.entity_params
+                or hard_filter(product, context.last_plan.hard_constraints)
+            ]
         # Preserve the dynamic comparison plan from main for downstream use
         comparison_plan = context.last_plan
         message_id = _message_id()
@@ -1951,6 +1961,20 @@ def _resolve_context_product_id(context: SessionContext, message: str) -> str | 
     return str(product_ids[0])
 
 
+def _resolve_from_entity_params(text: str, entity_params: dict[str, dict[str, Any]]) -> str | None:
+    """Match user attribute references against cached entity params.
+
+    When a follow-up message mentions a product attribute (e.g."那个重的",
+    "50ml的"), scans entity_params for matching values and returns the
+    first product_id whose cached attributes appear in the text.
+    """
+    for pid, attrs in entity_params.items():
+        for value in attrs.values():
+            if isinstance(value, (str, int, float)) and str(value) in text:
+                return pid
+    return None
+
+
 def _reference_index_from_text(text: str) -> int | None:
     markers = {
         "第一": 0,
@@ -1995,8 +2019,6 @@ def _reset_shopping_task(context: SessionContext) -> None:
     context.state.active_focus.product_id = None
     context.state.active_focus.source = None
     context.state.recommendation_memory.items.clear()
-    context.state.recommendation_memory.last_set_id = None
-    context.state.recommendation_memory.items = []
     context.state.recommendation_memory.last_set_id = None
 
 

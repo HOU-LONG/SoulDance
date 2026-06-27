@@ -311,7 +311,7 @@ class SessionCompressionState(BaseModel):
     """
 
     user_id: str = "anonymous"
-    session_id: str
+    session_id: str = ""
     model_context_limit: int = 0
     last_total_tokens: int | None = None
     watermark_level: str = "maintain"
@@ -332,7 +332,9 @@ class SessionContext(BaseModel):
     negative_feedback: list[str] = Field(default_factory=list)
     recent_cart_product_id: str | None = None
     reference_anchors: dict[str, str] = Field(default_factory=dict)
-    schema_version: int = 1
+    dialog_turns: list[dict[str, str]] = Field(default_factory=list)
+    compression_state: SessionCompressionState = Field(default_factory=SessionCompressionState)
+    schema_version: int = 2
     last_activity_at: str = ""
 
     def model_post_init(self, __context: Any) -> None:

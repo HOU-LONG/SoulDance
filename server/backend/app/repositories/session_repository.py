@@ -23,6 +23,15 @@ class SessionRepository:
             return None
         return SessionContext.model_validate(row.state_json)
 
+    def list(self, user_id: str) -> list[SessionContext]:
+        rows = (
+            self.db.query(SessionState)
+            .filter_by(user_id=user_id)
+            .order_by(SessionState.last_activity_at.desc())
+            .all()
+        )
+        return [SessionContext.model_validate(row.state_json) for row in rows]
+
     def save(self, user_id: str, context: SessionContext) -> None:
         context.last_activity_at = datetime.now(timezone.utc).isoformat()
         row = (
@@ -37,6 +46,16 @@ class SessionRepository:
         row.schema_version = context.schema_version
         row.last_activity_at = datetime.now(timezone.utc)
         self.db.flush()
+
+    def delete(self, user_id: str, session_id: str) -> None:
+        row = (
+            self.db.query(SessionState)
+            .filter_by(user_id=user_id, session_id=session_id)
+            .first()
+        )
+        if row is not None:
+            self.db.delete(row)
+            self.db.flush()
 
     def get_latest_session_id(self, user_id: str) -> str | None:
         row = (

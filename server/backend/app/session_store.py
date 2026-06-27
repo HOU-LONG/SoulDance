@@ -180,6 +180,48 @@ class SessionStore:
             return latest_path.stem
         return None
 
+    def list_sessions(self, user_id: str) -> list[SessionContext]:
+        if self._repo is not None:
+            return self._repo.list(user_id)
+        sessions: list[SessionContext] = []
+        # in-memory
+        for (uid, sid), ctx in self._sessions.items():
+            if uid == user_id:
+                sessions.append(ctx)
+        # file mode: also load any on-disk sessions not yet in memory
+        if self.persist_dir:
+            user_dir = self.persist_dir / user_id.replace("/", "_").replace("\\", "_")
+            if user_dir.exists():
+                for path in user_dir.glob("*.json"):
+                    sid = path.stem
+                    if (user_id, sid) not in self._sessions:
+                        loaded = self._load_one(user_id, sid)
+                        if loaded is not None:
+                            self._sessions[(user_id, sid)] = loaded
+                            sessions.append(loaded)
+        sessions.sort(key=lambda c: c.last_activity_at or "", reverse=True)
+        return sessions
+
+    def delete(self, user_id: str, session_id: str) -> None:
+        key = (user_id, session_id)
+        if self._repo is not None:
+            self._repo.delete(user_id, session_id)
+            self._sessions.pop(key, None)
+            return
+        if key in self._sessions:
+            del self._sessions[key]
+        if not self.persist_dir:
+            return
+        path = self._path(user_id, session_id)
+        if path.exists():
+            path.unlink()
+        user_dir = path.parent
+        try:
+            if user_dir.exists() and not any(user_dir.iterdir()):
+                user_dir.rmdir()
+        except OSError:
+            pass
+
     def _migrate_if_needed(self, ctx: SessionContext) -> SessionContext:
         # v1→current: no structural changes yet. When schema changes, add per-version
         # migration steps here before bumping CURRENT_SCHEMA_VERSION.

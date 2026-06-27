@@ -263,7 +263,19 @@ class ShopGuideAgent:
         return ranked
 
     async def handle_message(self, user_id: str, request: ChatRequest) -> list[dict]:
-        return [event async for event in self.stream_message(user_id, request)]
+        events = [event async for event in self.stream_message(user_id, request)]
+        context = self.sessions.get(user_id, request.session_id)
+        self._collect_assistant_reply(context, events)
+        return events
+
+    def _collect_assistant_reply(self, context: SessionContext, events: list[dict]) -> None:
+        """Collect text_delta events into dialog_turns after stream completes."""
+        text_parts = [e.get("text", "") for e in events if e.get("type") == "text_delta"]
+        full = "".join(text_parts) if text_parts else "[回复]"
+        context.dialog_turns.append({"role": "assistant", "content": full[:2000]})
+        # Capacity: keep last 100 messages (50 full turns)
+        if len(context.dialog_turns) > 100:
+            context.dialog_turns = context.dialog_turns[-100:]
 
     async def compile_intent(self, user_id: str, request: ChatRequest):
         context = self.sessions.get(user_id, request.session_id)
@@ -272,6 +284,8 @@ class ShopGuideAgent:
 
     async def stream_message(self, user_id: str, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
         context = self.sessions.get(user_id, request.session_id)
+        # Append user message to dialog history before processing
+        context.dialog_turns.append({"role": "user", "content": request.message or ""})
         recovery_events = self._build_pending_recovery_events(context, request)
         if recovery_events is not None:
             for event in recovery_events:

@@ -5,8 +5,9 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 
+from backend.app.cart import CartService
 from backend.app.db.base import Base
-from backend.app.models import SessionContext
+from backend.app.models import Product, SessionContext
 from backend.app.repositories.session_repository import SessionRepository
 from sqlalchemy.orm import sessionmaker
 
@@ -67,3 +68,20 @@ def test_cart_repository_isolates_by_user(db_session) -> None:
     cart_b = repo.get("user_b", "s1")
     assert {i["product_id"] for i in cart_a["items"]} == {"prod_x"}
     assert {i["product_id"] for i in cart_b["items"]} == {"prod_y"}
+
+
+def test_cart_service_memory_mode_isolates_same_session_id_by_user() -> None:
+    products = [
+        Product(product_id="prod_a", title="A", brand="BrandA", category="c", sub_category="s", price=10.0, image_path=""),
+        Product(product_id="prod_b", title="B", brand="BrandB", category="c", sub_category="s", price=20.0, image_path=""),
+    ]
+    service = CartService(products)
+
+    service.add("user_a", "shared_session", "prod_a", 1)
+    service.add("user_b", "shared_session", "prod_b", 1)
+
+    cart_a = service.get("user_a", "shared_session")
+    cart_b = service.get("user_b", "shared_session")
+
+    assert {item["product_id"] for item in cart_a["items"]} == {"prod_a"}
+    assert {item["product_id"] for item in cart_b["items"]} == {"prod_b"}

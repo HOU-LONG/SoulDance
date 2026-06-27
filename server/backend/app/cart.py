@@ -57,9 +57,9 @@ class CartService:
     模式 C（纯内存）：dict，重启丢失
 
     ===== 内部数据结构 =====
-    - _carts: {session_id: {product_id: quantity}} — 购物车内容
-    - _audit_log: {session_id: [dict]} — 审计日志，每个操作一条记录
-    - _idempotency_results: {session_id: {idempotency_key: result}} — 幂等缓存
+    - _carts: {(user_id, session_id): {product_id: quantity}} — 购物车内容
+    - _audit_log: {(user_id, session_id): [dict]} — 审计日志，每个操作一条记录
+    - _idempotency_results: {(user_id, session_id): {idempotency_key: result}} — 幂等缓存
     """
     def __init__(
         self,
@@ -74,14 +74,13 @@ class CartService:
         db_session: SQLAlchemy session；不为 None 时启用 DB 模式。
         """
         self.products = {product.product_id: product for product in products}
-        # 内存购物车：{session_id: {product_id: quantity}}
-        self._carts: dict[str, dict[str, int]] = {}
-        self._sku_selections: dict[str, dict[str, str]] = {}
-        # 审计日志：{session_id: [action_dict, ...]}，保留最近 100 条
-        self._audit_log: dict[str, list[dict]] = {}
-        # 幂等结果缓存：{session_id: {idempotency_key: result_dict}}
-        # 重复请求直接用缓存返回，不重复执行操作
-        self._idempotency_results: dict[str, dict[str, dict]] = {}
+        # In-memory carts are scoped by user and session.
+        self._carts: dict[tuple[str, str], dict[str, int]] = {}
+        self._sku_selections: dict[tuple[str, str], dict[str, str]] = {}
+        # Audit log is scoped by user and session.
+        self._audit_log: dict[tuple[str, str], list[dict]] = {}
+        # Idempotency results are scoped by user and session.
+        self._idempotency_results: dict[tuple[str, str], dict[str, dict]] = {}
         self.persist_path = Path(persist_path) if persist_path else None
         self.db_session = db_session
         self._repo = None
@@ -96,6 +95,10 @@ class CartService:
     # 每个方法先检查是否在 DB 模式（self._repo is not None），决定走 DB 还是文件。
     # 这种分支判断分散在各方法中不是最优雅的设计，但避免了在每个方法里重复
     # 捕获异常/回退的模板代码。
+
+    @staticmethod
+    def _key(user_id: str, session_id: str) -> tuple[str, str]:
+        return (user_id, session_id)
 
     def add(
         self,
@@ -117,19 +120,19 @@ class CartService:
         return self._file_add(user_id, session_id, product_id, quantity, idempotency_key)
 
     def _db_add(self, user_id, session_id, product_id, quantity, idempotency_key):
-        existing = self._get_idempotency_result(session_id, idempotency_key)
+        existing = self._get_idempotency_result(user_id, session_id, idempotency_key)
         if existing is not None:
             return existing
         self._validate_product(product_id)
         self._validate_quantity(quantity, allow_zero=False)
         self._repo.add(user_id, session_id, product_id, quantity)
         snapshot = self._db_get(user_id, session_id)
-        self._remember_idempotency_result(session_id, idempotency_key, snapshot)
+        self._remember_idempotency_result(user_id, session_id, idempotency_key, snapshot)
         return snapshot
 
     def _db_get(self, user_id, session_id):
         raw = self._repo.get(user_id, session_id)
-        sku_map = self._sku_selections.get(session_id, {})
+        sku_map = self._sku_selections.get(self._key(user_id, session_id), {})
         items = []
         total = 0.0
         total_count = 0
@@ -215,13 +218,13 @@ class CartService:
                 f"no SKU matching '{property_value}' for {product.title}. "
                 f"Available: {'; '.join(options)}"
             )
-        self._sku_selections.setdefault(session_id, {})[product_id] = matched
-        self._log_action(session_id, "update_sku", product_id, 0)
+        self._sku_selections.setdefault(self._key(user_id, session_id), {})[product_id] = matched
+        self._log_action(user_id, session_id, "update_sku", product_id, 0)
         return self._db_get(user_id, session_id)
 
     def _file_update_sku(self, user_id, session_id, product_id, property_value):
         product = self.products.get(product_id)
-        if product_id not in self._carts.get(session_id, {}):
+        if product_id not in self._carts.get(self._key(user_id, session_id), {}):
             raise ValueError(f"product {product_id} is not in cart")
         matched: str | None = None
         for sku in product.skus:
@@ -240,8 +243,8 @@ class CartService:
                 f"no SKU matching '{property_value}' for {product.title}. "
                 f"Available: {'; '.join(options)}"
             )
-        self._sku_selections.setdefault(session_id, {})[product_id] = matched
-        self._log_action(session_id, "update_sku", product_id, 0)
+        self._sku_selections.setdefault(self._key(user_id, session_id), {})[product_id] = matched
+        self._log_action(user_id, session_id, "update_sku", product_id, 0)
         self._save_one(user_id, session_id)
         return self.get(user_id, session_id)
 
@@ -281,7 +284,7 @@ class CartService:
         return self._db_get(user_id, session_id)
 
     def _db_checkout(self, user_id, session_id, idempotency_key):
-        existing = self._get_idempotency_result(session_id, idempotency_key)
+        existing = self._get_idempotency_result(user_id, session_id, idempotency_key)
         if existing is not None:
             return existing
         snapshot = self._db_get(user_id, session_id)
@@ -293,7 +296,7 @@ class CartService:
             "paid_amount": snapshot["total_amount"],
             "items": snapshot["items"],
         }
-        self._remember_idempotency_result(session_id, idempotency_key, result)
+        self._remember_idempotency_result(user_id, session_id, idempotency_key, result)
         return result
 
     def _file_add(self, user_id, session_id, product_id, quantity, idempotency_key):
@@ -301,22 +304,22 @@ class CartService:
 
         DB 模式见 _db_add()，逻辑完全一致，仅存储介质不同。
         """
-        existing = self._get_idempotency_result(session_id, idempotency_key)
+        existing = self._get_idempotency_result(user_id, session_id, idempotency_key)
         if existing is not None:
             return existing
         self._validate_product(product_id)
         self._validate_quantity(quantity, allow_zero=False)
-        cart = self._carts.setdefault(session_id, {})
+        cart = self._carts.setdefault(self._key(user_id, session_id), {})
         cart[product_id] = cart.get(product_id, 0) + quantity
-        self._log_action(session_id, "add", product_id, cart[product_id])
+        self._log_action(user_id, session_id, "add", product_id, cart[product_id])
         snapshot = self.get(user_id, session_id)
-        self._remember_idempotency_result(session_id, idempotency_key, snapshot)
+        self._remember_idempotency_result(user_id, session_id, idempotency_key, snapshot)
         self._save_one(user_id, session_id)
         return snapshot
 
     def _file_get(self, user_id, session_id):
-        cart = self._carts.setdefault(session_id, {})
-        sku_map = self._sku_selections.get(session_id, {})
+        cart = self._carts.setdefault(self._key(user_id, session_id), {})
+        sku_map = self._sku_selections.get(self._key(user_id, session_id), {})
         items = []
         total = 0.0
         total_count = 0
@@ -357,37 +360,37 @@ class CartService:
     def _file_update_quantity(self, user_id, session_id, product_id, quantity):
         self._validate_product(product_id)
         self._validate_quantity(quantity, allow_zero=True)
-        cart = self._carts.setdefault(session_id, {})
+        cart = self._carts.setdefault(self._key(user_id, session_id), {})
         if quantity == 0:
             cart.pop(product_id, None)
-            self._log_action(session_id, "remove", product_id, 0)
+            self._log_action(user_id, session_id, "remove", product_id, 0)
         else:
             cart[product_id] = quantity
-            self._log_action(session_id, "update", product_id, quantity)
+            self._log_action(user_id, session_id, "update", product_id, quantity)
         self._save_one(user_id, session_id)
         return self.get(user_id, session_id)
 
     def _file_remove(self, user_id, session_id, product_id):
         self._validate_product(product_id)
-        self._carts.setdefault(session_id, {}).pop(product_id, None)
-        self._sku_selections.get(session_id, {}).pop(product_id, None)
-        self._log_action(session_id, "remove", product_id, 0)
+        self._carts.setdefault(self._key(user_id, session_id), {}).pop(product_id, None)
+        self._sku_selections.get(self._key(user_id, session_id), {}).pop(product_id, None)
+        self._log_action(user_id, session_id, "remove", product_id, 0)
         self._save_one(user_id, session_id)
         return self.get(user_id, session_id)
 
     def _file_clear(self, user_id, session_id):
-        self._carts[session_id] = {}
-        self._sku_selections[session_id] = {}
-        self._log_action(session_id, "clear", None, 0)
+        self._carts[self._key(user_id, session_id)] = {}
+        self._sku_selections[self._key(user_id, session_id)] = {}
+        self._log_action(user_id, session_id, "clear", None, 0)
         self._save_one(user_id, session_id)
         return self.get(user_id, session_id)
 
     def _file_checkout(self, user_id, session_id, idempotency_key):
-        existing = self._get_idempotency_result(session_id, idempotency_key)
+        existing = self._get_idempotency_result(user_id, session_id, idempotency_key)
         if existing is not None:
             return existing
         snapshot = self._file_get(user_id, session_id)
-        self._log_action(session_id, "checkout", None, 0)
+        self._log_action(user_id, session_id, "checkout", None, 0)
         self._file_clear(user_id, session_id)
         result = {
             "status": "ok",
@@ -396,12 +399,12 @@ class CartService:
             "paid_amount": snapshot["total_amount"],
             "items": snapshot["items"],
         }
-        self._remember_idempotency_result(session_id, idempotency_key, result)
+        self._remember_idempotency_result(user_id, session_id, idempotency_key, result)
         self._save_one(user_id, session_id)
         return result
 
-    def get_audit_log(self, session_id: str) -> list[dict]:
-        return list(self._audit_log.get(session_id, []))
+    def get_audit_log(self, session_id: str, user_id: str = "anonymous") -> list[dict]:
+        return list(self._audit_log.get(self._key(user_id, session_id), []))
 
     def _validate_product(self, product_id: str) -> None:
         """校验 product_id 存在于商品列表中，否则抛出 KeyError（→ 400）。"""
@@ -418,39 +421,32 @@ class CartService:
         if quantity < min_quantity or quantity > MAX_CART_QUANTITY:
             raise ValueError(f"quantity must be between {min_quantity} and {MAX_CART_QUANTITY}")
 
-    def _get_idempotency_result(self, session_id: str, key: str | None) -> dict | None:
-        """按 (session_id, idempotency_key) 查找缓存的幂等结果。
-
-        使用 copy.deepcopy 返回深拷贝，防止调用方意外修改缓存内容。
-        key 为 None 时直接返回 None——幂等是可选的。
-        """
+    def _get_idempotency_result(self, user_id: str, session_id: str, key: str | None) -> dict | None:
+        """Return a cached idempotent result scoped to one user session."""
         if not key:
             return None
-        result = self._idempotency_results.get(session_id, {}).get(key)
+        result = self._idempotency_results.get(self._key(user_id, session_id), {}).get(key)
         return copy.deepcopy(result) if result is not None else None
 
-    def _remember_idempotency_result(self, session_id: str, key: str | None, result: dict) -> None:
-        """记录一次成功操作的结果，用于后续幂等查询。"""
+    def _remember_idempotency_result(self, user_id: str, session_id: str, key: str | None, result: dict) -> None:
+        """Store a successful operation result for idempotent replay."""
         if not key:
             return
-        bucket = self._idempotency_results.setdefault(session_id, {})
-        bucket[key] = copy.deepcopy(result)
-        if not key:
-            return
-        bucket = self._idempotency_results.setdefault(session_id, {})
+        bucket = self._idempotency_results.setdefault(self._key(user_id, session_id), {})
         bucket[key] = copy.deepcopy(result)
 
-    def _log_action(self, session_id: str, action: str, product_id: str | None, quantity: int) -> None:
+    def _log_action(self, user_id: str, session_id: str, action: str, product_id: str | None, quantity: int) -> None:
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "action": action,
             "product_id": product_id,
             "quantity": quantity,
         }
-        log = self._audit_log.setdefault(session_id, [])
+        key = self._key(user_id, session_id)
+        log = self._audit_log.setdefault(key, [])
         log.append(entry)
         if len(log) > 100:
-            self._audit_log[session_id] = log[-100:]
+            self._audit_log[key] = log[-100:]
 
     def _path(self, user_id: str, session_id: str) -> Path:
         safe_user_id = user_id.replace("/", "_").replace("\\", "_")
@@ -472,24 +468,25 @@ class CartService:
                 try:
                     data = json.loads(path.read_text(encoding="utf-8"))
                     if isinstance(data, dict):
+                        key = self._key(user_id, session_id)
                         if "cart" in data:
-                            self._carts[session_id] = {
+                            self._carts[key] = {
                                 str(pk): int(qv) for pk, qv in data["cart"].items()
                                 if isinstance(qv, int)
                             }
                         if "audit_log" in data:
-                            self._audit_log[session_id] = list(data["audit_log"])
+                            self._audit_log[key] = list(data["audit_log"])
                         if "idempotency_results" in data:
                             raw_idempotency = data["idempotency_results"]
                             if isinstance(raw_idempotency, dict):
-                                self._idempotency_results[session_id] = {
+                                self._idempotency_results[key] = {
                                     str(ik): dict(iv) for ik, iv in raw_idempotency.items()
                                     if isinstance(iv, dict)
                                 }
                         if "sku_selections" in data:
                             raw_sku = data["sku_selections"]
                             if isinstance(raw_sku, dict):
-                                self._sku_selections[session_id] = dict(raw_sku)
+                                self._sku_selections[key] = dict(raw_sku)
                 except Exception:
                     logger.warning("Failed to load cart %s/%s, skipping", user_id, session_id, exc_info=True)
                     continue
@@ -499,11 +496,12 @@ class CartService:
             return
         path = self._path(user_id, session_id)
         tmp_path = path.with_suffix(".tmp")
+        key = self._key(user_id, session_id)
         payload = {
-            "cart": self._carts.get(session_id, {}),
-            "sku_selections": self._sku_selections.get(session_id, {}),
-            "audit_log": self._audit_log.get(session_id, []),
-            "idempotency_results": self._idempotency_results.get(session_id, {}),
+            "cart": self._carts.get(key, {}),
+            "sku_selections": self._sku_selections.get(key, {}),
+            "audit_log": self._audit_log.get(key, []),
+            "idempotency_results": self._idempotency_results.get(key, {}),
         }
         tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp_path.rename(path)

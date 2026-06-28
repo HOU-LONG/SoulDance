@@ -20,6 +20,7 @@ import com.example.shopguideagent.audio.StreamingAudioPlayer
 import com.example.shopguideagent.data.remote.RealtimeChatWebSocketClient
 import com.example.shopguideagent.data.remote.SessionsApi
 import com.example.shopguideagent.data.remote.SessionsApiClient
+import com.example.shopguideagent.data.remote.SessionsApiService
 import com.example.shopguideagent.data.remote.SpeechToTextClient
 import com.example.shopguideagent.data.remote.SttApiService
 import kotlinx.coroutines.Dispatchers
@@ -46,7 +47,9 @@ class ChatViewModel @JvmOverloads constructor(
     private val audioPlayer: StreamingAudioPlayer = StreamingAudioPlayer(),
     private val voiceRecognitionTimeoutMillis: Long = VOICE_RECOGNITION_TIMEOUT_MILLIS,
     private val userSession: UserSession? = null,
-    private val sessionsApi: SessionsApi = SessionsApiClient(),
+    private val sessionsApi: SessionsApi = SessionsApiClient(
+        SessionsApiService.create(userIdProvider = { userSession?.currentUserId?.value ?: "demo_user_a" })
+    ),
     private val userIdProvider: () -> String = { userSession?.currentUserId?.value ?: "demo_user_a" },
 ) : ViewModel() {
 

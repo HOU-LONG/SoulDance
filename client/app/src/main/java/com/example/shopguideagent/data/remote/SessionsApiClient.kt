@@ -5,18 +5,19 @@ package com.example.shopguideagent.data.remote
  */
 interface SessionsApi {
     suspend fun getLatest(): LatestSessionResponse
+    suspend fun listSessions(): SessionListResponse
+    suspend fun getSession(sessionId: String): SessionDetailResponse
+    suspend fun deleteSession(sessionId: String)
 }
 
 /**
  * 基于 Retrofit 的默认实现。
  */
 class SessionsApiClient(
-    private val service: SessionsApiService = SessionsApiService.create(),
+    private val service: SessionsApiService,
 ) : SessionsApi {
-    @Deprecated("Use constructor with service that includes userIdProvider")
-    constructor() : this(SessionsApiService.create())
-
-    override suspend fun getLatest(): LatestSessionResponse {
-        return service.getLatest()
-    }
+    override suspend fun getLatest(): LatestSessionResponse = service.getLatest()
+    override suspend fun listSessions(): SessionListResponse = service.listSessions()
+    override suspend fun getSession(sessionId: String): SessionDetailResponse = service.getSession(sessionId)
+    override suspend fun deleteSession(sessionId: String) = service.deleteSession(sessionId)
 }

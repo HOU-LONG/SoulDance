@@ -7,6 +7,8 @@ import com.example.shopguideagent.data.history.ChatHistoryRepository
 import com.example.shopguideagent.data.history.InMemoryChatHistoryStore
 import com.example.shopguideagent.data.model.RealtimeEvent
 import com.example.shopguideagent.data.remote.LatestSessionResponse
+import com.example.shopguideagent.data.remote.SessionDetailResponse
+import com.example.shopguideagent.data.remote.SessionListResponse
 import com.example.shopguideagent.data.remote.RealtimeChatWebSocketClient
 import com.example.shopguideagent.data.remote.SessionsApi
 import com.example.shopguideagent.test.CoroutineTestHelper
@@ -101,6 +103,13 @@ class ChatViewModelSwitchTest {
             getLatestCallCount++
             return LatestSessionResponse(session_id = sessionIdToReturn)
         }
+
+        override suspend fun listSessions(): SessionListResponse = SessionListResponse(emptyList())
+
+        override suspend fun getSession(sessionId: String): SessionDetailResponse =
+            SessionDetailResponse(sessionId, "", "", emptyList())
+
+        override suspend fun deleteSession(sessionId: String) {}
     }
 
     private class FakeRealtimeChatWebSocketClient : RealtimeChatWebSocketClient({ "demo_user_a" }) {

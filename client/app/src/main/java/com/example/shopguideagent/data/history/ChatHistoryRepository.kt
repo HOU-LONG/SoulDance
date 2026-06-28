@@ -86,6 +86,10 @@ class ChatHistoryRepository @JvmOverloads constructor(
     fun currentSession(): ChatSessionUiModel? =
         _state.value.sessions.firstOrNull { it.sessionId == _state.value.currentSessionId }
 
+    fun reload() {
+        _state.value = load()
+    }
+
     companion object {
         private const val MAX_SESSIONS = 30
     }

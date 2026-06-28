@@ -12,12 +12,16 @@ import com.example.shopguideagent.data.model.ChatUiState
 import com.example.shopguideagent.data.model.MessageRole
 import com.example.shopguideagent.data.model.ProductDerivedAttributes
 import com.example.shopguideagent.data.model.ProductFocusUiState
+import com.example.shopguideagent.data.model.QuickActionUiModel
 import com.example.shopguideagent.data.model.ProductFollowUpPayload
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.data.model.RealtimeEvent
 import com.example.shopguideagent.data.model.VoiceRecognitionState
 import com.example.shopguideagent.audio.StreamingAudioPlayer
+import com.example.shopguideagent.data.remote.LatestSessionResponse
 import com.example.shopguideagent.data.remote.RealtimeChatWebSocketClient
+import com.example.shopguideagent.data.remote.RemoteDisplayMessageDto
+import com.example.shopguideagent.data.remote.RemoteProductDto
 import com.example.shopguideagent.data.remote.SessionsApi
 import com.example.shopguideagent.data.remote.SessionsApiClient
 import com.example.shopguideagent.data.remote.SessionsApiService
@@ -707,27 +711,49 @@ class ChatViewModel @JvmOverloads constructor(
             val currentUserId = userIdProvider()
             if (newUserId == currentUserId) return@launch
 
+            // 1. persist current user's session
+            persist()
+
+            // 2. switch user session
             userSession?.setCurrentUserId(newUserId)
 
-            // Get latest session for new user
-            val latest = sessionsApi.getLatest()
-
-            // Close current WebSocket
+            // 3. close old WebSocket
             wsJob?.cancel()
             wsClient.close()
             wsJob = null
 
-            // Reset session and UI for new user
+            // 4. reload local history for new user
+            historyRepository?.reload()
+            val localSession = historyRepository?.currentSession()
+
+            // 5. fetch latest from backend
+            val latest = try {
+                sessionsApi.getLatest()
+            } catch (e: Exception) {
+                LatestSessionResponse(session_id = localSession?.sessionId ?: "session_${UUID.randomUUID()}")
+            }
+
             activeSessionId = latest.session_id
+
+            // 6. if backend session differs from local, try to load backend detail
+            val backendMessages = try {
+                sessionsApi.getSession(activeSessionId).messages.map { it.toUiModel() }
+            } catch (e: Exception) {
+                emptyList()
+            }
+
+            val messages = if (backendMessages.isNotEmpty()) backendMessages
+                else localSession?.messages
+                ?: listOf(welcome)
+
             _uiState.value = ChatUiState(
                 sessionId = activeSessionId,
-                cartBadgeCount = _uiState.value.cartBadgeCount,
+                cartBadgeCount = 0,
                 isSpeakerEnabled = true,
                 voiceRecognitionState = VoiceRecognitionState.Idle,
-                messages = listOf(welcome),
+                messages = messages,
             )
 
-            // Clear active state
             activeStreamUserText = null
             lastProductFollowUpPayload = null
             activeAssistantId = null
@@ -735,10 +761,31 @@ class ChatViewModel @JvmOverloads constructor(
             activeFollowUpText = null
             audioPlayer.stop()
 
-            // Reopen WebSocket against the new session id. Subsequent sendUserMessage
-            // calls will use activeSessionId (which is now the new session id).
             ensureWebSocketConnection()
         }
+    }
+
+    private fun RemoteDisplayMessageDto.toUiModel(): ChatMessageUiModel {
+        return ChatMessageUiModel(
+            id = id,
+            role = when (role.lowercase()) {
+                "user" -> MessageRole.User
+                "assistant" -> MessageRole.Assistant
+                else -> MessageRole.System
+            },
+            text = text,
+            products = products?.map { it.toUiModel() } ?: emptyList(),
+            quickActions = quick_actions?.map { QuickActionUiModel(label = it.label, message = it.action) } ?: emptyList(),
+        )
+    }
+
+    private fun RemoteProductDto.toUiModel(): ProductUiModel {
+        return ProductUiModel(
+            productId = product_id,
+            name = name,
+            price = price,
+            imageUrl = image_url.takeIf { it.isNotBlank() },
+        )
     }
 }
 

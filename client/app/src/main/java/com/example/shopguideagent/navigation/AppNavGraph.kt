@@ -90,15 +90,20 @@ fun AppNavGraph() {
     val userSession = remember(context) { UserSession.get(context) }
     val currentUserId by userSession.currentUserId.collectAsState()
     val userIdProvider = { currentUserId }
+    // Fix: ChatViewModel 和 drawer 必须共享同一个 ChatHistoryRepository 实例。
+    // 之前 chatHistoryRepository(context) 被调用了两次（工厂内 + 下方 remember），
+    // 虽然底层 SharedPreferences 相同，但内存 _state 是两个独立副本。
+    // 导致 onUserSwitched() 调用 reload() 只更新 ChatViewModel 内部副本，
+    // drawer 的 historyState 不更新 → 历史列表不随用户切换变化。
+    val historyRepository = remember(context) { chatHistoryRepository(context) }
     // Task 1: 使用 viewModel() 替代 remember {}，确保 ChatViewModel 在屏幕旋转等配置变更后存活。
-    // 此前 remember {} 会在每次重组时重新创建实例，导致 WebSocket 连接丢失、消息流中断。
     val chatViewModel: ChatViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 return ChatViewModel(
                     productCatalog = AndroidAssetProductCatalog(context.assets),
-                    historyRepository = chatHistoryRepository(context),
+                    historyRepository = historyRepository,
                     wsClient = RealtimeChatWebSocketClient(userIdProvider),
                     sttApi = SttApiService(userIdProvider),
                     userSession = userSession,
@@ -121,7 +126,6 @@ fun AppNavGraph() {
             }
         },
     )
-    val historyRepository = remember(context) { chatHistoryRepository(context) }
     val profileRepository = remember(context) { userProfileRepository(context) }
     val historyState by historyRepository.state.collectAsState()
     val profileState by profileRepository.state.collectAsState()

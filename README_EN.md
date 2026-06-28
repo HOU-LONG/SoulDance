@@ -9,6 +9,7 @@ SoulDance is a monorepo for a low-pressure AI shopping-guide experience. It cont
 ```text
 SoulDance/
   client/                  Android Kotlin + Jetpack Compose app
+    scripts/               Build helper scripts (tunnel auto-check, etc.)
   server/                  FastAPI backend, tests, scripts, dependencies
   docs/                    Architecture, API, realtime protocol, runbooks, evaluation docs
   deploy/                  Host runtime notes and environment template
@@ -79,11 +80,20 @@ HTTP API: https://enrolled-balanced-holds-inexpensive.trycloudflare.com/
 WebSocket: wss://enrolled-balanced-holds-inexpensive.trycloudflare.com/ws/chat
 ```
 
-The Cloudflare URL is a temporary tunnel endpoint. If it changes, update `client/.../AppConfig.kt` and rebuild the APK.
+The Cloudflare URL is a temporary tunnel endpoint. The Gradle build automatically checks tunnel availability before compilation and updates `AppConfig.kt` when the hostname changes. To skip this check:
+
+```bash
+SKIP_TUNNEL_CHECK=true ./gradlew :app:assembleDebug
+```
 
 ---
 
 ## Build & Run
+
+### Prerequisites
+
+- JDK 17+, Android SDK, Kotlin / Jetpack Compose toolchain
+- Python 3.12+, FastAPI backend virtual environment
 
 ### Android Client (Linux)
 
@@ -93,17 +103,54 @@ export JAVA_HOME=/home/huadabioa/houlong/android-studio/jbr
 export ANDROID_HOME=/home/huadabioa/houlong/android-sdk
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
 chmod +x gradlew
+
+# Unit tests
 ./gradlew :app:testDebugUnitTest
+
+# Build APK (auto-checks tunnel + auto-updates AppConfig URL)
 ./gradlew :app:assembleDebug
+```
+
+**Auto-incrementing version**: `versionCode` and `versionName` are derived from `git rev-list --count HEAD`. Each new commit automatically increments both — no manual version bump needed.
+
+**Pre-build tunnel check**: Gradle runs `client/scripts/ensure_tunnel.sh` before `preBuild` to verify the backend server and Cloudflare tunnel are reachable. If the tunnel hostname has changed, `AppConfig.kt` is automatically updated before compilation. The check completes in < 1s when services are already running.
+
+Skip the tunnel check (offline development, etc.):
+
+```bash
+SKIP_TUNNEL_CHECK=true ./gradlew :app:assembleDebug
 ```
 
 APK output: `client/app/build/outputs/apk/debug/app-debug.apk`
 
 ### Backend Server
 
+First-time setup:
+
 ```bash
 bash server/scripts/setup_backend_env.sh
+```
+
+Start the backend (default port 8000):
+
+```bash
 bash server/scripts/start_backend.sh
+```
+
+Configure LLM provider in the repo-root `.env`:
+
+```bash
+# Use DeepSeek (current default)
+LLM_PROVIDER=deepseek
+LLM_API_KEY=sk-xxx
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-v4-pro
+LLM_REASONING_EFFORT=high
+
+# Or use Doubao
+#LLM_PROVIDER=doubao
+#ARK_API_KEY=ark-xxx
+#ARK_MODEL=ep-xxx
 ```
 
 Run tests:
@@ -120,6 +167,15 @@ HOST=127.0.0.1 PORT=18083 USE_EMBEDDING=0 TTS_ENABLED=false STT_ENABLED=false \
   ARK_API_KEY= LLM_API_KEY= bash server/scripts/start_backend.sh
 curl -fsS http://127.0.0.1:18083/health
 ```
+
+### Public Exposure (Cloudflare Tunnel)
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000 &
+# The URL is printed in the terminal output
+```
+
+Run `client/scripts/ensure_tunnel.sh` before building to automate the full flow: check backend → start tunnel → update AppConfig.
 
 ---
 

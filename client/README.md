@@ -8,7 +8,11 @@ Native Android app for the ShopGuide Agent experience.
 export JAVA_HOME=/home/huadabioa/houlong/android-studio/jbr
 export ANDROID_HOME=/home/huadabioa/houlong/android-sdk
 export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH"
+
+# Unit tests
 ./gradlew :app:testDebugUnitTest --no-daemon
+
+# Build APK (auto-checks tunnel + auto-updates AppConfig URL)
 ./gradlew :app:assembleDebug --no-daemon
 ```
 
@@ -24,6 +28,25 @@ Remote absolute APK path:
 /home/huadabioa/houlong/SoulDance/client/app/build/outputs/apk/debug/app-debug.apk
 ```
 
+## Auto-Incrementing Version
+
+`versionCode` and `versionName` are generated from `git rev-list --count HEAD` at build time. Each new commit automatically increments both (`versionCode` = commit count, `versionName` = `1.0.<commit-count>`). Falls back to `1` when `.git` is unavailable. No manual version bump needed.
+
+## Pre-Build Tunnel Check
+
+Gradle runs `client/scripts/ensure_tunnel.sh` before every build to:
+
+1. Verify the backend is running on `127.0.0.1:8000` (auto-start if needed)
+2. Check the current Cloudflare tunnel URL is reachable
+3. If the tunnel has restarted with a new hostname, auto-update `AppConfig.kt`
+4. Pass through when services are already running (< 1s overhead)
+
+Skip the check when working offline:
+
+```bash
+SKIP_TUNNEL_CHECK=true ./gradlew :app:assembleDebug
+```
+
 ## Runtime Config
 
 Backend URLs live in:
@@ -32,7 +55,13 @@ Backend URLs live in:
 app/src/main/java/com/example/shopguideagent/config/AppConfig.kt
 ```
 
-Real-device debugging should use the Cloudflare tunnel URL configured there. Rebuild the APK after changing the tunnel domain.
+Three connection options are available (uncomment the one you need):
+
+| Option | Use Case |
+|--------|----------|
+| Cloudflare Tunnel | Real device over the internet (auto-managed by pre-build script) |
+| `http://10.0.2.2:8000` | Android emulator → host localhost |
+| LAN IP / adb reverse | Real device on the same network |
 
 ## Session History & User Switching
 

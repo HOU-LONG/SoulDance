@@ -141,8 +141,7 @@ class SpriteHomeViewModel(
             is SpriteHomeAction.QuickActionClicked -> emitEffect(SpriteHomeEffect.SendTextMessage(action.message))
             SpriteHomeAction.HistoryDrawerOpened -> emitEffect(SpriteHomeEffect.OpenHistoryDrawer)
             is SpriteHomeAction.UserSelected -> {
-                userSession?.setCurrentUserId(action.userId)
-                onCurrentUserChanged()
+                emitEffect(SpriteHomeEffect.SwitchUser(action.userId))
             }
             SpriteHomeAction.AvatarChangeRequested -> emitEffect(SpriteHomeEffect.OpenHistoryDrawer)
             is SpriteHomeAction.SessionSelected -> emitEffect(SpriteHomeEffect.SelectSession(action.sessionId))

@@ -362,7 +362,8 @@ class ShopGuideAgent:
             ):
                 yield event
             return
-        if ir.intent in {"small_talk", "unclear_input"} and _looks_like_single_product_analysis(request.message):
+        # 单品分析路由：优先于闲聊/不明确意图，也覆盖 LLM 误分类为 recommend_product 的情况
+        if ir.intent not in {"cart_operation", "product_followup", "compare_products"} and _looks_like_single_product_analysis(request.message):
             async for event in self.tool_registry.execute(
                 "product_analysis",
                 request,

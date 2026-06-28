@@ -27,6 +27,25 @@ providers.environmentVariable("SHOPGUIDE_ANDROID_BUILD_DIR").orNull
     ?.takeIf { it.isNotBlank() }
     ?.let { layout.buildDirectory = file(it) }
 
+// ===========================================================================
+// 编译前自动检查 Cloudflare tunnel 可用性
+// 服务已运行时耗时 < 1s；不可用时自动启动后端 + 重建 tunnel 并更新 AppConfig.kt
+// 跳过: SKIP_TUNNEL_CHECK=true ./gradlew :app:assembleDebug
+// ===========================================================================
+val skipTunnelCheck: Boolean =
+    providers.environmentVariable("SKIP_TUNNEL_CHECK").orNull.equals("true", ignoreCase = true)
+val tunnelScript: String = rootProject.projectDir.resolve("scripts/ensure_tunnel.sh").absolutePath
+
+if (!skipTunnelCheck) {
+    tasks.register<Exec>("ensureCloudflareTunnel") {
+        description = "Pre-build check: ensure backend + Cloudflare tunnel are reachable"
+        commandLine("bash", tunnelScript)
+    }
+    tasks.named("preBuild") {
+        dependsOn("ensureCloudflareTunnel")
+    }
+}
+
 android {
     namespace = "com.example.shopguideagent"
     compileSdk = 36

@@ -44,6 +44,24 @@ Cart write operations are deterministic backend operations. Agent text must not 
 
 `/api/cart/add` and `/api/cart/checkout` accept an optional `idempotency_key`. Reusing the same key for the same session returns the first result without applying the mutation again. Product-targeted writes reject invalid quantity values instead of silently coercing them.
 
+## Sessions
+
+User-scoped session history. All endpoints require the `X-User-Id` header (or accept an anonymous user).
+
+```http
+GET    /api/sessions
+GET    /api/sessions/latest
+GET    /api/sessions/{session_id}
+DELETE /api/sessions/{session_id}
+```
+
+- `GET /api/sessions` returns a list of session summaries (`session_id`, `title`, `updated_at`, `message_count`, `preview`).
+- `GET /api/sessions/latest` returns the user's latest session id, creating a default session if none exists.
+- `GET /api/sessions/{session_id}` returns the session with its `display_messages` array.
+- `DELETE /api/sessions/{session_id}` removes the session for the requesting user.
+
+Session history is driven by `display_messages` written during `stream_message()` and cart operations. Android uses these endpoints to sync remote history and keeps a per-user local cache as offline fallback.
+
 ## Orders
 
 ```http

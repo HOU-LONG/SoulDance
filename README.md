@@ -28,8 +28,16 @@ SoulDance/
   - 形态A：全量 `[{role, content}]` 对话流水持久化（`dialog_turns`），100 条消息滑动窗口
   - 形态B：结构化约束状态（`ConstraintState`）+ 产品参数缓存（`entity_params`）+ 长会话摘要压缩（`LivingSummary`，16 条消息阈值触发）
   - Prompt 注入：对话历史 + 约束短句实时注入 Response LLM 的 evidence payload
+- **会话历史与用户切换**（2026-06 修复）：
+  - 后端 `SessionContext.display_messages` 统一记录流式回复、商品卡片、快捷操作和购物车操作结果
+  - 后端新增 `GET /api/sessions`、`GET /api/sessions/{session_id}`、`DELETE /api/sessions/{session_id}`，按 `X-User-Id` 隔离
+  - Android `ChatHistoryRepository` 按 `user_id` 分区 JSON 缓存，本地最多保留 30 个会话，支持旧 Base64 格式只读迁移
+  - `ChatViewModel.onUserSwitched` 切换用户时持久化旧会话、重载新用户本地历史、拉取后端 latest、关闭/重开 WebSocket、重置 UI
 - **语义意图编译**：LLM + 规则双路径语义解析，置信度门控，上下文 fallback 重判
-- **意图路由**：`recommend_product` / `product_followup` / `compare_products` / `cart_operation` / `scenario_bundle` / `clarification` / `small_talk` / `unclear_input` 八意图完整覆盖
+- **意图路由**：`recommend_product` / `product_followup` / `compare_products` / `product_analysis` / `cart_operation` / `scenario_bundle` / `clarification` / `small_talk` / `unclear_input` 九意图完整覆盖
+- **闲聊与单品分析**：
+  - 扩展 `small_talk` 规则，稳定识别“你能帮我做些什么”等能力询问
+  - 新增 `product_analysis` 意图：命中库内商品则给出单品说明，未命中则明确提示无库存数据、不返回虚假商品卡
 
 ### 检索与排序
 - **RAG 混合检索**：BM25 关键词 + 向量语义检索，RRF / weighted 融合，CrossEncoder 重排（默认）+ LLM 重排（强场景兜底），失败静默降级
@@ -120,6 +128,10 @@ curl -fsS http://127.0.0.1:18083/health
 GET  /health
 GET  /api/products
 GET  /api/products/{product_id}
+GET  /api/sessions
+GET  /api/sessions/latest
+GET  /api/sessions/{session_id}
+DELETE /api/sessions/{session_id}
 GET  /api/cart
 POST /api/cart/add
 POST /api/cart/clear

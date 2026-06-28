@@ -202,7 +202,7 @@ fun AppNavGraph() {
                         SpriteHomeEffect.ShowTaskCenter -> Unit // handled locally in SpriteHomeRoute
                         SpriteHomeEffect.HideTaskCenter -> Unit // handled locally in SpriteHomeRoute
                         SpriteHomeEffect.OpenHistoryDrawer -> Unit // handled locally in SpriteHomeRoute
-                        is SpriteHomeEffect.SwitchUser -> Unit // handled locally in SpriteHomeRoute
+                        is SpriteHomeEffect.SwitchUser -> chatViewModel.onUserSwitched(effect.userId)
                         is SpriteHomeEffect.SelectSession -> Unit // handled locally in SpriteHomeRoute
                         SpriteHomeEffect.CreateNewSession -> Unit // handled locally in SpriteHomeRoute
                         SpriteHomeEffect.ShowEditSpiritName -> Unit // handled locally in SpriteHomeRoute
@@ -217,6 +217,7 @@ fun AppNavGraph() {
                         is SpriteHomeEffect.ShowClaimedReward -> showSnackbar("任务奖励已领取：${effect.firePoints} 火星")
                     }
                 },
+                onSwitchUser = { userId -> chatViewModel.onUserSwitched(userId) },
                 onUserSelected = { userId -> userSession.setCurrentUserId(userId) },
                 onAvatarChangeRequested = { avatarLauncher.launch(arrayOf("image/*")) },
                 onNewSession = { chatViewModel.newSession() },

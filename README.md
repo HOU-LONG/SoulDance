@@ -54,6 +54,15 @@ SoulDance/
 ### 语音交互
 - STT 语音转文字（流式 WebSocket）+ TTS 文字转语音（分块流式），支持豆包语音引擎
 
+### 行内商品锚点（Inline Product Anchor）
+- **统一的文本内嵌商品入口**：AI 消息中的商品以 `[[商品名#product_id]]` 形式嵌入正文，替代独立商品卡片
+- **点击展开详情**：所有锚点统一唤起 `ProductDetailBottomSheet`，覆盖推荐、对比、Bundle、追问四个流程
+- **前后端协议对齐**：
+  - 后端 Prompt 在主推/备选/对比/Bundle 文本中注入 `[[title#product_id]]`，并严格校验 `product_id` 来自 `allowed_products`
+  - 非法或缺失锚点自动降级：去掉标记并记录 warning，避免前端解析失败
+  - 历史上下文压缩时锚点自动折叠为 `[商品:product_id]`，节省 token 同时保留引用
+- **实现计划**：`docs/superpowers/plans/2026-06-27-inline-product-anchor.md`
+
 ### 反馈闭环
 - 显式反馈（评分/操作标签）+ 隐式信号聚合，驱动个性化排序与偏好画像
 

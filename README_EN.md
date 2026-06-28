@@ -54,6 +54,15 @@ SoulDance/
 ### Voice Interaction
 - STT (streaming WebSocket) + TTS (chunked streaming playback), Doubao voice engine support
 
+### Inline Product Anchor
+- **Unified inline product entry**: products in AI messages are embedded as `[[name#product_id]]` anchors inside the message text, replacing standalone product cards
+- **Tap to expand details**: every anchor opens the `ProductDetailBottomSheet`, covering recommendation, comparison, bundle, and follow-up flows
+- **Cross-stack protocol alignment**:
+  - Backend prompts inject `[[title#product_id]]` into primary, alternative, comparison, and bundle text, and validate that `product_id` belongs to `allowed_products`
+  - Invalid or missing anchors degrade gracefully: markup is stripped and a warning is logged, preventing frontend parse failures
+  - Dialogue history compresses anchors to `[product:product_id]` to save tokens while preserving references
+- **Implementation plan**: `docs/superpowers/plans/2026-06-27-inline-product-anchor.md`
+
 ### Feedback Loop
 - Explicit feedback (ratings/action labels) + implicit signal aggregation, driving personalized ranking and user preference profiles
 

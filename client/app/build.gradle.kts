@@ -6,6 +6,23 @@ plugins {
 
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
+// 基于 Git 提交数自动生成版本号 — 每次新 commit 编译时 versionCode/versionName 自动递增
+fun gitCommitCount(): Int = runCatching {
+    ProcessBuilder("git", "rev-list", "--count", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+        .inputStream.bufferedReader().use { it.readText().trim().toInt() }
+}.getOrDefault(1)
+
+fun gitShortHash(): String = runCatching {
+    ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+        .directory(rootProject.projectDir)
+        .redirectErrorStream(true)
+        .start()
+        .inputStream.bufferedReader().use { it.readText().trim() }
+}.getOrDefault("unknown")
+
 providers.environmentVariable("SHOPGUIDE_ANDROID_BUILD_DIR").orNull
     ?.takeIf { it.isNotBlank() }
     ?.let { layout.buildDirectory = file(it) }
@@ -18,8 +35,8 @@ android {
         applicationId = "com.example.shopguideagent"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = gitCommitCount()
+        versionName = "1.0.${gitCommitCount()}"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

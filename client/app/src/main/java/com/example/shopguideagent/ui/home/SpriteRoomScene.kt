@@ -101,7 +101,7 @@ fun SpriteStageArea(
 private fun SpriteStageAreaSearchingPreview() {
     ShopGuideAgentTheme {
         Box(Modifier.fillMaxSize()) {
-            SpriteRoomBackdrop(Modifier.fillMaxSize())
+            SpriteRoomBackdrop(modifier = Modifier.fillMaxSize())
             SpriteStageArea(
                 stageState = SpriteHomePreviewData.searching.toAvatarStageUiState(),
                 modifier = Modifier
@@ -118,7 +118,7 @@ private fun SpriteStageAreaSearchingPreview() {
 private fun SpriteStageAreaPresentingPreview() {
     ShopGuideAgentTheme {
         Box(Modifier.fillMaxSize()) {
-            SpriteRoomBackdrop(Modifier.fillMaxSize())
+            SpriteRoomBackdrop(modifier = Modifier.fillMaxSize())
             SpriteStageArea(
                 stageState = SpriteHomePreviewData.presenting.toAvatarStageUiState(),
                 modifier = Modifier

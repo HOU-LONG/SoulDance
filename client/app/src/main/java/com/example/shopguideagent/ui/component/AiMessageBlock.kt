@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -149,6 +148,7 @@ private fun InlineProductThumbnails(
             ) {
                 ProductImage(
                     imageUrl = product.imageUrl,
+                    productName = product.name,
                     modifier = Modifier
                         .size(64.dp)
                         .clip(RoundedCornerShape(10.dp)),

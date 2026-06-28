@@ -212,6 +212,7 @@ private fun OrderCard(order: OrderUiModel) {
                 order.items.take(4).forEach { item ->
                     ProductImage(
                         imageUrl = item.imageUrl,
+                        productName = item.name,
                         modifier = Modifier
                             .size(48.dp)
                             .clip(RoundedCornerShape(8.dp)),

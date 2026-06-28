@@ -132,6 +132,9 @@ fun SpriteHomeScreen(
                 onSpeakerToggle = { onAction(SpriteHomeAction.SpeakerToggled) },
                 onChatClick = { onAction(SpriteHomeAction.ChatModeClicked) },
                 onHistoryClick = { onAction(SpriteHomeAction.HistoryDrawerOpened) },
+                cartBadgeCount = chatState.cartBadgeCount,
+                onWardrobeClick = { onAction(SpriteHomeAction.DressUpClicked) },
+                onCartClick = { onAction(SpriteHomeAction.CartClicked) },
             )
 
             SpriteStageArea(
@@ -169,15 +172,7 @@ fun SpriteHomeScreen(
                     .padding(bottom = 10.dp),
             )
 
-            BottomActionBar(
-                firePoints = state.userProfile.firePoints,
-                cartCount = chatState.cartBadgeCount,
-                onAction = onAction,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-            )
-
+            // Task 12: BottomActionBar 已移除——衣橱和购物车入口迁移至 SpriteTopBar
             DailyTaskBar(
                 state = state.primaryDailyTask(),
                 onAction = onAction,

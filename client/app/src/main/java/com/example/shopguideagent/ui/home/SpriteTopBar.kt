@@ -14,11 +14,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Checkroom
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.ShoppingCart
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,6 +47,10 @@ fun SpriteTopBar(
     onChatClick: () -> Unit,
     onHistoryClick: () -> Unit,
     modifier: Modifier = Modifier,
+    // Task 12: 新增衣橱和购物车入口（替代 BottomActionBar）
+    cartBadgeCount: Int = 0,
+    onWardrobeClick: () -> Unit = {},
+    onCartClick: () -> Unit = {},
 ) {
     Row(
         modifier = modifier
@@ -60,6 +69,22 @@ fun SpriteTopBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Task 12: 衣橱按钮
+            CircleIconButton(
+                icon = Icons.Outlined.Checkroom,
+                contentDescription = "装扮衣橱",
+                onClick = onWardrobeClick,
+            )
+            // Task 12: 购物车按钮
+            BadgedBox(
+                badge = { if (cartBadgeCount > 0) Badge { Text("$cartBadgeCount") } },
+            ) {
+                CircleIconButton(
+                    icon = Icons.Outlined.ShoppingCart,
+                    contentDescription = "购物车",
+                    onClick = onCartClick,
+                )
+            }
             CircleIconButton(
                 icon = if (speakerEnabled) Icons.AutoMirrored.Outlined.VolumeUp else Icons.AutoMirrored.Outlined.VolumeOff,
                 contentDescription = if (speakerEnabled) "语音播报开启" else "语音播报关闭",

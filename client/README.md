@@ -34,6 +34,13 @@ app/src/main/java/com/example/shopguideagent/config/AppConfig.kt
 
 Real-device debugging should use the Cloudflare tunnel URL configured there. Rebuild the APK after changing the tunnel domain.
 
+## Session History & User Switching
+
+- `ChatHistoryRepository` stores chat history per `user_id` as JSON in SharedPreferences, keeping at most 30 sessions.
+- Old Base64 history format is migrated read-only on first load.
+- `SessionsApi` exposes `listSessions()` / `getSession(id)` / `deleteSession(id)`; all requests carry `X-User-Id`.
+- `ChatViewModel.onUserSwitched(userId)` persists the current session, reloads local history for the new user, fetches the backend latest session, and reconnects the WebSocket.
+
 ## Client Boundary
 
 The app should display backend-returned products only. Keep product recommendation, filtering, cart mutation truth, LLM keys, ASR keys, and TTS keys on the server.

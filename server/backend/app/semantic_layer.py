@@ -367,13 +367,25 @@ def _is_small_talk(text: str) -> bool:
         return True
     if _has_shopping_signal(text):
         return False
-    if ("你好" in normalized or "您好" in normalized or re.search(r"h[ae]l+o+|hello|hi|hey", normalized)) and (
-        "你是谁" in normalized or "你能做什么" in normalized or "你是干嘛的" in normalized
-    ):
+    capability_patterns = [
+        "你能做什么",
+        "你能帮我做什么",
+        "你能帮我做些什么",
+        "你能做啥",
+        "你有什么功能",
+        "你有什么用",
+        "你可以做什么",
+        "你可以帮我做什么",
+        "你是干嘛的",
+        "你是做什么的",
+        "你是谁",
+        "你是谁呀",
+    ]
+    if any(p in normalized for p in capability_patterns):
         return True
     return bool(
         re.fullmatch(
-            r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了|你是谁呀?|你是干嘛的|你能做什么)",
+            r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了)",
             normalized,
         )
     )

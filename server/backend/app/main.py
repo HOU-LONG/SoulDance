@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from functools import lru_cache
+import uuid
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +23,7 @@ from .identity import get_current_user_id, is_valid_user_id, ANONYMOUS_USER_ID
 from .image_assets import product_image_url_auto as product_image_url
 from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
 from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
-from .models import CartActionRequest, ChatRequest, FeedbackEvent, OrderActionRequest
+from .models import CartActionRequest, ChatRequest, DisplayMessage, FeedbackEvent, OrderActionRequest
 from .order_service import OrderError, OrderService
 from .rag.fusion import HybridRetriever
 from .rag.reranker import build_reranker
@@ -214,11 +216,60 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
 
     @app.get("/api/sessions/latest")
     def get_latest_session(user_id: str = Depends(get_current_user_id)):
-        """获取用户最近使用的会话 ID；如果不存在则返回新的会话 ID。"""
+        """获取用户最近使用的会话 ID；如果不存在则返回新的会话 ID，并确保落库。"""
         latest_session_id = session_store.get_latest_session_id(user_id)
         if latest_session_id is None:
             latest_session_id = f"{user_id}_session_default"
+            # ensure it exists for subsequent loads
+            session_store.get(user_id, latest_session_id)
+            session_store.save(user_id, latest_session_id)
         return {"session_id": latest_session_id}
+
+    @app.get("/api/sessions")
+    def list_sessions(user_id: str = Depends(get_current_user_id)):
+        """返回当前用户的会话列表摘要。"""
+        sessions = session_store.list_sessions(user_id)
+        return {
+            "sessions": [
+                {
+                    "session_id": ctx.session_id,
+                    "title": _session_title(ctx),
+                    "updated_at": ctx.last_activity_at,
+                    "message_count": len(ctx.display_messages),
+                    "preview": _session_preview(ctx),
+                }
+                for ctx in sessions
+            ]
+        }
+
+    @app.get("/api/sessions/{session_id}")
+    def get_session(session_id: str, user_id: str = Depends(get_current_user_id)):
+        """返回指定会话的详细信息，包括所有展示消息。"""
+        ctx = session_store.get(user_id, session_id)
+        return {
+            "session_id": ctx.session_id,
+            "title": _session_title(ctx),
+            "updated_at": ctx.last_activity_at,
+            "messages": [m.model_dump(mode="json") for m in ctx.display_messages],
+        }
+
+    @app.delete("/api/sessions/{session_id}", status_code=204)
+    def delete_session(session_id: str, user_id: str = Depends(get_current_user_id)):
+        """删除指定会话。"""
+        session_store.delete(user_id, session_id)
+        return None
+
+    def _session_title(ctx) -> str:
+        for m in ctx.display_messages:
+            if m.role == "user" and m.text:
+                return m.text[:18]
+        return "新会话"
+
+    def _session_preview(ctx) -> str:
+        for m in reversed(ctx.display_messages):
+            if m.role == "assistant" and m.text:
+                return m.text[:60]
+        return ""
 
     @app.post("/api/chat")
     async def chat_json(request: ChatRequest, user_id: str = Depends(get_current_user_id)):
@@ -254,6 +305,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                 async def send_cart_tool_events(compiled_ir=None) -> bool:
                     handled = False
                     context = agent.sessions.get(user_id, request.session_id)
+                    cart_events: list[dict] = []
                     async for event in agent.tool_registry.execute(
                         "cart_operation",
                         request,
@@ -263,10 +315,12 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                         user_id=user_id,
                     ):
                         handled = True
+                        cart_events.append(event)
                         await websocket.send_json(envelope.wrap(event))
                         metrics.increment("ws.events.sent")
                     if handled:
                         session_store.save(user_id, request.session_id)
+                        _record_cart_display_message(context, request, cart_events)
                     return handled
 
                 if request.type == "cart_action":
@@ -440,6 +494,20 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                 request.idempotency_key,
             ).model_dump(mode="json")
         )
+
+    def _record_cart_display_message(context, request, events):
+        text = request.message or f"购物车操作: {request.action}"
+        result_parts = []
+        for event in events:
+            if event.get("type") == "cart_update" and event.get("message"):
+                result_parts.append(event["message"])
+        display = DisplayMessage(
+            id=str(uuid.uuid4()),
+            role="system",
+            text=f"{text}\n{'; '.join(result_parts)}" if result_parts else text,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        context.display_messages.append(display)
 
     return app
 

@@ -37,7 +37,7 @@ class ChatViewModelVoiceTest {
     fun voiceTranscriptionSuccessAppendsUserMessageAndAssistantPlaceholder() {
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             RealtimeChatWebSocketClient(),
             FakeSpeechToTextClient("voice transcript"),
         )
@@ -60,7 +60,7 @@ class ChatViewModelVoiceTest {
         val pendingResult = CompletableDeferred<Result<String>>()
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             NoopRealtimeChatWebSocketClient(),
             DeferredSpeechToTextClient(pendingResult),
         )
@@ -80,7 +80,7 @@ class ChatViewModelVoiceTest {
     fun emptyVoiceTranscriptionShowsEmptyStateAndDoesNotSendMessage() {
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             NoopRealtimeChatWebSocketClient(),
             FakeSpeechToTextClient(Result.success("   ")),
         )
@@ -98,7 +98,7 @@ class ChatViewModelVoiceTest {
     fun failedVoiceTranscriptionShowsBackendReason() {
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             NoopRealtimeChatWebSocketClient(),
             FakeSpeechToTextClient(Result.failure(IllegalStateException("STT is disabled"))),
         )
@@ -116,7 +116,7 @@ class ChatViewModelVoiceTest {
     fun timedOutVoiceTranscriptionShowsTimeoutState() {
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             NoopRealtimeChatWebSocketClient(),
             FakeSpeechToTextClient(Result.failure(SocketTimeoutException("timeout"))),
         )
@@ -135,7 +135,7 @@ class ChatViewModelVoiceTest {
     fun disconnectedVoiceTranscriptionDoesNotExposeRawTransportError() {
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             NoopRealtimeChatWebSocketClient(),
             FakeSpeechToTextClient(Result.failure(IOException("connection closed"))),
         )
@@ -155,7 +155,7 @@ class ChatViewModelVoiceTest {
     fun newSessionResetsSpeakerEnabledForCurrentConversation() {
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
         )
 
         viewModel.setSpeakerEnabled(false)
@@ -171,7 +171,7 @@ class ChatViewModelVoiceTest {
         val audioPlayer = FakeAudioPlayer()
         val viewModel = ChatViewModel(
             ListProductCatalog(emptyList()),
-            ChatHistoryRepository(InMemoryChatHistoryStore("")),
+            ChatHistoryRepository(InMemoryChatHistoryStore(), userIdProvider = { "demo_user_a" }),
             audioPlayer = audioPlayer,
         )
         val handler: Method = ChatViewModel::class.java.getDeclaredMethod(

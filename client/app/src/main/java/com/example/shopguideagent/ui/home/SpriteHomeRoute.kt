@@ -34,6 +34,7 @@ fun SpriteHomeRoute(
     currentUserId: String,
     userAvatarUri: String?,
     onEffect: (SpriteHomeEffect) -> Unit,
+    onSwitchUser: (String) -> Unit,
     onUserSelected: (String) -> Unit,
     onAvatarChangeRequested: () -> Unit,
     onNewSession: () -> Unit,
@@ -59,7 +60,7 @@ fun SpriteHomeRoute(
                 is SpriteHomeEffect.OpenHistoryDrawer -> scope.launch { drawerState.open() }
                 is SpriteHomeEffect.SwitchUser -> {
                     scope.launch { drawerState.close() }
-                    onUserSelected(effect.userId)
+                    onSwitchUser(effect.userId)
                 }
                 is SpriteHomeEffect.SelectSession -> {
                     scope.launch { drawerState.close() }

@@ -60,6 +60,7 @@ agent.py 就是指挥家，LLM/RAG/Cart/Order 是各个乐器组。
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from collections.abc import AsyncIterator
 import json
 import logging
@@ -98,6 +99,8 @@ from .memory_cache import RecommendationMemoryCache, RecommendationMemoryHit, St
 from .models import (
     ChatRequest,
     ContextEvent,
+    DisplayMessage,
+    DisplayMessageProduct,
     HardConstraints,
     PendingClarification,
     PendingRecovery,
@@ -178,6 +181,7 @@ class ShopGuideAgent:
         from .tools.bundle import ScenarioBundleTool
         from .tools.followup import ProductFollowupTool
         from .tools.small_talk import SmallTalkTool
+        from .tools.product_analysis import ProductAnalysisTool
         self.tool_registry = ToolRegistry()
         self.tool_registry.register(RetrieveProductsTool(self))
         self.tool_registry.register(CartTool(self))
@@ -186,6 +190,7 @@ class ShopGuideAgent:
         self.tool_registry.register(ScenarioBundleTool(self))
         self.tool_registry.register(ProductFollowupTool(self))
         self.tool_registry.register(SmallTalkTool(self))
+        self.tool_registry.register(ProductAnalysisTool(self))
 
     def _record_feedback(self, session_id: str, signal_type: str, product_id: str = None,
                          action_label: str = None, context: dict = None) -> None:
@@ -318,6 +323,24 @@ class ShopGuideAgent:
         context = self.sessions.get(user_id, request.session_id)
         # Append user message to dialog history before processing
         context.dialog_turns.append({"role": "user", "content": request.message or ""})
+
+        # Record user display message
+        user_display = DisplayMessage(
+            id=_message_id(),
+            role="user",
+            text=request.message or "",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        context.display_messages.append(user_display)
+
+        collected: list[dict] = []
+        async for event in self._do_stream_message(user_id, request, compiled_ir, context):
+            collected.append(event)
+            yield event
+
+        self._record_display_messages(context, collected)
+
+    async def _do_stream_message(self, user_id: str, request: ChatRequest, compiled_ir, context: SessionContext) -> AsyncIterator[dict]:
         recovery_events = self._build_pending_recovery_events(context, request)
         if recovery_events is not None:
             for event in recovery_events:
@@ -338,6 +361,15 @@ class ShopGuideAgent:
                 request,
                 context,
                 compiled_ir=ir,
+                user_id=user_id,
+            ):
+                yield event
+            return
+        if ir.intent in {"small_talk", "unclear_input"} and _looks_like_single_product_analysis(request.message):
+            async for event in self.tool_registry.execute(
+                "product_analysis",
+                request,
+                context,
                 user_id=user_id,
             ):
                 yield event
@@ -386,6 +418,15 @@ class ShopGuideAgent:
             ):
                 yield event
             return
+        if ir.intent == "compare_products" and _looks_like_single_product_analysis(request.message):
+            async for event in self.tool_registry.execute(
+                "product_analysis",
+                request,
+                context,
+                user_id=user_id,
+            ):
+                yield event
+            return
         if plan.intent == "compare_products":
             async for event in self.tool_registry.execute(
                 "compare_products",
@@ -429,6 +470,32 @@ class ShopGuideAgent:
             user_id=user_id,
         ):
             yield event
+
+    def _record_display_messages(self, context: SessionContext, events: list[dict]) -> None:
+        """Build one assistant DisplayMessage from collected stream events."""
+        assistant = DisplayMessage(
+            id=_message_id(),
+            role="assistant",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        has_content = False
+        for event in events:
+            etype = event.get("type")
+            if etype in {"text_delta", "focus_text_delta"}:
+                assistant.text += event.get("text", "")
+                has_content = True
+            elif etype in {"product_item", "replacement_product"}:
+                raw = event.get("product", {})
+                if raw:
+                    assistant.products.append(DisplayMessageProduct(**raw))
+                    has_content = True
+            elif etype == "quick_actions":
+                assistant.quick_actions = event.get("actions", [])
+            elif etype == "cart_update" and event.get("message"):
+                assistant.text += ("\n" if assistant.text else "") + event.get("message")
+                has_content = True
+        if has_content:
+            context.display_messages.append(assistant)
 
     def _build_pending_recovery_events(self, context: SessionContext, request: ChatRequest) -> list[dict] | None:
         pending = context.state.pending_recovery
@@ -1043,6 +1110,17 @@ class ShopGuideAgent:
         else:
             product_ids = _resolve_comparison_product_ids(request.message, context)
         products = [self.product_map[product_id] for product_id in product_ids if product_id in self.product_map]
+        # Apply price constraints from the current comparison plan even for explicitly named targets,
+        # so that requests like "小米手机和华为手机，6000元价位段" compare phones in that band.
+        comparison_plan = plan or context.last_plan
+        if comparison_plan and comparison_plan.hard_constraints:
+            hc = comparison_plan.hard_constraints
+            if hc.price_min is not None or hc.price_max is not None:
+                products = [
+                    p for p in products
+                    if (hc.price_min is None or p.price >= hc.price_min)
+                    and (hc.price_max is None or p.price <= hc.price_max)
+                ]
         # Only apply hard_filter when product IDs came from context events.
         # Explicitly resolved named+fuzzy targets (≥2) should not be gated
         # by a previous turn's price/category constraints — the user named them.
@@ -1053,8 +1131,6 @@ class ShopGuideAgent:
                 if product.product_id in context.entity_params
                 or hard_filter(product, context.last_plan.hard_constraints)
             ]
-        # Preserve the dynamic comparison plan from main for downstream use
-        comparison_plan = context.last_plan
         message_id = _message_id()
         if len(products) < 2:
             text = insufficient_comparison_products_text()
@@ -1633,6 +1709,38 @@ class ShopGuideAgent:
 
 def _normalize_product_match_text(text: str | None) -> str:
     return re.sub(r"[\s,，。！？!?:：；;、（）()【】\[\]\"'“”‘’]+", "", (text or "").lower())
+
+
+def _extract_target_sub_category(text: str) -> str | None:
+    mapping = {
+        "手机": "智能手机",
+        "平板": "平板电脑",
+        "笔记本": "笔记本电脑",
+        "电脑": "笔记本电脑",
+        "精华": "精华",
+        "防晒": "防晒霜",
+        "咖啡": "咖啡",
+        "耳机": "耳机",
+        "跑鞋": "跑鞋",
+    }
+    for key, value in mapping.items():
+        if key in text:
+            return value
+    return None
+
+
+def _extract_price_band(text: str) -> tuple[float | None, float | None]:
+    import re
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|块)?\s*价位段", text)
+    if match:
+        center = float(match.group(1))
+        # "6000元价位段" → compare products around 6000, ±1000
+        return max(0.0, center - 1000), center + 1000
+    match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|块)?\s*左右", text)
+    if match:
+        center = float(match.group(1))
+        return max(0.0, center - 1000), center + 1000
+    return None, None
 
 
 def _has_explicit_product_hint(message: str, products: list[Product]) -> bool:
@@ -2332,6 +2440,10 @@ def _resolve_comparison_named_targets(text: str, product_map: dict, context: Ses
     """
     ids: list[str] = []
 
+    # Infer target sub_category and price band from explicit cues in the request.
+    target_sub_cat = _extract_target_sub_category(text)
+    price_min, price_max = _extract_price_band(text)
+
     # ── fuzzy deictic references → anchor lookup ──
     _FUZZY_MARKERS: list[tuple[str, str]] = [
         ("刚才那个便宜的", "last_cheaper_alternative"),
@@ -2369,11 +2481,22 @@ def _resolve_comparison_named_targets(text: str, product_map: dict, context: Ses
                 anchor_sub_cat = _normalize_product_match_text(anchor.sub_category)
                 break
 
+        # Combine anchor-derived sub_category with explicit target sub_category.
+        effective_sub_cat = anchor_sub_cat or target_sub_cat
+
         scored: list[tuple[int, str]] = []
         for pid, product in product_map.items():
             if pid in ids:
                 continue
             if not product.brand or product.brand not in text:
+                continue
+            # Filter by explicit target sub_category before scoring.
+            if target_sub_cat is not None and _normalize_product_match_text(product.sub_category) != target_sub_cat:
+                continue
+            # Filter by price band before scoring.
+            if price_min is not None and product.price < price_min:
+                continue
+            if price_max is not None and product.price > price_max:
                 continue
             score = _product_mention_score(normalized, product)
             # Require a score above the brand-only threshold (55).
@@ -2382,8 +2505,8 @@ def _resolve_comparison_named_targets(text: str, product_map: dict, context: Ses
             # matches (which score the same regardless of sub_category) from
             # leaking unrelated products into the comparison.
             if score >= 55 and (
-                anchor_sub_cat is None
-                or _normalize_product_match_text(product.sub_category) == anchor_sub_cat
+                effective_sub_cat is None
+                or _normalize_product_match_text(product.sub_category) == effective_sub_cat
             ):
                 scored.append((score, pid))
         scored.sort(reverse=True)
@@ -2792,6 +2915,15 @@ async def _stream_with_first_chunk_timeout(
         yield chunk
         # 首块拿到后，后续 chunk 用更宽松的间隔超时
         timeout = chunk_timeout
+
+
+def _looks_like_single_product_analysis(message: str) -> bool:
+    text = message or ""
+    # e.g. "如何看待...性价比", "这个...怎么样", "分析一下..."
+    return bool(
+        re.search(r"(性价比|怎么样|如何|分析一下|值得买吗|好不好)", text)
+        and not re.search(r"(对比|比较|哪个更|怎么选|第一款|第二款)", text)
+    )
 
 
 def _no_match_text(plan: RetrievalPlan) -> str:

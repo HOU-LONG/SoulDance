@@ -383,6 +383,30 @@ def _is_small_talk(text: str) -> bool:
     ]
     if any(p in normalized for p in capability_patterns):
         return True
+    # 扩展的日常闲聊模式：涵盖更广泛的自然对话场景
+    small_talk_patterns = [
+        # 问候与告别
+        r"(早上好|中午好|下午好|晚上好|早安|晚安|再见|拜拜|bye|goodbye|seeyou)",
+        # 心情与状态
+        r"(心情|开心|难过|无聊|累了|好累|困了|好困|睡不着|压力|焦虑)",
+        # 日常闲聊
+        r"(今天天气|天气|下雨|晴天|阴天|好冷|好热|好饿|饿了|吃了|吃饭)",
+        # 意见与闲聊
+        r"^(你觉得|你认为|你怎么看|怎么看|行不行|好不好|可以吗|有没有可能)",
+        # 能力边界
+        r"(你能|你会|你知道|你懂|你来|你给我|帮我|帮我看|看看这个|听一下)",
+        # 纯社交
+        r"^(好的|好吧|行吧|嗯嗯|哦哦|哈哈|呵呵|嘿嘿|嘻嘻|不错|厉害|牛|nb)",
+        # 感谢与反馈
+        r"(谢谢|多谢|感谢|谢了|辛苦了|麻烦|拜托|不客气|没问题|没关系)",
+        # 表达感受
+        r"(我喜欢|我不喜欢|我觉得|我感觉|我想|我需要|我打算|我计划)",
+    ]
+    if any(re.search(p, normalized) for p in small_talk_patterns):
+        return True
+    # 极短消息（<=5 个字符且无明确购物动词）视为闲聊
+    if len(normalized) <= 5 and not re.search(r"(买|卖|要|给|换|找|订|配)", normalized):
+        return True
     return bool(
         re.fullmatch(
             r"(你好|您好|h[ae]l+o+|hello|hi|hey|yo|在吗|在不在|谢谢|谢了|感谢|辛苦了)",

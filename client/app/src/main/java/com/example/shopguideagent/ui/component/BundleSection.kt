@@ -20,6 +20,7 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 fun BundleSection(
     bundle: BundleUiModel,
     onAddProduct: (ProductUiModel) -> Unit,
+    onProductAnchorTap: (String) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -35,7 +36,7 @@ fun BundleSection(
             fontWeight = FontWeight.SemiBold,
         )
         bundle.groups.forEach { group ->
-            BundleGroupCard(group = group, onAddProduct = onAddProduct)
+            BundleGroupCard(group = group, onAddProduct = onAddProduct, onProductAnchorTap = onProductAnchorTap)
         }
         if (bundle.actions.isNotEmpty()) {
             QuickActionChips(

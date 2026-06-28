@@ -15,6 +15,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.LineHeightStyle
@@ -31,7 +32,7 @@ import com.example.shopguideagent.ui.theme.TextPrimary
 fun AiMessageBlock(
     message: ChatMessageUiModel,
     firePoints: Int,
-    onProductClick: (ProductUiModel) -> Unit,
+    onProductAnchorTap: (String) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     onQuickAction: (String) -> Unit,
     onAddBundleProduct: (ProductUiModel) -> Unit,
@@ -51,20 +52,9 @@ fun AiMessageBlock(
             tonalElevation = 1.dp,
             shadowElevation = 3.dp,
         ) {
-            AiMessageText(message)
+            AiMessageText(message, onProductAnchorTap)
         }
-        if (message.expectedProductCount > 0 || message.products.isNotEmpty()) {
-            ProductCarousel(
-                products = message.products,
-                expectedCount = message.expectedProductCount,
-                firePoints = firePoints,
-                onProductClick = onProductClick,
-                onAddToCart = onAddToCart,
-                onQuickAction = onQuickAction,
-                quickActions = message.quickActions,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
+        // F3: 移除 ProductCarousel——商品统一走锚点+Sheet
         if (message.products.isEmpty() && message.quickActions.isNotEmpty()) {
             QuickActionChips(
                 actions = message.quickActions,
@@ -72,18 +62,37 @@ fun AiMessageBlock(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+        // F0: Bundle 始终由 message.bundle 非 null 驱动（不再受 expectedProductCount 门控）
         message.bundle?.let {
-            InlineBundleSection(bundle = it, onAddProduct = onAddBundleProduct)
+            InlineBundleSection(
+                bundle = it,
+                onAddProduct = onAddBundleProduct,
+                onProductAnchorTap = onProductAnchorTap,
+            )
         }
     }
 }
 
 @Composable
-private fun AiMessageText(message: ChatMessageUiModel) {
+private fun AiMessageText(
+    message: ChatMessageUiModel,
+    onProductAnchorTap: (String) -> Unit,
+) {
+    val anchorColor = MaterialTheme.colorScheme.primary
     SelectionContainer {
         val fallback = if (message.isStreaming) "我正在帮你整理推荐..." else ""
+        val annotatedString = remember(message.text) {
+            renderMarkdownText(
+                markdown = message.text,
+                fallback = fallback,
+                autoSegment = true,
+                anchorColor = anchorColor,
+                onAnchorClick = onProductAnchorTap,
+            )
+        }
+        // F3: 使用 Text + LinkAnnotation（ClickableText 已 deprecated）
         Text(
-            text = renderMarkdownText(message.text, fallback, autoSegment = true),
+            text = annotatedString,
             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
             style = MaterialTheme.typography.bodyMedium.copy(
                 lineHeightStyle = LineHeightStyle(
@@ -99,11 +108,13 @@ private fun AiMessageText(message: ChatMessageUiModel) {
 private fun InlineBundleSection(
     bundle: BundleUiModel,
     onAddProduct: (ProductUiModel) -> Unit,
+    onProductAnchorTap: (String) -> Unit,
 ) {
     Spacer(modifier = Modifier.height(1.dp))
     BundleSection(
         bundle = bundle,
         onAddProduct = onAddProduct,
+        onProductAnchorTap = onProductAnchorTap,
         modifier = Modifier.fillMaxWidth(),
     )
 }

@@ -7,9 +7,9 @@
 必须按以下顺序输出这些加粗逻辑标签，标签本身必须保留 Markdown 粗体：
 **理解：** 先用一句话复述用户关键需求和已经处理的硬约束。
 **结论：** 只给 selected_primary 对应商品的推荐结论，说明为什么优先看它。
-**主推：** 主推一个商品：只介绍 selected_primary 对应的第一个 allowed_products 商品。
+**主推：** 主推一个商品：只介绍 selected_primary 对应的第一个 allowed_products 商品，提到商品名时必须用 [[商品title#product_id]] 格式包裹，title 与 product_id 取自 allowed_products。
 **评论摘要：** 如果 selected_primary 的 review_summary 有可用内容，用一句话概括；没有就省略这一段。
-**备选：** 如果有其它 allowed_products，用一句话说明备选差异；没有备选就省略这一段。
+**备选：** 如果有其它 allowed_products，用一句话说明备选差异，同样用 [[商品title#product_id]] 包裹商品名；没有备选就省略这一段。
 **下一步：** 给一个低成本修正入口，例如继续说预算、不要某品牌/口味，或加入购物车。
 
 每段尽量 1-2 句。可以使用短列表，但不要长篇展开。
@@ -18,3 +18,4 @@
 文案中 **结论：** 或 **主推：** 里的 优先推荐/优先看/主推 只能指 selected_primary。其它商品只能称为备选。
 只能引用 allowed_products、selected_primary、hard_constraints_applied、focus_product、review_summary 和 response_contract 中的信息。
 不要编造商品属性，不要承诺疗效，不要改变商品顺序、价格、购物车状态或事件类型。
+锚点中的 title 和 product_id 必须逐字取自 allowed_products，不得编造或改写。锚点只出现在正文 Markdown 段落中，不要放在代码块中。

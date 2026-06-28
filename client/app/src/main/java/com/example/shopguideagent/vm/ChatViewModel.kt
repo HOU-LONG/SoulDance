@@ -6,6 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.example.shopguideagent.config.UserSession
 import com.example.shopguideagent.data.catalog.ProductCatalog
 import com.example.shopguideagent.data.history.ChatHistoryRepository
+import com.example.shopguideagent.data.model.BundleGroupUiModel
+import com.example.shopguideagent.data.model.BundleItemUiModel
+import com.example.shopguideagent.data.model.BundleUiModel
 import com.example.shopguideagent.data.model.ChatExperiencePhase
 import com.example.shopguideagent.data.model.ChatMessageUiModel
 import com.example.shopguideagent.data.model.ChatUiState
@@ -264,11 +267,11 @@ class ChatViewModel @JvmOverloads constructor(
                 id = assistantId,
                 role = MessageRole.Assistant,
                 isStreaming = true,
-                expectedProductCount = 0,
             ),
             errorMessage = null,
             retryMessageText = null,
             streamStartedAtMillis = startedAt,
+            expandedProductId = null,  // F5: 发新消息时自动收起面板
         )
         persist()
 
@@ -427,7 +430,7 @@ class ChatViewModel @JvmOverloads constructor(
                 }
             }
             is RealtimeEvent.ProductsStart -> {
-                activeAssistantId?.let { updateExpectedCount(it, event.expectedCount) }
+                // F3: 锚点方案不再需要 expectedProductCount
                 _uiState.update { current ->
                     current.copy(phase = ChatExperiencePhase.RecommendationLoading)
                 }
@@ -444,7 +447,19 @@ class ChatViewModel @JvmOverloads constructor(
                 }
             }
             is RealtimeEvent.BundleStart -> {
-                activeAssistantId?.let { updateExpectedCount(it, 4) } // 组合包默认预期数量
+                // F0: 初始化 BundleUiModel（取代原来的 updateExpectedCount）
+                activeAssistantId?.let { id ->
+                    updateMessage(id) { msg ->
+                        msg.copy(bundle = BundleUiModel(
+                            bundleId = event.messageId,
+                            scenario = "",
+                            title = event.title.orEmpty(),
+                            groups = emptyList(),
+                            actions = emptyList(),
+                            isStreaming = true,
+                        ))
+                    }
+                }
                 _uiState.update { current ->
                     current.copy(phase = ChatExperiencePhase.RecommendationLoading)
                 }
@@ -453,11 +468,37 @@ class ChatViewModel @JvmOverloads constructor(
                 activeAssistantId?.let { id ->
                     val enriched = enrichProduct(event.product)
                     appendAssistantProduct(id, enriched)
+                    // F0: 追加 BundleGroupUiModel
+                    updateMessage(id) { msg ->
+                        val groups = msg.bundle?.groups?.toMutableList() ?: mutableListOf()
+                        val existingIdx = groups.indexOfFirst { it.name == event.group }
+                        val newItem = BundleItemUiModel(slot = event.group, product = enriched)
+                        if (existingIdx >= 0) {
+                            val old = groups[existingIdx]
+                            groups[existingIdx] = old.copy(items = old.items + newItem)
+                        } else {
+                            groups.add(BundleGroupUiModel(name = event.group, items = listOf(newItem)))
+                        }
+                        msg.copy(bundle = msg.bundle?.copy(groups = groups))
+                    }
                 }
             }
             is RealtimeEvent.BundleDone -> {
+                activeAssistantId?.let { id ->
+                    updateMessage(id) { msg ->
+                        msg.copy(bundle = msg.bundle?.copy(isStreaming = false))
+                    }
+                }
                 _uiState.update { current ->
                     current.copy(phase = ChatExperiencePhase.RecommendationReady)
+                }
+            }
+            is RealtimeEvent.ComparisonResult -> {
+                activeAssistantId?.let { id ->
+                    event.items.forEach { product ->
+                        val enriched = enrichProduct(product)
+                        appendAssistantProduct(id, enriched)
+                    }
                 }
             }
             is RealtimeEvent.FocusTextDelta -> {
@@ -570,16 +611,6 @@ class ChatViewModel @JvmOverloads constructor(
         }
     }
 
-    private fun updateExpectedCount(messageId: String, count: Int) {
-        _uiState.update { current ->
-            current.copy(
-                messages = current.messages.map {
-                    if (it.id == messageId && it.isStreaming) it.copy(expectedProductCount = count) else it
-                },
-            )
-        }
-    }
-
     private fun appendAssistantProduct(messageId: String, product: ProductUiModel) {
         _uiState.update { current ->
             current.copy(
@@ -590,6 +621,24 @@ class ChatViewModel @JvmOverloads constructor(
                 },
             )
         }
+    }
+
+    /** 通用消息更新辅助方法（F0/F5 共用） */
+    private fun updateMessage(messageId: String, transform: (ChatMessageUiModel) -> ChatMessageUiModel) {
+        _uiState.update { current ->
+            current.copy(messages = current.messages.map { msg ->
+                if (msg.id == messageId) transform(msg) else msg
+            })
+        }
+    }
+
+    // F5: ProductDetailSheet 展开/收起控制
+    fun setExpandedProduct(productId: String) {
+        _uiState.update { it.copy(expandedProductId = productId) }
+    }
+
+    fun dismissExpandedProduct() {
+        _uiState.update { it.copy(expandedProductId = null) }
     }
 
     private fun updateQuickActions(
@@ -662,10 +711,10 @@ class ChatViewModel @JvmOverloads constructor(
                 streamStartedAtMillis = null,
                 messages = current.messages.map { message ->
                     if (message.id == messageId && message.isStreaming) {
+                        // F3: 不再跟踪 expectedProductCount（锚点方案不再需要）
                         message.copy(
                             text = interruptedStreamMessage(message.text, reason),
                             isStreaming = false,
-                            expectedProductCount = message.products.size,
                         )
                     } else {
                         message

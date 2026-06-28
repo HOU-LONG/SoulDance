@@ -43,6 +43,7 @@ data class ChatUiState(
     val errorMessage: String? = null,
     val retryMessageText: String? = null,
     val streamStartedAtMillis: Long? = null,
+    val expandedProductId: String? = null,  // F5: 当前展开的 ProductDetailSheet 商品 ID，null = 收起
 )
 
 data class ProductFollowUpPayload(
@@ -75,7 +76,6 @@ data class ChatMessageUiModel @JvmOverloads constructor(
     val text: String = "",
     val isStreaming: Boolean = false,
     val createdAtMillis: Long = System.currentTimeMillis(),
-    val expectedProductCount: Int = 0,
     val products: List<ProductUiModel> = emptyList(),
     val bundle: BundleUiModel? = null,
     val quickActions: List<QuickActionUiModel> = emptyList(),

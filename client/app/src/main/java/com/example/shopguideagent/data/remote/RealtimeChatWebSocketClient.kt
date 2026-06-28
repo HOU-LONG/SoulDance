@@ -172,6 +172,19 @@ open class RealtimeChatWebSocketClient(
                 )
             }
             "bundle_done" -> RealtimeEvent.BundleDone(messageId)
+            "comparison_result" -> {
+                val items = json.optJSONArray("items")?.let { arr ->
+                    (0 until arr.length()).mapNotNull { i ->
+                        arr.optJSONObject(i)?.let { parseProduct(it) }
+                    }
+                } ?: emptyList()
+                RealtimeEvent.ComparisonResult(
+                    messageId = messageId,
+                    items = items,
+                    winnerId = json.optString("overall_winner", "").takeIf { it.isNotBlank() },
+                    reason = json.optString("overall_reason", "").takeIf { it.isNotBlank() },
+                )
+            }
             "focus_text_delta" -> RealtimeEvent.FocusTextDelta(
                 messageId = messageId,
                 text = json.optString("text"),

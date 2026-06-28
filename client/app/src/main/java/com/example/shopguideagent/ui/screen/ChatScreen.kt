@@ -121,7 +121,7 @@ fun ChatScreen(
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
-    var selectedProduct by remember { mutableStateOf<ProductUiModel?>(null) }
+    // F5: expandedProductId 由 ViewModel 管理（替代本地 selectedProduct）
     var voiceState by remember { mutableStateOf(VoiceInputUiState.Idle) }
     var voiceTranscript by remember { mutableStateOf("") }
     var contentEntered by remember { mutableStateOf(false) }
@@ -352,7 +352,7 @@ fun ChatScreen(
                                             AiMessageBlock(
                                                 message = message,
                                                 firePoints = firePoints,
-                                                onProductClick = { selectedProduct = it },
+                                                onProductAnchorTap = { productId -> chatViewModel.setExpandedProduct(productId) },
                                                 onAddToCart = ::addToCartWithFeedback,
                                                 onQuickAction = { action ->
                                                     val focus = message.products.firstOrNull { it.isPrimary }
@@ -435,17 +435,36 @@ fun ChatScreen(
         }
     }
 
-    selectedProduct?.let { product ->
-        ProductDetailBottomSheet(
-            product = product,
-            onDismiss = { selectedProduct = null },
-            onAddToCart = ::addToCartWithFeedback,
-            onFollowUp = { followUp ->
-                onMessageSubmitted()
-                chatViewModel.sendProductFollowUp(product, followUp)
-                selectedProduct = null
-            },
-        )
+    // F5: 使用 expandedProductId 查找商品并展示 Sheet
+    val expandedProductId = state.expandedProductId
+    if (expandedProductId != null) {
+        val expandedProduct = state.messages
+            .flatMap { it.products }
+            .firstOrNull { it.productId == expandedProductId }
+            ?: state.messages
+                .flatMap { msg -> msg.bundle?.groups?.flatMap { it.items } ?: emptyList() }
+                .map { it.product }
+                .firstOrNull { it.productId == expandedProductId }
+        if (expandedProduct != null) {
+            ProductDetailBottomSheet(
+                product = expandedProduct,
+                onDismiss = { chatViewModel.dismissExpandedProduct() },
+                onAddToCart = ::addToCartWithFeedback,
+                onFollowUp = { followUp ->
+                    onMessageSubmitted()
+                    chatViewModel.sendProductFollowUp(expandedProduct, followUp)
+                    chatViewModel.dismissExpandedProduct()
+                },
+            )
+        } else {
+            // 边界处理：锚点商品尚未到达或无效
+            val anyStreaming = state.messages.any { it.isStreaming }
+            val message = if (anyStreaming) "正在加载商品信息..." else "商品信息暂不可用"
+            LaunchedEffect(expandedProductId) {
+                snackbarHostState.showSnackbar(message)
+                chatViewModel.dismissExpandedProduct()
+            }
+        }
     }
 }
 

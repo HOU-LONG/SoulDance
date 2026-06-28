@@ -13,9 +13,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.BundleGroupUiModel
 import com.example.shopguideagent.data.model.ProductUiModel
@@ -31,6 +38,7 @@ import com.example.shopguideagent.ui.theme.TextSecondary
 fun BundleGroupCard(
     group: BundleGroupUiModel,
     onAddProduct: (ProductUiModel) -> Unit,
+    onProductAnchorTap: (String) -> Unit,
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -57,9 +65,31 @@ fun BundleGroupCard(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        // F7: 商品名改为锚点渲染
+                        val anchorColor = MaterialTheme.colorScheme.primary
+                        val productLine = remember(item.product.productId) {
+                            buildAnnotatedString {
+                                withStyle(SpanStyle(color = TextPrimary)) {
+                                    append("${item.slot}: ")
+                                }
+                                pushLink(
+                                    LinkAnnotation.Clickable(
+                                        tag = item.product.productId,
+                                        styles = TextLinkStyles(
+                                            style = SpanStyle(color = anchorColor, textDecoration = TextDecoration.Underline)
+                                        ),
+                                        linkInteractionListener = { link ->
+                                            val productId = (link as? LinkAnnotation.Clickable)?.tag ?: return@Clickable
+                                            onProductAnchorTap(productId)
+                                        },
+                                    )
+                                )
+                                append(item.product.name)
+                                pop()
+                            }
+                        }
                         Text(
-                            "${item.slot}: ${item.product.name}",
-                            color = TextPrimary,
+                            text = productLine,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Text(

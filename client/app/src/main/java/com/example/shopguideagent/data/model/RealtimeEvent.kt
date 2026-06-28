@@ -22,6 +22,12 @@ sealed class RealtimeEvent {
         val product: ProductUiModel,
     ) : RealtimeEvent()
     data class BundleDone(val messageId: String) : RealtimeEvent()
+    data class ComparisonResult(
+        val messageId: String,
+        val items: List<ProductUiModel>,
+        val winnerId: String?,
+        val reason: String?,
+    ) : RealtimeEvent()
     data class FocusTextDelta(val messageId: String, val text: String) : RealtimeEvent()
     data class ReplacementProduct(
         val messageId: String,

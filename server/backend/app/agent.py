@@ -62,8 +62,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 import json
+import logging
 import re
 import uuid
+
+logger = logging.getLogger(__name__)
 
 from .adaptive_retriever import AdaptiveRetriever
 from .cart import CartService
@@ -733,6 +736,11 @@ class ShopGuideAgent:
                     text_parts.append(event["text"])
                 yield event
         text = "".join(text_parts)
+        # B2: 推荐流程锚点校验（can_replace=False，文本已流式发送无法撤回，仅记 warning）
+        valid_ids = {item.product.product_id for item in selected}
+        _, anchor_warnings = _validate_and_sanitize_anchors(text, valid_ids, can_replace=False)
+        for w in anchor_warnings:
+            logger.warning(f"[recommendation anchor] {w}")
         yield {"type": "products_start", "message_id": message_id, "expected_count": len(selected)}
         for index, item in enumerate(selected):
             yield {
@@ -1088,11 +1096,21 @@ class ShopGuideAgent:
                 ("理解", understanding),
                 (
                     "结论",
-                    f"如果只选一款，我更建议「{winner.title if winner else products[0].title}」，因为{result.overall_reason or '综合对比'}。",
+                    f"如果只选一款，我更建议 {_anchor(winner) if winner else _anchor(products[0])}，因为{result.overall_reason or '综合对比'}。"
+                    + (
+                        f" 备选 {_anchor(products[1])}。"
+                        if len(products) >= 2 and winner and winner.product_id != products[1].product_id
+                        else ""
+                    ),
                 ),
                 ("下一步", "你可以继续说更便宜、换品牌，或直接围绕胜出款追问。"),
             ]
         )
+        # B2: 对比流程锚点校验与降级（can_replace=True，一次性事件列表可修改）
+        valid_ids = {p.product_id for p in products}
+        text, anchor_warnings = _validate_and_sanitize_anchors(text, valid_ids, can_replace=True)
+        for w in anchor_warnings:
+            logger.warning(f"[comparison anchor] {w}")
         _append_context_event(
             context,
             request.message,
@@ -1160,6 +1178,13 @@ class ShopGuideAgent:
                     "product": _product_card(item).model_dump(mode="json"),
                 }
             )
+        # B1c: 在 bundle_done 前注入含锚点的总结文本
+        if used_product_ids:
+            anchor_summary = "、".join(
+                _anchor(self.product_map[pid])
+                for pid in used_product_ids if pid in self.product_map
+            )
+            events.extend(_text_delta_events(message_id, f"已为以下商品生成组合：{anchor_summary}。"))
         events.append({"type": "bundle_done", "message_id": message_id, "bundle_id": bundle_id})
         events.append(
             _quick_actions_event(
@@ -1170,6 +1195,15 @@ class ShopGuideAgent:
             )
         )
         events.append({"type": "done", "message_id": message_id})
+        # B2: Bundle 流程锚点校验与降级——遍历所有 text_delta event（覆盖 intro + 锚点总结）
+        valid_ids = set(used_product_ids)
+        for ev in events:
+            if ev.get("type") == "text_delta":
+                ev["text"], anchor_warnings = _validate_and_sanitize_anchors(
+                    ev["text"], valid_ids, can_replace=True
+                )
+                for w in anchor_warnings:
+                    logger.warning(f"[bundle anchor] {w}")
         context.last_plan = plan
         context.last_product_ids = used_product_ids
         context.last_recommendations = [
@@ -2684,6 +2718,49 @@ def _text_delta_events(message_id: str, text: str) -> list[dict]:
 
 def _message_id() -> str:
     return "assistant_" + uuid.uuid4().hex[:10]
+
+
+def _anchor(product) -> str:
+    """构建商品锚点标记 [[title#product_id]]。若 title 含 # 则全角转义。"""
+    from .models import Product
+    if not product:
+        return "（商品信息缺失）"
+    title = product.title.replace("#", "＃")
+    return f"[[{title}#{product.product_id}]]"
+
+
+_ANCHOR_RE = re.compile(r"\[\[(.+?)#(.+?)\]\]")
+
+
+def _validate_and_sanitize_anchors(
+    text: str, valid_ids: set[str], *, can_replace: bool
+) -> tuple[str, list[str]]:
+    """扫描 [[name#id]] 锚点，校验 id 合法性。
+
+    - can_replace=True: 非法 id 去标记保留 name 纯文本（对比/Bundle 用）
+    - can_replace=False: 非法 id 保留原样，仅收集 warning（推荐流程用）
+
+    Returns: (处理后的文本, warning 列表)
+    """
+    warnings: list[str] = []
+    found_ids = set()
+
+    def _replace(m: re.Match) -> str:
+        name = m.group(1)
+        pid = m.group(2)
+        found_ids.add(pid)
+        if pid in valid_ids:
+            return m.group(0)
+        warnings.append(f"anchor: invalid product_id={pid}")
+        if can_replace:
+            return name
+        return m.group(0)
+
+    sanitized = _ANCHOR_RE.sub(_replace, text)
+    for pid in valid_ids:
+        if pid not in found_ids:
+            warnings.append(f"anchor: missing product_id={pid} in text")
+    return sanitized, warnings
 
 
 async def _stream_with_first_chunk_timeout(

@@ -502,7 +502,10 @@ def _build_recent_context_text(context: SessionContext | None) -> str:
     recent = context.dialog_turns[-10:]
     for turn in recent:
         role = "用户" if turn.get("role") == "user" else "助手"
-        parts.append(f"{role}：{turn.get('content', '')}")
+        content = turn.get('content', '')
+        # B3: 压缩历史文本中的锚点标记，保留 product_id 去商品名和锚点语法
+        content = re.sub(r"\[\[.+?#(.+?)\]\]", r"[商品:\1]", content)
+        parts.append(f"{role}：{content}")
     return "\n".join(parts)
 
 

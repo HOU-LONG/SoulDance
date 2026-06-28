@@ -1,7 +1,11 @@
 package com.example.shopguideagent.ui.component
 
+import android.util.Log
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -37,6 +41,8 @@ fun renderMarkdownText(
     markdown: String,
     fallback: String,
     autoSegment: Boolean = false,
+    anchorColor: Color = Color.Unspecified,
+    onAnchorClick: (String) -> Unit = {},
 ): AnnotatedString {
     val source = markdown.ifBlank { fallback }
         .replace("\r\n", "\n")
@@ -69,6 +75,8 @@ fun renderMarkdownText(
             text = line.text,
             blockStyle = line.style,
             parseInline = true,
+            anchorColor = anchorColor,
+            onAnchorClick = onAnchorClick,
         )
     }
     return builder.toAnnotatedString()
@@ -184,25 +192,65 @@ private fun appendBlockLine(
     text: String,
     blockStyle: SpanStyle?,
     parseInline: Boolean,
+    anchorColor: Color = Color.Unspecified,
+    onAnchorClick: (String) -> Unit = {},
 ) {
     if (builder.length > 0) builder.append('\n')
     if (text.isEmpty()) return
     if (blockStyle != null) builder.pushStyle(blockStyle)
     if (parseInline) {
-        appendMarkdownInline(builder, text)
+        appendMarkdownInline(builder, text, anchorColor, onAnchorClick)
     } else {
         builder.append(text)
     }
     if (blockStyle != null) builder.pop()
 }
 
-private fun appendMarkdownInline(builder: AnnotatedString.Builder, source: String) {
+private fun appendMarkdownInline(
+    builder: AnnotatedString.Builder,
+    source: String,
+    anchorColor: Color = Color.Unspecified,
+    onAnchorClick: (String) -> Unit = {},
+) {
     var index = 0
     while (index < source.length) {
         when {
             source[index] == '\\' && index + 1 < source.length -> {
                 builder.append(source[index + 1])
                 index += 2
+            }
+            // F1: [[name#productId]] 锚点解析（必须在 '[' 之前拦截，否则会被 appendMarkdownLink 误处理）
+            source.startsWith("[[", index) && anchorColor != Color.Unspecified -> {
+                val close = source.indexOf("]]", index + 2)
+                if (close >= 0) {
+                    val inner = source.substring(index + 2, close)
+                    val hashIdx = inner.lastIndexOf('#')  // 用 lastIndexOf 兜底 title 含 # 的边缘情况
+                    if (hashIdx > 0 && hashIdx < inner.length - 1) {
+                        val name = inner.substring(0, hashIdx)
+                        val productId = inner.substring(hashIdx + 1)
+                        builder.pushLink(
+                            LinkAnnotation.Clickable(
+                                tag = productId,
+                                styles = TextLinkStyles(
+                                    style = SpanStyle(color = anchorColor, textDecoration = TextDecoration.Underline)
+                                ),
+                                linkInteractionListener = { link ->
+                                    val productId = (link as? LinkAnnotation.Clickable)?.tag ?: return@Clickable
+                                    onAnchorClick(productId)
+                                },
+                            )
+                        )
+                        builder.append(name)
+                        builder.pop()
+                        index = close + 2
+                    } else {
+                        builder.append(source[index])
+                        index++
+                    }
+                } else {
+                    builder.append(source[index])
+                    index++
+                }
             }
             source[index] == '[' -> {
                 val next = appendMarkdownLink(builder, source, index)

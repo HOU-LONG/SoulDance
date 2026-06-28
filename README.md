@@ -83,8 +83,8 @@ SoulDance/
 ## Demo 后端
 
 ```text
-HTTP API: https://missouri-traveling-seat-diverse.trycloudflare.com/
-WebSocket: wss://missouri-traveling-seat-diverse.trycloudflare.com/ws/chat
+HTTP API: https://enrolled-balanced-holds-inexpensive.trycloudflare.com/
+WebSocket: wss://enrolled-balanced-holds-inexpensive.trycloudflare.com/ws/chat
 ```
 
 Cloudflare tunnel 为临时端点。若 hostname 变更，更新 `client/.../AppConfig.kt` 并重新构建 APK。

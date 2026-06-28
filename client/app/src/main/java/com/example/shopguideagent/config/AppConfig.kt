@@ -10,8 +10,8 @@ object AppConfig {
     // const val BASE_WS_URL = "ws://10.0.2.2:8000"
 
     // === 选项 3: 真机局域网 / adb reverse 桥接 ===
-    const val BASE_HTTP_URL = "https://missouri-traveling-seat-diverse.trycloudflare.com/"
-    const val BASE_WS_URL = "wss://missouri-traveling-seat-diverse.trycloudflare.com"
+    const val BASE_HTTP_URL = "https://enrolled-balanced-holds-inexpensive.trycloudflare.com/"
+    const val BASE_WS_URL = "wss://enrolled-balanced-holds-inexpensive.trycloudflare.com"
 
     const val WS_CHAT_PATH = "/ws/chat"
 }

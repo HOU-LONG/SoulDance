@@ -243,7 +243,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
         }
 
     @app.get("/api/sessions/{session_id}")
-    def get_session(session_id: str, user_id: str = Depends(get_current_user_id)):
+    def get_session_endpoint(session_id: str, user_id: str = Depends(get_current_user_id)):
         """返回指定会话的详细信息，包括所有展示消息。"""
         ctx = session_store.get(user_id, session_id)
         return {

@@ -69,6 +69,7 @@ fun HeroProductCard(
     onAddToCart: (ProductUiModel) -> Unit,
     onRefine: (String) -> Unit,
     modifier: Modifier = Modifier,
+    onProductAnchorTap: (String) -> Unit = {},  // Task 6: 内联锚点回调
 ) {
     var visible by remember(product.productId) { mutableStateOf(false) }
     var added by remember(product.productId) { mutableStateOf(false) }
@@ -151,6 +152,8 @@ fun HeroProductCard(
                     text = renderMarkdownText(
                         product.reason.orEmpty(),
                         fallback = "这款更贴近你刚才描述的需求，我先把选择范围收敛到它。",
+                        anchorColor = MaterialTheme.colorScheme.primary,
+                        onAnchorClick = onProductAnchorTap,
                     ),
                     color = TextSecondary,
                     style = MaterialTheme.typography.bodyMedium,

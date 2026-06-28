@@ -23,6 +23,7 @@ fun AlternativeProductCarousel(
     onProductClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
     modifier: Modifier = Modifier,
+    onProductAnchorTap: (String) -> Unit = {},  // Task 8: 锚点回调
 ) {
     if (products.isEmpty() && skeletonCount <= 0) return
 
@@ -43,6 +44,7 @@ fun AlternativeProductCarousel(
                     index = index,
                     onClick = onProductClick,
                     onAddToCart = onAddToCart,
+                    onProductAnchorTap = onProductAnchorTap,
                 )
             }
             items(skeletonCount) {

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
@@ -42,11 +43,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.OrderUiModel
 import com.example.shopguideagent.data.model.orderListKey
+import com.example.shopguideagent.ui.component.ProductImage
 import com.example.shopguideagent.ui.theme.AppBackground
 import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.BorderColor
@@ -198,6 +201,30 @@ private fun OrderCard(order: OrderUiModel) {
                         fontWeight = FontWeight.Medium,
                         style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
+            // Task 10: 订单商品缩略图
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(bottom = 4.dp),
+            ) {
+                order.items.take(4).forEach { item ->
+                    ProductImage(
+                        imageUrl = item.imageUrl,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(RoundedCornerShape(8.dp)),
+                    )
+                }
+                if (order.items.size > 4) {
+                    Text(
+                        text = "+${order.items.size - 4}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TextSecondary,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .wrapContentSize(Alignment.Center),
                     )
                 }
             }

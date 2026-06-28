@@ -90,16 +90,23 @@ fun AppNavGraph() {
     val userSession = remember(context) { UserSession.get(context) }
     val currentUserId by userSession.currentUserId.collectAsState()
     val userIdProvider = { currentUserId }
-    val chatViewModel = remember {
-        ChatViewModel(
-            productCatalog = AndroidAssetProductCatalog(context.assets),
-            historyRepository = chatHistoryRepository(context),
-            wsClient = RealtimeChatWebSocketClient(userIdProvider),
-            sttApi = SttApiService(userIdProvider),
-            userSession = userSession,
-            userIdProvider = userIdProvider,
-        )
-    }
+    // Task 1: 使用 viewModel() 替代 remember {}，确保 ChatViewModel 在屏幕旋转等配置变更后存活。
+    // 此前 remember {} 会在每次重组时重新创建实例，导致 WebSocket 连接丢失、消息流中断。
+    val chatViewModel: ChatViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return ChatViewModel(
+                    productCatalog = AndroidAssetProductCatalog(context.assets),
+                    historyRepository = chatHistoryRepository(context),
+                    wsClient = RealtimeChatWebSocketClient(userIdProvider),
+                    sttApi = SttApiService(userIdProvider),
+                    userSession = userSession,
+                    userIdProvider = userIdProvider,
+                ) as T
+            }
+        },
+    )
     val cartStore = remember { SharedPreferencesCartPersistenceStore(context) }
     val cartViewModel: CartViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
@@ -218,7 +225,7 @@ fun AppNavGraph() {
                     }
                 },
                 onSwitchUser = { userId -> chatViewModel.onUserSwitched(userId) },
-                onUserSelected = { userId -> userSession.setCurrentUserId(userId) },
+                // Task 13: onUserSelected 已移除——用户切换统一走 SwitchUser effect → onSwitchUser 回调
                 onAvatarChangeRequested = { avatarLauncher.launch(arrayOf("image/*")) },
                 onNewSession = { chatViewModel.newSession() },
                 onSelectSession = { chatViewModel.selectSession(it) },

@@ -35,7 +35,7 @@ fun SpriteHomeRoute(
     userAvatarUri: String?,
     onEffect: (SpriteHomeEffect) -> Unit,
     onSwitchUser: (String) -> Unit,
-    onUserSelected: (String) -> Unit,
+    // Task 13: onUserSelected 已移除——用户切换统一走 SwitchUser effect → onSwitchUser 回调
     onAvatarChangeRequested: () -> Unit,
     onNewSession: () -> Unit,
     onSelectSession: (ChatSessionUiModel) -> Unit,
@@ -54,13 +54,18 @@ fun SpriteHomeRoute(
 
     LaunchedEffect(viewModel) {
         viewModel.effects.collect { effect ->
+            // Task 2: 将 else->onEffect(effect) 改为显式转发每个需要冒泡的 effect。
+            // SwitchUser 已在本地完整处理（关闭 drawer + 回调 onSwitchUser），不再转发到 onEffect，
+            // 避免 AppNavGraph 中 chatViewModel.onUserSwitched() 被重复调用。
             when (effect) {
+                // === 本地处理，不转发 ===
                 is SpriteHomeEffect.ShowTaskCenter -> showTaskCenter = true
                 is SpriteHomeEffect.HideTaskCenter -> showTaskCenter = false
                 is SpriteHomeEffect.OpenHistoryDrawer -> scope.launch { drawerState.open() }
                 is SpriteHomeEffect.SwitchUser -> {
                     scope.launch { drawerState.close() }
                     onSwitchUser(effect.userId)
+                    // 不转发到 onEffect——已在本地完整处理
                 }
                 is SpriteHomeEffect.SelectSession -> {
                     scope.launch { drawerState.close() }
@@ -75,7 +80,22 @@ fun SpriteHomeRoute(
                     editedName = state.spiritProgress.spiritName
                     showEditNameDialog = true
                 }
-                else -> onEffect(effect)
+                // === 显式转发到 AppNavGraph 处理 ===
+                is SpriteHomeEffect.NavigateToGuide,
+                is SpriteHomeEffect.NavigateToChat,
+                is SpriteHomeEffect.NavigateToWardrobe,
+                is SpriteHomeEffect.NavigateToCart,
+                is SpriteHomeEffect.NavigateToTasks,
+                is SpriteHomeEffect.NavigateToShare,
+                is SpriteHomeEffect.ShowMessage,
+                is SpriteHomeEffect.ShowClaimedReward,
+                is SpriteHomeEffect.ShowLevelUpReward,
+                is SpriteHomeEffect.OpenProduct,
+                is SpriteHomeEffect.ShowProductDetail,
+                is SpriteHomeEffect.SendTextMessage,
+                is SpriteHomeEffect.SendVoiceMessage,
+                is SpriteHomeEffect.ToggleSpeaker,
+                is SpriteHomeEffect.AddToCart -> onEffect(effect)
             }
         }
     }

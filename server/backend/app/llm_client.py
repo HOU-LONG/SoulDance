@@ -22,6 +22,14 @@ RESPONSE_SYSTEM_PROMPT = _prompts.load("response")
 SELECTION_SYSTEM_PROMPT = _prompts.load("selection")
 CHITCHAT_SYSTEM_PROMPT = _prompts.load("chitchat")
 CONTEXTUAL_FOLLOWUP_SYSTEM_PROMPT = _prompts.load("contextual_followup")
+# Task 11: 单品分析专用系统提示——与闲聊不同，LLM 需要扮演商品分析师角色
+PRODUCT_ANALYSIS_SYSTEM_PROMPT = (
+    "你是一个专业、客观的电商商品分析师。"
+    "用户想了解一款具体商品的价值。请基于你掌握的商品知识，"
+    "从性价比、适用场景、优缺点角度给出简短分析（2-4句话）。"
+    "如果商品信息不足，诚实说明并引导用户补充需求。"
+    "不要编造价格和规格。"
+)
 
 
 class DoubaoLLMClient:
@@ -269,10 +277,12 @@ class DoubaoLLMClient:
         intent: str,
         context: SessionContext | None = None,
     ):
+        # Task 11: product_analysis 使用专用系统提示（商品分析师角色），而非闲聊提示
+        system_prompt = PRODUCT_ANALYSIS_SYSTEM_PROMPT if intent == "product_analysis" else CHITCHAT_SYSTEM_PROMPT
         stream_kwargs: dict[str, Any] = {
             'model': self.model,
             'messages': [
-                {'role': 'system', 'content': CHITCHAT_SYSTEM_PROMPT},
+                {'role': 'system', 'content': system_prompt},
                 {
                     'role': 'user',
                     'content': json.dumps(

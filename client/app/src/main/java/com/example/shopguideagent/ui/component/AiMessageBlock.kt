@@ -4,11 +4,15 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.MaterialTheme
@@ -25,8 +29,10 @@ import com.example.shopguideagent.data.model.ChatMessageUiModel
 import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.ui.theme.AppCornerRadius
 import com.example.shopguideagent.ui.theme.BorderLight
+import com.example.shopguideagent.ui.theme.PriceColor
 import com.example.shopguideagent.ui.theme.SurfacePrimary
 import com.example.shopguideagent.ui.theme.TextPrimary
+import com.example.shopguideagent.ui.theme.TextSecondary
 
 @Composable
 fun AiMessageBlock(
@@ -60,6 +66,13 @@ fun AiMessageBlock(
                 actions = message.quickActions,
                 onActionClick = onQuickAction,
                 modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        // Task 9: 内联商品缩略图——替代被删除的 ProductCarousel，轻量展示商品图片
+        if (message.products.isNotEmpty() && !message.isStreaming) {
+            InlineProductThumbnails(
+                products = message.products,
+                onProductClick = onProductAnchorTap,
             )
         }
         // F0: Bundle 始终由 message.bundle 非 null 驱动（不再受 expectedProductCount 门控）
@@ -117,4 +130,45 @@ private fun InlineBundleSection(
         onProductAnchorTap = onProductAnchorTap,
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+// Task 9: 聊天消息中内联展示商品缩略图，取代被删除的 ProductCarousel
+@Composable
+private fun InlineProductThumbnails(
+    products: List<ProductUiModel>,
+    onProductClick: (String) -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp),
+    ) {
+        products.take(4).forEach { product ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.clickableWithScale { onProductClick(product.productId) },
+            ) {
+                ProductImage(
+                    imageUrl = product.imageUrl,
+                    modifier = Modifier
+                        .size(64.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "¥%.0f".format(product.price),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = PriceColor,
+                    maxLines = 1,
+                )
+            }
+        }
+        if (products.size > 4) {
+            Text(
+                text = "+${products.size - 4}",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.align(Alignment.CenterVertically),
+            )
+        }
+    }
 }

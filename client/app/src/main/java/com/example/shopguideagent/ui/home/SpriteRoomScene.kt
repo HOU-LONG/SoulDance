@@ -24,12 +24,15 @@ import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
  * 作为整页最底层，UI 浮层与中央舞台叠加其上。
  */
 @Composable
-fun SpriteRoomBackdrop(modifier: Modifier = Modifier) {
+fun SpriteRoomBackdrop(
+    backgroundId: String = "warm_room",
+    modifier: Modifier = Modifier,
+) {
     BoxWithConstraints(modifier = modifier.testTag("sprite_room_backdrop")) {
         val w = maxWidth
         val h = maxHeight
         Image(
-            painter = painterResource(R.drawable.sprite_room_background),
+            painter = painterResource(SpriteAssetRegistry.backgroundDrawable(backgroundId)),
             contentDescription = "暖色房间背景",
             contentScale = ContentScale.Crop,
             modifier = Modifier.matchParentSize(),

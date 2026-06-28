@@ -57,6 +57,7 @@ fun AlternativeProductCard(
     index: Int,
     onClick: (ProductUiModel) -> Unit,
     onAddToCart: (ProductUiModel) -> Unit,
+    onProductAnchorTap: (String) -> Unit = {},  // Task 8: 锚点回调
 ) {
     var visible by remember(product.productId) { mutableStateOf(false) }
     var added by remember(product.productId) { mutableStateOf(false) }

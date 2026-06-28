@@ -21,6 +21,7 @@ sealed interface SpriteHomeAction {
     object VoiceRecordingStarted : SpriteHomeAction
     data class VoiceFileReady(val file: File) : SpriteHomeAction
     object VoiceRecordingCancelled : SpriteHomeAction
+    data class VoiceError(val message: String) : SpriteHomeAction  // Task 3: 语音错误消息，替代 SettingsClicked 占位
     object SpeakerToggled : SpriteHomeAction
     object ChatModeClicked : SpriteHomeAction
     object CartClicked : SpriteHomeAction
@@ -40,4 +41,8 @@ sealed interface SpriteHomeAction {
     // Spirit name editing
     object EditSpiritNameClicked : SpriteHomeAction
     data class SpiritNameChanged(val name: String) : SpriteHomeAction
+
+    // Task 7: ProductDetailBottomSheet 交互
+    data class ProductAnchorTapped(val productId: String) : SpriteHomeAction
+    object DismissProductDetail : SpriteHomeAction
 }

@@ -23,27 +23,42 @@ object SpriteAssetRegistry {
     const val OUTFIT_DEFAULT = "default_outfit"
     const val OUTFIT_HOME_ADVISOR = "home_advisor"
 
-    fun layersFor(appearance: AvatarAppearance, avatarState: AvatarState): SpriteLayerResources =
-        SpriteLayerResources(
+    fun layersFor(appearance: AvatarAppearance, avatarState: AvatarState): SpriteLayerResources {
+        val isHomeAdvisor = appearance.outfitId == OUTFIT_HOME_ADVISOR
+        return SpriteLayerResources(
             baseResId = avatarDrawable(appearance.outfitId, avatarState),
-            outfitResId = null,
+            // Task 4: 当 HOME_ADVISOR 被选中时，标记 outfitResId 为非 null，
+            // 供未来分离式分层渲染（base + outfit overlay）使用。
+            // 当前由于所有素材都是全图（非分层），仅设置标记，不影响实际渲染。
+            outfitResId = if (isHomeAdvisor) R.drawable.avatar_presenting_home_advisor else null,
             accessoryResId = null,
             propResId = null,
         )
+    }
 
     /**
-     * 按状态矩阵解析人物本体 drawable。HOME_ADVISOR 仅 IDLE/PRESENTING 有专属素材，
-     * 其余状态按 manifest 的 _fallback 回落到 DEFAULT 组。
+     * 按状态矩阵解析人物本体 drawable。
+     *
+     * 资产现状（Task 4 注释）：
+     * - OUTFIT_DEFAULT: 7 个状态全覆盖（IDLE/LISTENING/THINKING/SEARCHING/PRESENTING/CELEBRATING/ERROR）
+     * - OUTFIT_HOME_ADVISOR: 只有 1 个独立素材（avatar_presenting_home_advisor），
+     *   对 IDLE 和 PRESENTING 使用该素材，其余状态使用同一素材作为 fallback，
+     *   确保用户选择 HOME_ADVISOR 后始终看到不同的外观（而非静默回退到 DEFAULT）。
+     * - 如需新增服装状态素材，在此扩展 state → drawable 映射即可。
      */
     @DrawableRes
     fun avatarDrawable(outfitId: String, state: AvatarState): Int {
         if (outfitId == OUTFIT_HOME_ADVISOR) {
-            when (state) {
-                AvatarState.IDLE, AvatarState.PRESENTING -> return R.drawable.avatar_presenting_home_advisor
-                else -> Unit // fallback to DEFAULT below
-            }
+            return R.drawable.avatar_presenting_home_advisor
         }
         return defaultDrawable(state)
+    }
+
+    /** Task 5: 根据背景 ID 返回对应 drawable，支持未来多背景切换。 */
+    @DrawableRes
+    fun backgroundDrawable(backgroundId: String): Int = when (backgroundId) {
+        "warm_room" -> R.drawable.sprite_room_background
+        else -> R.drawable.sprite_room_background  // 未知背景统一 fallback
     }
 
     @DrawableRes

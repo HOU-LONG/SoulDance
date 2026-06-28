@@ -131,6 +131,7 @@ class SpriteHomeViewModel(
             SpriteHomeAction.VoiceRecordingStarted -> onVoiceRecordingStarted()
             is SpriteHomeAction.VoiceFileReady -> emitEffect(SpriteHomeEffect.SendVoiceMessage(action.file))
             SpriteHomeAction.VoiceRecordingCancelled -> setBaseState(AvatarState.IDLE)
+            is SpriteHomeAction.VoiceError -> emitEffect(SpriteHomeEffect.ShowMessage(action.message))
             SpriteHomeAction.SpeakerToggled -> emitEffect(SpriteHomeEffect.ToggleSpeaker)
             SpriteHomeAction.ChatModeClicked -> emitEffect(SpriteHomeEffect.NavigateToChat)
             SpriteHomeAction.CartClicked -> emitEffect(SpriteHomeEffect.NavigateToCart)
@@ -148,7 +149,19 @@ class SpriteHomeViewModel(
             SpriteHomeAction.NewSessionRequested -> emitEffect(SpriteHomeEffect.CreateNewSession)
             SpriteHomeAction.EditSpiritNameClicked -> emitEffect(SpriteHomeEffect.ShowEditSpiritName)
             is SpriteHomeAction.SpiritNameChanged -> updateSpiritName(action.name)
+            // Task 7: ProductDetailBottomSheet 展开/收起
+            is SpriteHomeAction.ProductAnchorTapped -> setExpandedProduct(action.productId)
+            SpriteHomeAction.DismissProductDetail -> dismissExpandedProduct()
         }
+    }
+
+    // Task 7: ProductDetailBottomSheet 状态管理
+    fun setExpandedProduct(productId: String) {
+        _uiState.update { it.copy(expandedProductId = productId) }
+    }
+
+    fun dismissExpandedProduct() {
+        _uiState.update { it.copy(expandedProductId = null) }
     }
 
     fun onChatStateChanged(chatState: ChatUiState) {

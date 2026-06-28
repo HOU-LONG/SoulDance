@@ -56,6 +56,7 @@ fun ProductPresentationSheet(
     onQuickAction: (String) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
+    onProductAnchorTap: (String) -> Unit = {},  // Task 6: 内联锚点 → ProductDetailBottomSheet
 ) {
     val visible = primaryProduct != null || expectedCount > 0
     val transitionState = remember(visible) { MutableTransitionState(visible) }
@@ -111,6 +112,7 @@ fun ProductPresentationSheet(
                         onAddToCart = onAddToCart,
                         onRefine = onQuickAction,
                         modifier = Modifier.fillMaxWidth(),
+                        onProductAnchorTap = onProductAnchorTap,
                     )
                 }
                 if (primaryProduct == null && expectedCount > 0) {
@@ -133,6 +135,7 @@ fun ProductPresentationSheet(
                         skeletonCount = (expectedCount - receivedCount - (if (primaryProduct != null) 1 else 0)).coerceAtLeast(0),
                         onProductClick = onProductClick,
                         onAddToCart = onAddToCart,
+                        onProductAnchorTap = onProductAnchorTap,
                     )
                 }
             }

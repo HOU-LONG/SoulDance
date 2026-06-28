@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.ChatUiState
+import com.example.shopguideagent.ui.component.ProductDetailBottomSheet
 import com.example.shopguideagent.ui.component.clickableWithScale
 import com.example.shopguideagent.ui.component.quickActionsForProduct
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
@@ -73,7 +74,7 @@ fun SpriteHomeScreen(
             },
             onError = { message ->
                 voiceState = VoiceInputUiState.Idle
-                onAction(SpriteHomeAction.SettingsClicked) // placeholder for error toast
+                onAction(SpriteHomeAction.VoiceError(message ?: "录音失败，请再试一次"))
             },
         )
     }
@@ -90,7 +91,7 @@ fun SpriteHomeScreen(
         if (granted) {
             beginVoiceRecording()
         } else {
-            onAction(SpriteHomeAction.SettingsClicked) // placeholder
+            onAction(SpriteHomeAction.VoiceError("需要麦克风权限才能语音输入，请在系统设置中开启"))
         }
     }
 
@@ -114,7 +115,10 @@ fun SpriteHomeScreen(
             .testTag("sprite_home"),
     ) {
         // 底层：全屏环境（背景 + 远景道具）
-        SpriteRoomBackdrop(modifier = Modifier.fillMaxSize())
+        SpriteRoomBackdrop(
+            backgroundId = state.appearance.backgroundId,
+            modifier = Modifier.fillMaxSize(),
+        )
 
         // 浮层：顶栏 + 中央舞台 + 底部 UI，约束在系统安全区内
         Column(
@@ -159,6 +163,7 @@ fun SpriteHomeScreen(
                 onAddToCart = { onAction(SpriteHomeAction.AddToCartClicked(it)) },
                 onQuickAction = { onAction(SpriteHomeAction.QuickActionClicked(it)) },
                 onDismiss = { onAction(SpriteHomeAction.ProductPresentationDismissed) },
+                onProductAnchorTap = { onAction(SpriteHomeAction.ProductAnchorTapped(it)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 10.dp),
@@ -207,6 +212,24 @@ fun SpriteHomeScreen(
                     .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
                 showTextInput = false,
             )
+        }
+
+        // Task 7: 精灵空间首页集成 ProductDetailBottomSheet
+        val expandedProductId = state.expandedProductId
+        if (expandedProductId != null) {
+            val expandedProduct = state.productPresentation.primaryProduct?.takeIf { it.productId == expandedProductId }
+                ?: state.productPresentation.alternatives.firstOrNull { it.productId == expandedProductId }
+            if (expandedProduct != null) {
+                ProductDetailBottomSheet(
+                    product = expandedProduct,
+                    onDismiss = { onAction(SpriteHomeAction.DismissProductDetail) },
+                    onAddToCart = { onAction(SpriteHomeAction.AddToCartClicked(it)) },
+                    onFollowUp = { followUp ->
+                        onAction(SpriteHomeAction.QuickActionClicked(followUp))
+                        onAction(SpriteHomeAction.DismissProductDetail)
+                    },
+                )
+            }
         }
     }
 }

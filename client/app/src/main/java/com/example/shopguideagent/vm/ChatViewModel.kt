@@ -865,6 +865,6 @@ fun shouldInterruptTimedOutStream(
 fun interruptedStreamMessage(partialText: String, reason: String): String =
     if (partialText.isBlank()) reason else "$partialText\n\n$reason"
 
-private const val STREAM_TIMEOUT_MILLIS = 30_000L
+private const val STREAM_TIMEOUT_MILLIS = 60_000L
 private const val STREAM_INTERRUPTED_MESSAGE = "连接中断，请重试。"
 private const val VOICE_RECOGNITION_TIMEOUT_MILLIS = 30_000L

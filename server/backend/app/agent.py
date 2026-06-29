@@ -124,7 +124,7 @@ from .degradation import fallback_text_for_failure
 from .tts_adapter import TTSAdapter
 
 
-DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS = 12.0
+DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS = 25.0
 
 
 class ShopGuideAgent:
@@ -490,18 +490,25 @@ class ShopGuideAgent:
                 yield event
             return
 
-        # recommend_product：未知类目时仍走 clarification（保留 taxonomy 提示）
+        # recommend_product：未知类目时，优先用 LLM 给的 category_hint 做模糊检索兜底，
+        # 而不是直接走 taxonomy recovery（那会让用户先去选类目，打断流畅体验）
         if _looks_like_product_request(request.message) and not self.taxonomy.is_known_request(request.message):
-            message_id = _message_id()
-            text = _unknown_category_text(request.message)
-            yield self._assistant_state(message_id, "clarifying", "当前商品库没有匹配类目", plan)
-            for event in _text_delta_events(message_id, text):
-                yield event
-            recovery = _filter_recovery_event(message_id, plan)
-            _remember_pending_recovery(context, request.message, plan, recovery, "unknown_taxonomy")
-            yield recovery
-            yield {"type": "done", "message_id": message_id}
-            return
+            category_hint = tool_plan.args.category_hint
+            if category_hint and category_hint.strip():
+                # LLM 给了类目提示（如"零食""功能饮料"），直接用它做 retrieval_query 搜索
+                plan.retrieval_query = category_hint.strip()
+            else:
+                # 没有任何线索 → 回退到 recovery
+                message_id = _message_id()
+                text = _unknown_category_text(request.message)
+                yield self._assistant_state(message_id, "clarifying", "当前商品库没有匹配类目", plan)
+                for event in _text_delta_events(message_id, text):
+                    yield event
+                recovery = _filter_recovery_event(message_id, plan)
+                _remember_pending_recovery(context, request.message, plan, recovery, "unknown_taxonomy")
+                yield recovery
+                yield {"type": "done", "message_id": message_id}
+                return
 
         memory_hit = self._get_recommendation_memory_hit(plan, request.message)
         async for event in self.tool_registry.execute(
@@ -1069,12 +1076,14 @@ class ShopGuideAgent:
             intent=intent,
             retrieval_mode="no_retrieval",
         )
-        # 首块超时 + 后续 chunk 间超时双重保护：避免 LLM 卡死把整条 ws 拖住。
-        # 同一个 stream 实例从首块开始一路迭代到底，不重新建 stream，避免 LLM 重复计费/输出重复。
+        # 注入库内 top-5 相关商品信息到 LLM context，让 chitchat 能自然用真实 ID 嵌入锚点
+        enriched_message = self._enrich_chitchat_message(request)
+        # 首块超时 + 后续 chunk 间超时双重保护
         stream = self.llm_client.stream_chitchat_response(
-            request.message, intent, self.sessions.get(user_id, request.session_id)
+            enriched_message, intent, self.sessions.get(user_id, request.session_id)
         )
         got_any_chunk = False
+        collected: list[str] = []
         try:
             async for chunk in _stream_with_first_chunk_timeout(
                 stream,
@@ -1083,14 +1092,47 @@ class ShopGuideAgent:
             ):
                 if chunk:
                     got_any_chunk = True
+                    collected.append(chunk)
                     yield {"type": "text_delta", "message_id": message_id, "text": chunk}
         except Exception:
             pass
         if not got_any_chunk:
-            # 流根本没出 chunk（首块超时 / 异常 / 空流）：补静态 fallback
             for event in _text_delta_events(message_id, fallback):
                 yield event
+        else:
+            # 扫描 LLM 生成的文本中的锚点，下发对应 product_item（支撑 chitchat 内嵌推荐）
+            full_text = "".join(collected)
+            for pid in _extract_anchor_product_ids(full_text):
+                product = self.product_map.get(pid)
+                if product is not None:
+                    from .models import RankedProduct
+                    item = RankedProduct(product=product, score=1.0, tier=1, reason="自然提及")
+                    yield {
+                        "type": "product_item",
+                        "message_id": message_id,
+                        "index": 0,
+                        "role": "primary",
+                        "product": _product_card(item, is_primary=True).model_dump(mode="json"),
+                    }
         yield {"type": "done", "message_id": message_id}
+
+    def _enrich_chitchat_message(self, request: ChatRequest) -> str:
+        """为 chitchat 注入库内 top-5 相关商品摘要，供 LLM 用真实 product_id 生成锚点。"""
+        msg = request.message or ""
+        try:
+            ranked = self.retriever.search(msg, top_k=5)
+        except Exception:
+            return msg
+        if not ranked:
+            return msg
+        lines = [msg, "", "[本店相关商品（可用 [[商品名#product_id]] 锚点提及）]"]
+        for product, score in ranked[:5]:
+            lines.append(
+                f"- {product.product_id}: {product.title} "
+                f"¥{product.price:.0f} "
+                f"({product.brand or ''} {product.sub_category or ''})".strip()
+            )
+        return "\n".join(lines)
 
     def _apply_product_admission_gate(self, plan: RetrievalPlan, message: str) -> None:
         if plan.intent not in {"recommend_product", "product_followup", "clarification"}:
@@ -2910,6 +2952,18 @@ def _text_delta_events(message_id: str, text: str) -> list[dict]:
 
 def _message_id() -> str:
     return "assistant_" + uuid.uuid4().hex[:10]
+
+
+def _extract_anchor_product_ids(text: str) -> list[str]:
+    """扫描文本中所有 [[name#product_id]] 锚点，提取 product_id 列表（保持出现顺序、去重）。"""
+    ids: list[str] = []
+    seen: set[str] = set()
+    for m in _ANCHOR_RE.finditer(text):
+        pid = m.group(2)
+        if pid not in seen:
+            seen.add(pid)
+            ids.append(pid)
+    return ids
 
 
 def _anchor(product) -> str:

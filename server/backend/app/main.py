@@ -128,6 +128,8 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     app = FastAPI(title="SoulDance ShopGuide Agent Backend", version="0.1.0")
     app.state.metrics = metrics
 
+    from backend.app.dev_console import router as dev_router
+
     @app.on_event("shutdown")
     async def _close_db_session():
         if db_session is not None:
@@ -160,6 +162,7 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
     app.add_middleware(GZipMiddleware, minimum_size=256)
 
     app.mount("/assets/products", StaticFiles(directory=str(settings.dataset_path)), name="product_assets")
+    app.include_router(dev_router, prefix="/dev")
     app.state.products = products
     app.state.agent = agent
     app.state.cart = cart

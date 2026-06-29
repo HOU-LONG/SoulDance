@@ -326,27 +326,62 @@ class ShopGuideAgent:
         return await self.intent_compiler.compile(request, context)
 
     async def stream_message(self, user_id: str, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
-        context = self.sessions.get(user_id, request.session_id)
-        # Append user message to dialog history before processing
-        context.dialog_turns.append({"role": "user", "content": request.message or ""})
+        import time as _time
+        from .trace_store import get_trace_store, TraceRecord
 
-        # Record user display message
-        user_display = DisplayMessage(
-            id=_message_id(),
-            role="user",
-            text=request.message or "",
-            created_at=datetime.now(timezone.utc).isoformat(),
+        t0 = _time.time()
+        trace = TraceRecord(
+            id=uuid.uuid4().hex[:12],
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            user_message=(request.message or "")[:200],
         )
-        context.display_messages.append(user_display)
+        first_text = False
+        try:
+            context = self.sessions.get(user_id, request.session_id)
+            # Append user message to dialog history before processing
+            context.dialog_turns.append({"role": "user", "content": request.message or ""})
 
-        collected: list[dict] = []
-        async for event in self._do_stream_message(user_id, request, compiled_ir, context):
-            collected.append(event)
-            yield event
+            # Record user display message
+            user_display = DisplayMessage(
+                id=_message_id(),
+                role="user",
+                text=request.message or "",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            context.display_messages.append(user_display)
 
-        self._record_display_messages(context, collected)
+            collected: list[dict] = []
+            async for event in self._do_stream_message(user_id, request, compiled_ir, context, trace=trace):
+                if not first_text and event.get("type") in {"text_delta", "focus_text_delta"}:
+                    trace.first_byte_ms = (_time.time() - t0) * 1000
+                    first_text = True
+                if event.get("type") in {"text_delta", "focus_text_delta"}:
+                    remaining = 300 - len(trace.response_text)
+                    if remaining > 0:
+                        trace.response_text += event.get("text", "")[:remaining]
+                collected.append(event)
+                yield event
 
-    async def _do_stream_message(self, user_id: str, request: ChatRequest, compiled_ir, context: SessionContext) -> AsyncIterator[dict]:
+            self._record_display_messages(context, collected)
+        except Exception as exc:
+            trace.error = f"{type(exc).__name__}: {exc}"[:200]
+            raise
+        finally:
+            trace.total_ms = (_time.time() - t0) * 1000
+            # Read token usage from llm_client
+            usage_map = getattr(self.llm_client, "last_usage_by_call_kind", {})
+            if usage_map:
+                json_usage = usage_map.get("json")
+                if json_usage is not None and json_usage.total_tokens:
+                    trace.plan_tokens = json_usage.total_tokens
+                for kind in ("stream_response", "response"):
+                    usage = usage_map.get(kind)
+                    if usage is not None and usage.total_tokens:
+                        trace.response_tokens = usage.total_tokens
+                        break
+            get_trace_store().append(trace)
+
+    async def _do_stream_message(self, user_id: str, request: ChatRequest, compiled_ir, context: SessionContext, trace=None) -> AsyncIterator[dict]:
         # 1. pending recovery 优先（用户在回答上一轮的"换类目/放宽预算"提示）
         recovery_events = self._build_pending_recovery_events(context, request)
         if recovery_events is not None:
@@ -362,8 +397,14 @@ class ShopGuideAgent:
         )
 
         # 3. 让 ToolPlanner 做唯一意图入口
+        import time as _time
         seed_constraint_state_from_plan(context, context.last_plan)
+        plan_t0 = _time.time()
         tool_plan = await self.tool_planner.plan(request, context)
+        if trace is not None:
+            trace.plan_tool_ms = (_time.time() - plan_t0) * 1000
+            trace.tool = tool_plan.tool
+            trace.tool_confidence = tool_plan.confidence
 
         # 4. 按 tool_plan.tool 单点分发
         async for event in self._dispatch_tool(user_id, request, context, tool_plan, compiled_ir):

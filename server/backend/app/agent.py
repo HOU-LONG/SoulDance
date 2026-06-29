@@ -150,6 +150,9 @@ class ShopGuideAgent:
         self.llm_client = llm_client or FakeLLMClient()
         self.retriever = retriever or BM25OnlyRetriever(products)
         self.adaptive_retriever = AdaptiveRetriever(self.retriever, hybrid_retriever=hybrid_retriever, reranker=reranker)
+        # Phase A: 模糊商品识别——共享 retriever 的 BM25/dense 索引
+        from .product_matcher import ProductMatcher
+        self.product_matcher = ProductMatcher(self.retriever, products=products)
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent()
         # settings 仅长会话评测专用，production 默认 None → 全部走 C4 全开行为

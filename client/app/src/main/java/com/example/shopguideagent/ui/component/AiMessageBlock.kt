@@ -122,15 +122,8 @@ private fun AiMessageBody(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (chunks.isEmpty()) {
-            // 流式开始但还没收到任何文本时的占位提示
-            val fallback = if (message.isStreaming) "我正在帮你整理..." else ""
-            if (fallback.isNotEmpty()) {
-                Text(
-                    text = fallback,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = TextPrimary,
-                )
-            }
+            // 流式初期尚未收到文本时不做占位提示——后端已立即发送 thinking 状态，
+            // 气泡下方的 ThinkingLogoIndicator 提供视觉反馈即可
             return@Column
         }
 

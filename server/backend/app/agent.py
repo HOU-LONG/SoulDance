@@ -354,11 +354,18 @@ class ShopGuideAgent:
                 yield event
             return
 
-        # 2. 让 ToolPlanner 做唯一意图入口
+        # 2. 立即通知客户端"正在思考"——plan_tool LLM 调用可能 15-25s，不能让它干等
+        message_id = _message_id()
+        yield self._assistant_state(
+            message_id, "thinking", "正在理解你的需求",
+            intent="thinking", retrieval_mode="no_retrieval",
+        )
+
+        # 3. 让 ToolPlanner 做唯一意图入口
         seed_constraint_state_from_plan(context, context.last_plan)
         tool_plan = await self.tool_planner.plan(request, context)
 
-        # 3. 按 tool_plan.tool 单点分发
+        # 4. 按 tool_plan.tool 单点分发
         async for event in self._dispatch_tool(user_id, request, context, tool_plan, compiled_ir):
             yield event
 

@@ -1004,8 +1004,14 @@ class ShopGuideAgent:
         except Exception:
             pass
         text = await self._safe_generate_text(request, plan, ranked, focus_product)
+        # Phase C: 弱化输出守门——不再用 FakeLLM 模板整段覆盖 LLM 输出。
+        # LLM 没说"主推 XX"不意味着输出有问题；只有明显编造 product_id 才算严重错误。
+        # 这里仅 log 警告，让 LLM 的自然输出透传到用户。
         if not _primary_text_matches_selected(text, ranked):
-            text = await FakeLLMClient().generate_response(request.message, plan, ranked, focus_product)
+            logger.warning(
+                f"_primary_text_matches_selected: LLM output may not follow primary/alternative conventions. "
+                f"Keeping original output. primary={ranked[0].product.title[:30] if ranked else 'none'}"
+            )
         for event in _text_delta_events(message_id, text):
             yield event
 

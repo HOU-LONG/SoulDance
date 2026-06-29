@@ -139,6 +139,8 @@ class SpriteHomeViewModel(
             SpriteHomeAction.ProductPresentationDismissed -> dismissProductPresentation()
             is SpriteHomeAction.AddToCartClicked -> emitEffect(SpriteHomeEffect.AddToCart(action.product))
             is SpriteHomeAction.ProductDetailClicked -> emitEffect(SpriteHomeEffect.ShowProductDetail(action.product))
+            is SpriteHomeAction.PalmProductClicked -> expandPalmProduct(action.product.productId)
+            SpriteHomeAction.PalmProductPanelDismissed -> dismissPalmProductPanel()
             is SpriteHomeAction.QuickActionClicked -> emitEffect(SpriteHomeEffect.SendTextMessage(action.message))
             SpriteHomeAction.HistoryDrawerOpened -> emitEffect(SpriteHomeEffect.OpenHistoryDrawer)
             is SpriteHomeAction.UserSelected -> {
@@ -150,7 +152,7 @@ class SpriteHomeViewModel(
             SpriteHomeAction.EditSpiritNameClicked -> emitEffect(SpriteHomeEffect.ShowEditSpiritName)
             is SpriteHomeAction.SpiritNameChanged -> updateSpiritName(action.name)
             // Task 7: ProductDetailBottomSheet 展开/收起
-            is SpriteHomeAction.ProductAnchorTapped -> setExpandedProduct(action.productId)
+            is SpriteHomeAction.ProductAnchorTapped -> expandPalmProduct(action.productId)
             SpriteHomeAction.DismissProductDetail -> dismissExpandedProduct()
         }
     }
@@ -162,6 +164,14 @@ class SpriteHomeViewModel(
 
     fun dismissExpandedProduct() {
         _uiState.update { it.copy(expandedProductId = null) }
+    }
+
+    fun expandPalmProduct(productId: String) {
+        _uiState.update { it.copy(palmExpandedProductId = productId) }
+    }
+
+    fun dismissPalmProductPanel() {
+        _uiState.update { it.copy(palmExpandedProductId = null) }
     }
 
     fun onChatStateChanged(chatState: ChatUiState) {
@@ -192,6 +202,9 @@ class SpriteHomeViewModel(
                 transientAvatarState = nextTransient,
                 presentingProduct = nextProduct,
                 productPresentation = nextPresentation,
+                palmExpandedProductId = current.palmExpandedProductId?.takeIf { expandedId ->
+                    nextProduct?.productId == expandedId || nextPresentation.primaryProduct?.productId == expandedId
+                },
                 speechBubble = SpriteHomeStateMapper.speechFor(displayed, nextProduct),
                 animationSequence = current.animationSequence + if (displayed != current.displayedAvatarState) 1 else 0,
             )
@@ -367,6 +380,7 @@ class SpriteHomeViewModel(
                 presentingProduct = null,
                 speechBubble = SpriteHomeStateMapper.speechFor(current.transientAvatarState ?: nextBase, null),
                 productPresentation = ProductPresentationUiState(expectedCount = expectedCount.coerceAtLeast(0)),
+                palmExpandedProductId = null,
                 isLoading = true,
                 animationSequence = current.animationSequence + 1,
             )
@@ -513,6 +527,7 @@ class SpriteHomeViewModel(
                 baseAvatarState = nextBase,
                 presentingProduct = null,
                 productPresentation = ProductPresentationUiState(),
+                palmExpandedProductId = null,
                 speechBubble = SpriteHomeStateMapper.speechFor(displayed, null),
                 animationSequence = state.animationSequence + 1,
             )

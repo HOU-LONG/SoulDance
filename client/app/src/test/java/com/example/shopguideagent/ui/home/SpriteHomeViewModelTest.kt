@@ -40,6 +40,39 @@ class SpriteHomeViewModelTest {
     }
 
     @Test
+    fun palmProductActionsExpandAndDismissMiniPanelWithoutOpeningDetailSheet() = runTest {
+        val product = sampleProduct("palm_1")
+        val viewModel = SpriteHomeViewModel()
+        val effects = mutableListOf<SpriteHomeEffect>()
+        val job = launch(UnconfinedTestDispatcher(testScheduler)) {
+            viewModel.effects.collect { effects.add(it) }
+        }
+
+        viewModel.onAction(SpriteHomeAction.PalmProductClicked(product))
+        assertEquals("palm_1", viewModel.uiState.value.palmExpandedProductId)
+
+        viewModel.onAction(SpriteHomeAction.PalmProductPanelDismissed)
+        assertNull(viewModel.uiState.value.palmExpandedProductId)
+        assertFalse(effects.any { it is SpriteHomeEffect.ShowProductDetail })
+        job.cancel()
+    }
+
+    @Test
+    fun productAnchorTapExpandsPalmPanelForKnownProduct() {
+        val viewModel = SpriteHomeViewModel(
+            initialState = SpriteHomeUiState(
+                presentingProduct = sampleProduct("palm_2"),
+                productPresentation = ProductPresentationUiState(primaryProduct = sampleProduct("palm_2")),
+            ),
+        )
+
+        viewModel.onAction(SpriteHomeAction.ProductAnchorTapped("palm_2"))
+
+        assertEquals("palm_2", viewModel.uiState.value.palmExpandedProductId)
+        assertNull(viewModel.uiState.value.expandedProductId)
+    }
+
+    @Test
     fun productEventsUpdateBaseStateAndStoreLatestProduct() {
         val viewModel = SpriteHomeViewModel()
 

@@ -34,9 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.data.model.ChatUiState
-import com.example.shopguideagent.ui.component.ProductDetailBottomSheet
 import com.example.shopguideagent.ui.component.clickableWithScale
-import com.example.shopguideagent.ui.component.quickActionsForProduct
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
 import com.example.shopguideagent.ui.theme.SpritePanel
 import com.example.shopguideagent.ui.theme.TextPrimary
@@ -74,7 +72,7 @@ fun SpriteHomeScreen(
             },
             onError = { message ->
                 voiceState = VoiceInputUiState.Idle
-                onAction(SpriteHomeAction.VoiceError(message ?: "录音失败，请再试一次"))
+                onAction(SpriteHomeAction.VoiceError(message))
             },
         )
     }
@@ -137,9 +135,17 @@ fun SpriteHomeScreen(
                 onCartClick = { onAction(SpriteHomeAction.CartClicked) },
             )
 
+            val palmProduct = state.productPresentation.primaryProduct ?: state.presentingProduct
             SpriteStageArea(
                 stageState = state.toAvatarStageUiState(),
                 avatarStage = avatarStage,
+                palmProduct = palmProduct,
+                palmProductLoading = state.productPresentation.expectedCount > 0 && palmProduct == null,
+                palmProductExpanded = palmProduct?.productId == state.palmExpandedProductId,
+                onPalmProductClick = { onAction(SpriteHomeAction.PalmProductClicked(it)) },
+                onPalmProductDismiss = { onAction(SpriteHomeAction.PalmProductPanelDismissed) },
+                onAddToCart = { onAction(SpriteHomeAction.AddToCartClicked(it)) },
+                onRefineProduct = { onAction(SpriteHomeAction.QuickActionClicked(it)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
@@ -152,24 +158,6 @@ fun SpriteHomeScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(bottom = 6.dp),
-            )
-
-            ProductPresentationSheet(
-                primaryProduct = state.productPresentation.primaryProduct,
-                alternatives = state.productPresentation.alternatives,
-                expectedCount = state.productPresentation.expectedCount,
-                receivedCount = state.productPresentation.receivedCount,
-                completed = state.productPresentation.completed,
-                quickActions = quickActionsForPresentation(state),
-                firePoints = state.userProfile.firePoints,
-                onProductClick = { onAction(SpriteHomeAction.ProductDetailClicked(it)) },
-                onAddToCart = { onAction(SpriteHomeAction.AddToCartClicked(it)) },
-                onQuickAction = { onAction(SpriteHomeAction.QuickActionClicked(it)) },
-                onDismiss = { onAction(SpriteHomeAction.ProductPresentationDismissed) },
-                onProductAnchorTap = { onAction(SpriteHomeAction.ProductAnchorTapped(it)) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 10.dp),
             )
 
             // Task 12: BottomActionBar 已移除——衣橱和购物车入口迁移至 SpriteTopBar
@@ -208,29 +196,8 @@ fun SpriteHomeScreen(
                 showTextInput = false,
             )
         }
-
-        // Task 7: 精灵空间首页集成 ProductDetailBottomSheet
-        val expandedProductId = state.expandedProductId
-        if (expandedProductId != null) {
-            val expandedProduct = state.productPresentation.primaryProduct?.takeIf { it.productId == expandedProductId }
-                ?: state.productPresentation.alternatives.firstOrNull { it.productId == expandedProductId }
-            if (expandedProduct != null) {
-                ProductDetailBottomSheet(
-                    product = expandedProduct,
-                    onDismiss = { onAction(SpriteHomeAction.DismissProductDetail) },
-                    onAddToCart = { onAction(SpriteHomeAction.AddToCartClicked(it)) },
-                    onFollowUp = { followUp ->
-                        onAction(SpriteHomeAction.QuickActionClicked(followUp))
-                        onAction(SpriteHomeAction.DismissProductDetail)
-                    },
-                )
-            }
-        }
     }
 }
-
-private fun quickActionsForPresentation(state: SpriteHomeUiState) =
-    quickActionsForProduct(state.productPresentation.primaryProduct ?: state.presentingProduct)
 
 /** 从任务列表取主每日任务，映射到任务栏所需的展示模型。 */
 private fun SpriteHomeUiState.primaryDailyTask(): DailyTaskUiState {

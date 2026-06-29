@@ -76,8 +76,8 @@ SoulDance/
 ## Demo Backend
 
 ```text
-HTTP API: https://enrolled-balanced-holds-inexpensive.trycloudflare.com/
-WebSocket: wss://enrolled-balanced-holds-inexpensive.trycloudflare.com/ws/chat
+HTTP API: https://legs-committed-orange-tears.trycloudflare.com/
+WebSocket: wss://legs-committed-orange-tears.trycloudflare.com/ws/chat
 ```
 
 The Cloudflare URL is a temporary tunnel endpoint. The Gradle build automatically checks tunnel availability before compilation and updates `AppConfig.kt` when the hostname changes. To skip this check:

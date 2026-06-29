@@ -44,13 +44,15 @@ object SpritePlacement {
         val Blackboard = NormalizedPlacement(0.05f, 0.18f, 0.24f, PlacementAnchor.TOP_START)
     }
 
-    /** 中央舞台区相对坐标（0..1 相对舞台 Box）。
-     *  水晶球、购物袋与人物共用同一舞台坐标系，并以 BOTTOM_CENTER 锚点统一站在"地面"基准线上。 */
+    /** 中央舞台区相对坐标（0..1 相对舞台 Box）。 */
     object Stage {
-        // 水晶球：舞台右下角购物袋的对称位置，宽度一致，底部与人物脚底对齐
-        val DiscoveryGlobe = NormalizedPlacement(0.18f, 0.92f, 0.32f, PlacementAnchor.BOTTOM_CENTER)
-        // 购物袋：人物右侧手边，底部与脚底对齐
-        val ShoppingBag = NormalizedPlacement(0.820f, 0.92f, 0.32f, PlacementAnchor.BOTTOM_CENTER)
+        // 人物本体：整体向左下方移动，为手掌商品展示留出视觉空间。
+        const val AvatarOffsetX = -0.08f
+        const val AvatarOffsetY = 0.04f
+        // 商品缩略图：落在人物右侧手掌附近。
+        val PalmProduct = NormalizedPlacement(0.64f, 0.55f, 0.17f, PlacementAnchor.CENTER)
+        // 轻量浮层：从手掌商品右上侧展开，避免遮挡底部输入区。
+        val PalmProductPanel = NormalizedPlacement(0.69f, 0.35f, 0.56f, PlacementAnchor.CENTER)
         // 气泡中心：人物头顶上方，上移避免遮挡头部
         const val SpeechBubbleCenterY = 0.02f
     }

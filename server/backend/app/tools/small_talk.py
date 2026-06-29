@@ -14,6 +14,8 @@ class SmallTalkTool:
 
     async def execute(self, request: ChatRequest, context: SessionContext, **kwargs) -> AsyncIterator[dict]:
         user_id = kwargs.get("user_id", "anonymous")
+        # ToolPlanner 路径下 tool_plan.tool == "chitchat"，旧路径下走 intent kwarg。
+        # 默认 "small_talk"，product_followup tool 调过来时传 intent="unclear_input" 等保留兼容。
         intent = kwargs.get("intent", "small_talk")
         async for event in self._agent._stream_no_retrieval_events(user_id, request, intent):
             yield event

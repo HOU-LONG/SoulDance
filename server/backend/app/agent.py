@@ -153,6 +153,9 @@ class ShopGuideAgent:
         # Phase A: 模糊商品识别——共享 retriever 的 BM25/dense 索引
         from .product_matcher import ProductMatcher
         self.product_matcher = ProductMatcher(self.retriever, products=products)
+        # Phase B: LLM 优先的工具调度器
+        from .tool_planner import ToolPlanner
+        self.tool_planner = ToolPlanner(self.llm_client)
         self.sessions = session_store or SessionStore()
         self.planner = PlannerAgent()
         # settings 仅长会话评测专用，production 默认 None → 全部走 C4 全开行为
@@ -344,55 +347,115 @@ class ShopGuideAgent:
         self._record_display_messages(context, collected)
 
     async def _do_stream_message(self, user_id: str, request: ChatRequest, compiled_ir, context: SessionContext) -> AsyncIterator[dict]:
+        # 1. pending recovery 优先（用户在回答上一轮的"换类目/放宽预算"提示）
         recovery_events = self._build_pending_recovery_events(context, request)
         if recovery_events is not None:
             for event in recovery_events:
                 yield event
             return
+
+        # 2. 让 ToolPlanner 做唯一意图入口
         seed_constraint_state_from_plan(context, context.last_plan)
+        tool_plan = await self.tool_planner.plan(request, context)
+
+        # 3. 按 tool_plan.tool 单点分发
+        async for event in self._dispatch_tool(user_id, request, context, tool_plan, compiled_ir):
+            yield event
+
+    async def _dispatch_tool(
+        self,
+        user_id: str,
+        request: ChatRequest,
+        context: SessionContext,
+        tool_plan,
+        compiled_ir,
+    ) -> AsyncIterator[dict]:
+        """Phase B: ToolPlan → tool 单点分发。
+
+        - product_analysis / chitchat: 直接走对应 tool，自由回答
+        - product_followup: 走 followup tool（仍使用 IR 编译做模糊指代解析）
+        - cart_operation: 走 cart tool（main.py ws 路由层已 deterministic 拦下大多数 cart 场景，
+                          这里只在 LLM 主动判断为 cart 时进入）
+        - recommend_product / compare_products / scenario_bundle: 跑 IR + plan 链路（retrieval/对比/Bundle 逻辑保留），
+                          但 IR 的硬软约束由 ToolPlan 的 args 注入，不再走完整规则栈
+        """
+        tool_name = tool_plan.tool
+
+        if tool_name == "product_analysis":
+            async for event in self.tool_registry.execute(
+                "product_analysis", request, context,
+                tool_plan=tool_plan, user_id=user_id,
+            ):
+                yield event
+            return
+
+        if tool_name == "chitchat":
+            # registry 会把第一参数作为 intent 注入 kwargs，所以传 "small_talk" 即可
+            async for event in self.tool_registry.execute(
+                "small_talk", request, context,
+                tool_plan=tool_plan, user_id=user_id,
+            ):
+                yield event
+            return
+
+        if tool_name == "cart_operation":
+            # cart 走旧 IR 链路（cart_operation 在 product_map 中需要解析 target，
+            # 沿用 followup_tool 之外的 deterministic 解析）
+            ir = compiled_ir or await self.intent_compiler.compile(request, context)
+            async for event in self.tool_registry.execute(
+                "cart_operation", request, context,
+                compiled_ir=ir, tool_plan=tool_plan, user_id=user_id,
+            ):
+                yield event
+            return
+
+        if tool_name == "product_followup":
+            ir = compiled_ir or await self.intent_compiler.compile(request, context)
+            async for event in self.tool_registry.execute(
+                "product_followup", request, context,
+                compiled_ir=ir, tool_plan=tool_plan, user_id=user_id,
+            ):
+                yield event
+            return
+
+        # 剩下 recommend_product / compare_products / scenario_bundle：复用 IR + plan + retrieval 链路
+        # 但 IR 的约束由 ToolPlan args 注入，跳过 _apply_product_admission_gate（不再降级）
+        async for event in self._run_retrieval_flow(user_id, request, context, tool_plan, compiled_ir):
+            yield event
+
+    async def _run_retrieval_flow(
+        self,
+        user_id: str,
+        request: ChatRequest,
+        context: SessionContext,
+        tool_plan,
+        compiled_ir,
+    ) -> AsyncIterator[dict]:
+        """recommend / compare / bundle 共用的检索/排序流。
+
+        关键差异：不再走 _apply_product_admission_gate 的"无词典词 → unclear_input"降级；
+        约束从 tool_plan.args 注入而非完全依赖 _normalize_intent 规则栈。
+        """
         ir = compiled_ir or await self.intent_compiler.compile(request, context)
         if _is_pending_clarification_answer(context, request, ir):
             ir.intent = "recommend_product"
             _apply_pending_answer_preferences(ir, request.message)
-        if request.type == "product_followup" or (
-            request.type == "user_message"
-            and ir.intent == "product_followup"
-            and not _is_pending_clarification_answer(context, request, ir)
-        ):
-            async for event in self.tool_registry.execute(
-                "product_followup",
-                request,
-                context,
-                compiled_ir=ir,
-                user_id=user_id,
-            ):
-                yield event
-            return
-        # 单品分析路由：优先于闲聊/不明确意图，也覆盖 LLM 误分类为 recommend_product 的情况
-        if ir.intent not in {"cart_operation", "product_followup", "compare_products"} and _looks_like_single_product_analysis(request.message):
-            async for event in self.tool_registry.execute(
-                "product_analysis",
-                request,
-                context,
-                user_id=user_id,
-            ):
-                yield event
-            return
-        if ir.intent in {"small_talk", "unclear_input"}:
-            async for event in self.tool_registry.execute(
-                ir.intent,
-                request,
-                context,
-                user_id=user_id,
-            ):
-                yield event
-            return
+
+        # ToolPlan args → IR constraint edits
+        self._merge_tool_plan_into_ir(ir, tool_plan)
+        # 强制 ir.intent 对齐 tool_plan.tool，让 query_builder/state_reducer 按正确意图走
+        if tool_plan.tool == "compare_products":
+            ir.intent = "compare_products"
+        elif tool_plan.tool == "scenario_bundle":
+            ir.intent = "scenario_bundle"
+        elif tool_plan.tool == "recommend_product" and ir.intent in {"small_talk", "unclear_input"}:
+            ir.intent = "recommend_product"
+
         context_action = self._prepare_context_for_turn(context, request, ir)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
         plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
-        self._apply_product_admission_gate(plan, request.message)
         # Anchor resolution: "回到第一轮" → bind to first-turn brand
         if plan.soft_preferences.pop("anchor_reference", None) == "first_turn":
             first_brand = context.reference_anchors.get("first_turn_brand")
@@ -402,55 +465,32 @@ class ShopGuideAgent:
                 )
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
-        if plan.intent in {"small_talk", "unclear_input"}:
-            async for event in self.tool_registry.execute(
-                plan.intent,
-                request,
-                context,
-                user_id=user_id,
-            ):
-                yield event
-            return
+
         if plan.need_clarification or plan.intent == "clarification":
             async for event in self.tool_registry.execute(
-                "clarification",
-                request,
-                context,
-                plan=plan,
-                context_action=context_action,
-                user_id=user_id,
+                "clarification", request, context,
+                plan=plan, context_action=context_action, user_id=user_id,
             ):
                 yield event
             return
-        if ir.intent == "compare_products" and _looks_like_single_product_analysis(request.message):
+
+        if tool_plan.tool == "compare_products":
             async for event in self.tool_registry.execute(
-                "product_analysis",
-                request,
-                context,
-                user_id=user_id,
+                "compare_products", request, context,
+                plan=plan, tool_plan=tool_plan, user_id=user_id,
             ):
                 yield event
             return
-        if plan.intent == "compare_products":
+
+        if tool_plan.tool == "scenario_bundle":
             async for event in self.tool_registry.execute(
-                "compare_products",
-                request,
-                context,
-                plan=plan,
-                user_id=user_id,
+                "scenario_bundle", request, context,
+                plan=plan, tool_plan=tool_plan, user_id=user_id,
             ):
                 yield event
             return
-        if plan.intent == "scenario_bundle":
-            async for event in self.tool_registry.execute(
-                "scenario_bundle",
-                request,
-                context,
-                plan=plan,
-                user_id=user_id,
-            ):
-                yield event
-            return
+
+        # recommend_product：未知类目时仍走 clarification（保留 taxonomy 提示）
         if _looks_like_product_request(request.message) and not self.taxonomy.is_known_request(request.message):
             message_id = _message_id()
             text = _unknown_category_text(request.message)
@@ -462,18 +502,37 @@ class ShopGuideAgent:
             yield recovery
             yield {"type": "done", "message_id": message_id}
             return
+
         memory_hit = self._get_recommendation_memory_hit(plan, request.message)
         async for event in self.tool_registry.execute(
-            "recommend_product",
-            request,
-            context,
-            plan=plan,
-            compiled_ir=ir,
-            context_action=context_action,
-            memory_hit=memory_hit,
-            user_id=user_id,
+            "recommend_product", request, context,
+            plan=plan, compiled_ir=ir, context_action=context_action,
+            memory_hit=memory_hit, tool_plan=tool_plan, user_id=user_id,
         ):
             yield event
+
+    def _merge_tool_plan_into_ir(self, ir, tool_plan) -> None:
+        """把 ToolPlanArgs 中的约束塞到 IR 的 constraint_edits.add，让 query_builder 一并消费。"""
+        args = tool_plan.args
+        if args.price_max is not None:
+            ir.constraint_edits.add.price_max = args.price_max
+        if args.price_min is not None:
+            ir.constraint_edits.add.price_min = args.price_min
+        if args.include_brands:
+            ir.constraint_edits.add.include_brands = dedupe(
+                list(ir.constraint_edits.add.include_brands) + list(args.include_brands)
+            )
+        if args.exclude_brands:
+            ir.constraint_edits.add.exclude_brands = dedupe(
+                list(ir.constraint_edits.add.exclude_brands) + list(args.exclude_brands)
+            )
+        if args.soft_preferences:
+            ir.constraint_edits.add.soft_preferences.update(args.soft_preferences)
+        if args.category_hint:
+            existing = list(getattr(ir.query_intent, "category_hints", []) or [])
+            if args.category_hint not in existing:
+                existing.append(args.category_hint)
+                ir.query_intent.category_hints = existing
 
     def _record_display_messages(self, context: SessionContext, events: list[dict]) -> None:
         """Build one assistant DisplayMessage from collected stream events."""

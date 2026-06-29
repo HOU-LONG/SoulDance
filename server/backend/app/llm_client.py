@@ -22,6 +22,7 @@ RESPONSE_SYSTEM_PROMPT = _prompts.load("response")
 SELECTION_SYSTEM_PROMPT = _prompts.load("selection")
 CHITCHAT_SYSTEM_PROMPT = _prompts.load("chitchat")
 CONTEXTUAL_FOLLOWUP_SYSTEM_PROMPT = _prompts.load("contextual_followup")
+TOOL_PLANNER_SYSTEM_PROMPT = _prompts.load("tool_planner")
 # Task 11: 单品分析专用系统提示——与闲聊不同，LLM 需要扮演商品分析师角色
 PRODUCT_ANALYSIS_SYSTEM_PROMPT = (
     "你是一个专业、客观的电商商品分析师。"
@@ -165,6 +166,26 @@ class DoubaoLLMClient:
                             'session_context': context,
                             'contextual_intent_task': _contextual_intent_task(message, context),
                         },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            temperature=0,
+        )
+
+    async def plan_tool(self, message: str, context: dict[str, Any]) -> str:
+        """Phase B: LLM-driven Tool Planner——返回 ToolPlan JSON 字符串。
+
+        系统提示在 prompts/v1/tool_planner.txt，LLM 只输出结构化决策（哪个 tool + 参数），
+        不直接回复用户；具体回复由对应 tool 在后续执行中产出。
+        """
+        return await self._json_completion(
+            [
+                {'role': 'system', 'content': TOOL_PLANNER_SYSTEM_PROMPT},
+                {
+                    'role': 'user',
+                    'content': json.dumps(
+                        {'message': message, 'session_context': context},
                         ensure_ascii=False,
                     ),
                 },
@@ -434,6 +455,69 @@ class FakeLLMClient:
     async def classify_contextual_followup(self, message: str, context: dict[str, Any]) -> str:
         return json.dumps({'intent': 'unclear_input'}, ensure_ascii=False)
 
+    async def plan_tool(self, message: str, context: dict[str, Any]) -> str:
+        """FakeLLMClient 的 plan_tool：用关键词启发式给一个合理 ToolPlan，方便单测。
+
+        生产环境用真实 LLM；这里只保证常见场景路由正确。
+        """
+        import re
+        text = (message or '').strip()
+        msg_lower = text.lower()
+        # 1. 加购物车 / 下单 / 结算
+        if re.search(r'加入购物车|加购|放购物车|买了它|要这个了|结算|下单', text):
+            target = 'focus_product' if re.search(r'刚才|刚刚|这个|它', text) else None
+            return json.dumps({
+                'tool': 'cart_operation',
+                'args': {'cart_action': 'add', 'cart_target': target, 'cart_quantity': 1},
+                'confidence': 0.95,
+            }, ensure_ascii=False)
+        # 2. 对比
+        if re.search(r'对比|比较|哪个更|哪款更|怎么选', text):
+            return json.dumps({
+                'tool': 'compare_products',
+                'args': {},
+                'confidence': 0.9,
+            }, ensure_ascii=False)
+        # 3. 场景搭配
+        if re.search(r'度假|装修|搭配|套装|一整套|搬家|送礼组合', text):
+            return json.dumps({
+                'tool': 'scenario_bundle', 'args': {}, 'confidence': 0.85,
+            }, ensure_ascii=False)
+        # 4. 已有焦点 + 追问语
+        has_focus = bool(context.get('has_focus_product') or context.get('focus_product_id'))
+        if has_focus and re.search(r'换|更便宜|换个品牌|刚才|为什么推荐|这个多少钱|这个的价格|它的参数', text):
+            kind = 'cheaper' if '便宜' in text else (
+                'exclude_brand' if '换个品牌' in text or '不要' in text else (
+                'price' if '价格' in text or '多少钱' in text else (
+                'explain' if '为什么' in text or '介绍' in text else 'specs')))
+            return json.dumps({
+                'tool': 'product_followup',
+                'args': {'followup_kind': kind},
+                'confidence': 0.85,
+            }, ensure_ascii=False)
+        # 5. 提到具体商品名（品牌+型号 / 含数字的型号 / 分析关键词）→ product_analysis
+        has_analysis_kw = bool(re.search(r'性价比|怎么样|如何|分析|值得买|好不好|多少钱|什么价|价格|售价|参数|规格|配置|上市|发布|评测|测评', text))
+        has_model_pattern = bool(re.search(r'[A-Za-z]+\s*\d|\d+\s*(Pro|Plus|Max|Ultra|Mini)', text, flags=re.I))
+        if (has_analysis_kw or has_model_pattern) and not re.search(r'预算|以内|以下|推荐|找一个|找一款|想买|想要|来一个', text):
+            aspect = 'price' if re.search(r'多少钱|价格|什么价|售价', text) else (
+                'specs' if re.search(r'参数|规格|配置', text) else 'general')
+            return json.dumps({
+                'tool': 'product_analysis',
+                'args': {'target_product_query': text, 'analysis_aspect': aspect},
+                'confidence': 0.8,
+            }, ensure_ascii=False)
+        # 6. 推荐意图（含品牌/品类词）
+        if re.search(r'推荐|找一个|找一款|想买|想要|来一个|要一个|有没有.*?[一个款]', text) or re.search(r'(防晒|精华|护肤|手机|笔记本|耳机|跑鞋|咖啡|饮料|衬衫|衣服|背包)', text):
+            return json.dumps({
+                'tool': 'recommend_product',
+                'args': {'category_hint': None},
+                'confidence': 0.75,
+            }, ensure_ascii=False)
+        # 7. 默认 chitchat
+        return json.dumps({
+            'tool': 'chitchat', 'args': {}, 'confidence': 0.6,
+        }, ensure_ascii=False)
+
     async def stream_response(
         self,
         user_message: str,
@@ -701,6 +785,14 @@ class LLMClientWithBreaker:
         return await self.breaker.call(
             self.client.classify_contextual_followup,
             self._fallback.classify_contextual_followup,
+            message,
+            context,
+        )
+
+    async def plan_tool(self, message: str, context: dict[str, Any]) -> str:
+        return await self.breaker.call(
+            self.client.plan_tool,
+            self._fallback.plan_tool,
             message,
             context,
         )

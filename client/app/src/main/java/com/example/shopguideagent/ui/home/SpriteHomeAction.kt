@@ -29,6 +29,8 @@ sealed interface SpriteHomeAction {
     object ProductPresentationDismissed : SpriteHomeAction
     data class AddToCartClicked(val product: ProductUiModel) : SpriteHomeAction
     data class ProductDetailClicked(val product: ProductUiModel) : SpriteHomeAction
+    data class PalmProductClicked(val product: ProductUiModel) : SpriteHomeAction
+    object PalmProductPanelDismissed : SpriteHomeAction
     data class QuickActionClicked(val message: String) : SpriteHomeAction
 
     // Drawer / user switching / session history

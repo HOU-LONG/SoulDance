@@ -22,9 +22,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log_info()  { echo -e "${GREEN}[tunnel]${NC} $*"; }
-log_warn()  { echo -e "${YELLOW}[tunnel]${NC} $*"; }
-log_error() { echo -e "${RED}[tunnel]${NC} $*"; }
+log_info()  { echo -e "${GREEN}[tunnel]${NC} $*" >&2; }
+log_warn()  { echo -e "${YELLOW}[tunnel]${NC} $*" >&2; }
+log_error() { echo -e "${RED}[tunnel]${NC} $*" >&2; }
 
 # ---------------------------------------------------------------------------
 # Phase 1 — 确保后端运行

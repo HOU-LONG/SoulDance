@@ -91,8 +91,8 @@ SoulDance/
 ## Demo 后端
 
 ```text
-HTTP API: https://enrolled-balanced-holds-inexpensive.trycloudflare.com/
-WebSocket: wss://enrolled-balanced-holds-inexpensive.trycloudflare.com/ws/chat
+HTTP API: https://legs-committed-orange-tears.trycloudflare.com/
+WebSocket: wss://legs-committed-orange-tears.trycloudflare.com/ws/chat
 ```
 
 Cloudflare tunnel 为临时端点。编译 APK 时 Gradle 会自动检查 tunnel 可用性，若 hostname 变更则自动更新 `AppConfig.kt` 并重新编译。也可手动跳过检查：

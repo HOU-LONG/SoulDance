@@ -1,5 +1,9 @@
 package com.example.shopguideagent.ui.home
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,8 +19,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.example.shopguideagent.R
+import com.example.shopguideagent.data.model.ProductUiModel
 import com.example.shopguideagent.ui.theme.ShopGuideAgentTheme
 
 /**
@@ -48,42 +54,71 @@ fun SpriteRoomBackdrop(
 }
 
 /**
- * 中央舞台区：水晶球、购物袋、人物本体、气泡，全部相对本区（顶栏与底部 UI 之间的 weight 区）定位。
+ * 中央舞台区：人物本体、手掌商品与气泡，全部相对本区（顶栏与底部 UI 之间的 weight 区）定位。
  *
- * 人物经 [avatarStage]（[AvatarStageRenderer]）以 `fillMaxSize` 渲染，内部 Fit + BottomCenter 保证
- * 全身完整、脚底落在本区底部，不被底部 UI 浮层遮挡。水晶球与购物袋同样以 BOTTOM_CENTER 锚点与本区
- * 底部对齐，形成统一的"地面"基准线。本区不依赖 2D/3D 具体实现。
+ * 人物经 [avatarStage]（[AvatarStageRenderer]）以 `fillMaxSize` 渲染，再整体左下偏移，为手掌商品展示
+ * 留出空间。本区不依赖 2D/3D 具体实现。
  */
 @Composable
 fun SpriteStageArea(
     stageState: AvatarStageUiState,
     modifier: Modifier = Modifier,
     avatarStage: AvatarStageRenderer = { s, m -> SpriteStage(s, m) },
+    palmProduct: ProductUiModel? = null,
+    palmProductLoading: Boolean = false,
+    palmProductExpanded: Boolean = false,
+    onPalmProductClick: (ProductUiModel) -> Unit = {},
+    onPalmProductDismiss: () -> Unit = {},
+    onAddToCart: (ProductUiModel) -> Unit = {},
+    onRefineProduct: (String) -> Unit = {},
 ) {
     BoxWithConstraints(modifier = modifier.testTag("sprite_stage_area")) {
         val w = maxWidth
         val h = maxHeight
 
-        // 水晶球（舞台左下角，底部着地）
-        PlacedAsset(
-            resId = R.drawable.prop_discovery_globe,
-            placement = SpritePlacement.Stage.DiscoveryGlobe,
-            containerWidth = w,
-            containerHeight = h,
-            contentDescription = "好物发现水晶球",
+        // 中央人物：保留 fillMaxSize + 内部 Fit/BottomCenter，再整体左下偏移。
+        avatarStage(
+            stageState,
+            Modifier
+                .fillMaxSize()
+                .offset(
+                    x = w * SpritePlacement.Stage.AvatarOffsetX,
+                    y = h * SpritePlacement.Stage.AvatarOffsetY,
+                ),
         )
 
-        // 购物袋（人物右侧）
-        PlacedAsset(
-            resId = R.drawable.prop_shopping_bag_blue,
-            placement = SpritePlacement.Stage.ShoppingBag,
-            containerWidth = w,
-            containerHeight = h,
-            contentDescription = "购物袋",
+        PalmProductThumbnail(
+            product = palmProduct,
+            loading = palmProductLoading,
+            onClick = { palmProduct?.let(onPalmProductClick) },
+            modifier = Modifier.placedInStage(
+                placement = SpritePlacement.Stage.PalmProduct,
+                containerWidth = w,
+                containerHeight = h,
+                fallbackAspect = 1f,
+            ),
         )
 
-        // 中央人物：fillMaxSize + 内部 Fit/BottomCenter → 全身完整、脚底稳定
-        avatarStage(stageState, Modifier.fillMaxSize())
+        AnimatedVisibility(
+            visible = palmProductExpanded && palmProduct != null,
+            modifier = Modifier.placedInStage(
+                placement = SpritePlacement.Stage.PalmProductPanel,
+                containerWidth = w,
+                containerHeight = h,
+                fallbackAspect = 1.72f,
+            ),
+            enter = scaleIn(initialScale = 0.92f) + fadeIn(),
+            exit = fadeOut(),
+        ) {
+            palmProduct?.let { product ->
+                PalmProductMiniPanel(
+                    product = product,
+                    onAddToCart = onAddToCart,
+                    onRefine = onRefineProduct,
+                    onDismiss = onPalmProductDismiss,
+                )
+            }
+        }
 
         // 气泡：人物头顶上方，水平居中
         SpeechBubble(
@@ -96,6 +131,35 @@ fun SpriteStageArea(
     }
 }
 
+private fun Modifier.placedInStage(
+    placement: NormalizedPlacement,
+    containerWidth: Dp,
+    containerHeight: Dp,
+    fallbackAspect: Float,
+): Modifier {
+    val widthDp = containerWidth * placement.width
+    val heightDp = widthDp / fallbackAspect
+    val anchorX = containerWidth * placement.x
+    val anchorY = containerHeight * placement.y
+    val offsetX: Dp
+    val offsetY: Dp
+    when (placement.anchor) {
+        PlacementAnchor.TOP_START -> {
+            offsetX = anchorX
+            offsetY = anchorY
+        }
+        PlacementAnchor.CENTER -> {
+            offsetX = anchorX - widthDp / 2
+            offsetY = anchorY - heightDp / 2
+        }
+        PlacementAnchor.BOTTOM_CENTER -> {
+            offsetX = anchorX - widthDp / 2
+            offsetY = anchorY - heightDp
+        }
+    }
+    return offset(x = offsetX, y = offsetY)
+}
+
 @Preview(name = "Backdrop + Stage SEARCHING", showBackground = true, widthDp = 393, heightDp = 620)
 @Composable
 private fun SpriteStageAreaSearchingPreview() {
@@ -104,6 +168,7 @@ private fun SpriteStageAreaSearchingPreview() {
             SpriteRoomBackdrop(modifier = Modifier.fillMaxSize())
             SpriteStageArea(
                 stageState = SpriteHomePreviewData.searching.toAvatarStageUiState(),
+                palmProductLoading = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(0.78f)
@@ -121,6 +186,8 @@ private fun SpriteStageAreaPresentingPreview() {
             SpriteRoomBackdrop(modifier = Modifier.fillMaxSize())
             SpriteStageArea(
                 stageState = SpriteHomePreviewData.presenting.toAvatarStageUiState(),
+                palmProduct = SpriteHomePreviewData.presenting.productPresentation.primaryProduct,
+                palmProductExpanded = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .fillMaxHeight(0.78f)

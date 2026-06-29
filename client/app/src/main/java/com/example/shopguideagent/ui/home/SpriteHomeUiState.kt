@@ -110,6 +110,7 @@ data class SpriteHomeUiState(
     val isLoading: Boolean = false,
     val animationSequence: Long = 0L,
     val expandedProductId: String? = null,  // Task 7: ProductDetailBottomSheet 展开状态
+    val palmExpandedProductId: String? = null,
 ) {
     val displayedAvatarState: AvatarState
         get() = transientAvatarState ?: baseAvatarState

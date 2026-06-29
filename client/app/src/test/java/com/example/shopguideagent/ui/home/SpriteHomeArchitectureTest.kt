@@ -78,17 +78,15 @@ class SpriteHomeArchitectureTest {
     }
 
     @Test
-    fun spriteStageOmitsReferenceOnlyStageDecorations() {
-        val source = findRepoFile("client/app/src/main/java/com/example/shopguideagent/ui/home/SpriteStage.kt")
+    fun spriteStageAreaOmitsFootDecorationsAndHomeOmitsLargePresentationSheet() {
+        val roomScene = findRepoFile("client/app/src/main/java/com/example/shopguideagent/ui/home/SpriteRoomScene.kt")
+            .readText()
+        val homeScreen = findRepoFile("client/app/src/main/java/com/example/shopguideagent/ui/home/SpriteHomeScreen.kt")
             .readText()
 
-        assertFalse("Do not render the magical toy prop on the sprite stage", source.contains("StageProps("))
-        assertFalse("Do not render the blue outfit strip on the sprite stage", source.contains("OutfitLayer("))
-        assertFalse("Do not render the blue accessory strip on the sprite stage", source.contains("AccessoryLayer("))
-        assertFalse("Do not render the shopping cart prop on the sprite stage", source.contains("PropLayer("))
-        assertFalse("Do not keep the visible magical toy copy in the stage", source.contains("神奇玩具"))
-        assertFalse("Do not keep the stage shopping cart icon import", source.contains("ShoppingCart"))
-        assertFalse("Do not keep the stage smart toy icon import", source.contains("SmartToy"))
+        assertFalse("Do not render the decorative discovery globe at the sprite's feet", roomScene.contains("prop_discovery_globe"))
+        assertFalse("Do not render the decorative shopping bag at the sprite's feet", roomScene.contains("prop_shopping_bag_blue"))
+        assertFalse("Home should not keep the large product presentation sheet on the sprite home screen", homeScreen.contains("ProductPresentationSheet("))
     }
 
     @Test

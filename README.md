@@ -24,21 +24,21 @@ SoulDance/
 ## 已实现核心能力
 
 ### 导购对话引擎
-- **五场景 Demo 端到端**：护肤精华推荐 → 更便宜替代品追问 → 命名产品+模糊引用对比 → 跨域长会话锚点回溯 → 购物车添加/查看/SKU 切换，10 轮严格断言黄金回归测试全部通过
-- **多轮上下文记忆架构**（2026-06 新增）：
-  - 形态A：全量 `[{role, content}]` 对话流水持久化（`dialog_turns`），100 条消息滑动窗口
-  - 形态B：结构化约束状态（`ConstraintState`）+ 产品参数缓存（`entity_params`）+ 长会话摘要压缩（`LivingSummary`，16 条消息阈值触发）
-  - Prompt 注入：对话历史 + 约束短句实时注入 Response LLM 的 evidence payload
-- **会话历史与用户切换**（2026-06 修复）：
-  - 后端 `SessionContext.display_messages` 统一记录流式回复、商品卡片、快捷操作和购物车操作结果
-  - 后端新增 `GET /api/sessions`、`GET /api/sessions/{session_id}`、`DELETE /api/sessions/{session_id}`，按 `X-User-Id` 隔离
-  - Android `ChatHistoryRepository` 按 `user_id` 分区 JSON 缓存，本地最多保留 30 个会话，支持旧 Base64 格式只读迁移
-  - `ChatViewModel.onUserSwitched` 切换用户时持久化旧会话、重载新用户本地历史、拉取后端 latest、关闭/重开 WebSocket、重置 UI
-- **语义意图编译**：LLM + 规则双路径语义解析，置信度门控，上下文 fallback 重判
-- **意图路由**：`recommend_product` / `product_followup` / `compare_products` / `product_analysis` / `cart_operation` / `scenario_bundle` / `clarification` / `small_talk` / `unclear_input` 九意图完整覆盖
-- **闲聊与单品分析**：
-  - 扩展 `small_talk` 规则，稳定识别“你能帮我做些什么”等能力询问
-  - 新增 `product_analysis` 意图：命中库内商品则给出单品说明，未命中则明确提示无库存数据、不返回虚假商品卡
+
+#### LLM Agent 架构（2026-06 新增）
+- **ToolPlanner — LLM 优先工具调度器**：替代旧的多层规则栈（5 层互斥规则→1 个 LLM 决策入口），LLM 直接决定调哪个 tool + 抽取参数
+- **ProductMatcher — BM25 模糊商品识别**：用户简称”华为 Pura 70 Pro” / “小棕瓶” / “雀巢咖啡” 自动匹配库内长标题商品
+- **自然回复风格**：去掉五段标签模板（理解/结论/主推/评论摘要/下一步），LLM 生成自然短段落回复
+- **复合需求处理**：”心情不好推荐甜的” → LLM 先共情 “抱抱你～吃点甜的确实治愈”，再自然带出商品推荐 + 真实锚点
+- **Chitchat 内嵌商品推荐**：闲聊流自动注入库内 top-5 相关商品摘要，LLM 可用 `[[商品名#product_id]]` 锚点直接在对话中推荐真实库存商品
+
+#### 多轮对话与上下文
+- **多轮上下文记忆架构**：`dialog_turns` 对话流水 + `ConstraintState` 结构化约束 + `LivingSummary` 摘要压缩
+- **会话历史与用户切换**：`SessionContext.display_messages` 统一记录；REST API 按 `X-User-Id` 隔离；Android 本地最多保留 30 个会话
+- **长会话锚点**：首轮品牌/类目/product_ids 存储为 `reference_anchors`，”回到第一轮” 触发品牌硬约束绑定
+
+#### 意图路由（7 tool）
+`recommend_product` / `product_analysis` / `compare_products` / `cart_operation` / `scenario_bundle` / `product_followup` / `chitchat`
 
 ### 检索与排序
 - **RAG 混合检索**：BM25 关键词 + 向量语义检索，RRF / weighted 融合，CrossEncoder 重排（默认）+ LLM 重排（强场景兜底），失败静默降级
@@ -63,14 +63,11 @@ SoulDance/
 ### 语音交互
 - STT 语音转文字（流式 WebSocket）+ TTS 文字转语音（分块流式），支持豆包语音引擎
 
-### 行内商品锚点（Inline Product Anchor）
-- **统一的文本内嵌商品入口**：AI 消息中的商品以 `[[商品名#product_id]]` 形式嵌入正文，替代独立商品卡片
-- **点击展开详情**：所有锚点统一唤起 `ProductDetailBottomSheet`，覆盖推荐、对比、Bundle、追问四个流程
-- **前后端协议对齐**：
-  - 后端 Prompt 在主推/备选/对比/Bundle 文本中注入 `[[title#product_id]]`，并严格校验 `product_id` 来自 `allowed_products`
-  - 非法或缺失锚点自动降级：去掉标记并记录 warning，避免前端解析失败
-  - 历史上下文压缩时锚点自动折叠为 `[商品:product_id]`，节省 token 同时保留引用
-- **实现计划**：`docs/superpowers/plans/2026-06-27-inline-product-anchor.md`
+### 内联商品卡片（Inline Product Card）
+- **段落-卡片交替布局**：AI 消息按 `\n\n` 切段渲染，含锚点的段落后自动插入内联商品卡片（左缩略图 + 右名称/价格/品牌）
+- **主推/备选分层**：主推商品内联卡片嵌入气泡内，备选商品横向缩略图展示在气泡下方
+- **chitchat 也支持商品卡片**：复合需求场景下，LLM 在闲聊回复中用 `[[商品名#product_id]]` 提及商品，后端自动扫描并下发 `product_item` 事件→前端渲染卡片
+- **点击展开详情**：所有锚点/卡片统一唤起 `ProductDetailBottomSheet`
 
 ### 反馈闭环
 - 显式反馈（评分/操作标签）+ 隐式信号聚合，驱动个性化排序与偏好画像

@@ -54,6 +54,36 @@ Implemented (Stage 0/01):
 - **SQLite + SQLAlchemy 持久化**（`server/backend/app/db/`）：购物车、订单、会话、用户画像、反馈事件均已接入 SQLite 存储，Alembic 迁移就绪（`server/alembic/`），数据库 URL 通过 `SHOPGUIDE_DATABASE_URL` 环境变量配置，留空自动落到仓库根 `data/shopguide.db`。
 - **订单状态机**（`server/backend/app/order_service.py`）：支持 `address_required → awaiting_confirmation → completed` 三态流转，含 `confirmation_token` 生命周期、`idempotency_key` 去重、内存/DB 双写，REST API 通过 `/api/order/*` 暴露。
 
+### LLM Agent 架构（Stage 1, 2026-06）
+
+```
+用户输入
+  ↓
+ToolPlanner (LLM → ToolPlan JSON)
+  ↓
+_dispatch_tool → 具体 tool 执行
+  ├── product_analysis → ProductMatcher (BM25 模糊匹配) → LLM 流式分析
+  ├── chitchat         → LLM 闲聊流（注入库内 top-5 商品供自然锚点）
+  ├── recommend_product → IR 编译 + retrieval + ranking + LLM 生成
+  ├── product_followup → context 焦点商品追问/替换
+  ├── compare_products → 多维度对比
+  ├── scenario_bundle  → 场景分解 + 逐 slot 检索
+  └── cart_operation   → 购物车状态机
+```
+
+**核心模块**：
+- `tool_planner.py` / `tool_plan.py`：LLM 优先的工具调度器，cart 等硬性短语 deterministic 前置，其它全部 LLM 决策
+- `product_matcher.py`：共享 BM25/dense retriever 的模糊商品识别，top-5 候选 + gap 置信度
+- `prompts/v1/tool_planner.txt`：Planner 系统提示（7 tool 判断标准 + 复合需求路由规则）
+- `prompts/v1/response.txt`：推荐回复 prompt（自然短段落风格，主推锚点 + 备选纯文字）
+- `prompts/v1/chitchat.txt`：闲聊 prompt（支持复合需求 + 内嵌商品锚点）
+
+**与旧架构的关键区别**：
+- 旧架构：5 层规则互斥（rule_semantic_frame → _merge_rule_guards → _normalize_intent → _apply_product_admission_gate → _primary_text_matches_selected），LLM 输出被 FakeLLM 模板覆盖
+- 新架构：1 个 LLM 决策入口 → 单点分发，LLM 输出直接透传（仅 HallucinationChecker 保留为安全网）
+
+- **Android 内联商品卡片**（`AiMessageBlock.kt`）：段落-卡片交替布局，主推内联卡 + 备选底部缩略图条
+
 Deferred (genuine roadmap):
 
 - PostgreSQL + pgvector 迁移（当前 SQLite 可支撑演示与单机部署，向量检索使用本地 FAISS dense index）。

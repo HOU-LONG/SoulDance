@@ -126,3 +126,22 @@ The preferred real-device path is Cloudflare tunnel access, not `adb reverse`.
 2. Start or refresh the Cloudflare tunnel to the backend port.
 3. Update `client/app/src/main/java/com/example/shopguideagent/config/AppConfig.kt` if the tunnel domain changed.
 4. Rebuild the APK and install it on the device.
+
+## 故障排查
+
+### "连接中断，请重试"
+- 先确认后端存活：`curl http://127.0.0.1:8000/api/products?limit=1`
+- 后端正常但客户端超时（>60s）→ 检查 LLM provider 延迟；DeepSeek v4 的 `plan_tool` + `stream_response` 两轮调用合计可能 20-40s
+- Android 超时阈值：`STREAM_TIMEOUT_MILLIS = 60_000L`（`ChatViewModel.kt`）
+- 后端首 chunk 超时：`DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS = 25.0`（`agent.py`）
+
+### LLM 回复模板化（理解/结论/主推标签）
+- 确认 `prompts/v1/response.txt` 为自然回复版本（不含"必须按以下顺序输出"）
+- 后端改过 prompt 后需重启：`kill $(lsof -ti :8000) && bash server/scripts/start_backend.sh`
+
+### 商品查询被拒答（"我没太抓到你的购物需求"）
+- 旧规则栈残留；确认 `tool_planner.txt` 和 `chitchat.txt` 为最新版本 + 重启后端
+
+### 复合需求（情绪+购物）只聊天不推荐
+- 确认 `tool_planner.txt` 第 6 条优先级（复合需求→chitchat）存在
+- chitchat 流自动注入 catalog top-5，LLM 会用真实 ID 生成锚点

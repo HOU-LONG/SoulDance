@@ -263,3 +263,63 @@ const val WS_CHAT_PATH = "/ws/chat"
 ```
 
 LLM 现在能看到真实的商品列表 → 输出的锚点使用真实 ID → 后端验证通过 → `product_item` 下发 → 前端渲染内联卡片。零额外 LLM 调用。
+
+### 问题 5：追加问题时注意力失焦——"这个/刚才那个"无法解析
+
+**现象**：用户先要了一款推荐，然后追问"这个多少钱？"、"换个更便宜的"、"为什么推荐它？"——但 AI 不知道"这个"指什么，要么回退到泛泛的推荐，要么报"我还没有可以替换的上一款商品"。
+
+**根因**：这是多轮对话中最经典的**指代消解**问题。旧架构用硬编码的词典规则来识别——`EXPLAIN_FOCUS_MARKERS = ("刚刚那个是什么", "刚才那个是什么", "为什么推荐", "介绍一下", "这个是什么")`。这个列表只有 5 个词，任何稍微变化的追问（"它怎么样？"、"那这个价格？"、"说说它的参数"）全都不命中 → 要么降级到 `unclear_input`，要么走一遍完整的推荐重筛流程——用户问个价格，AI 重新推荐了一轮。
+
+更根本的问题是：规则系统无法理解"这个"指代的是会话历史上哪款商品。同样的词"这个"，在不同上下文里可能指向焦点商品、上一条推荐的主推、或最后一次加购的商品，规则无法区分。
+
+**解决方案**：通过**上下文注入**实现跨轮次注意力保持——
+
+1. **SessionContext 结构化焦点追踪**（`models.py`）：`focus_product_id`（当前焦点商品）、`last_product_ids`（上轮推荐的商品列表）、`last_recommendations`（含 role/price/brand 的推荐记录）、`recent_cart_product_id`（最近加购的商品）。这些字段在每次推荐、对比、加购操作中持续更新。
+
+2. **ReferenceResolver 确定性消解**（`reference_resolver.py`）：当检测到"这个/刚才/它/前面那个"等指代词时，按优先级依次尝试：① `focus_product`（当前焦点商品）→ ② `last_recommendations` 中 role=primary 的主推 → ③ `recent_cart_product_id`  → ④ `last_product_ids[-1]`。每一步都有明确的 fallback 逻辑，不会凭空编造。
+
+3. **长会话锚点持久化**（`agent.py` `_prepare_context_for_turn`）：首轮品牌/类目/product_ids 存储为 `reference_anchors`，当用户跨多轮后再说"回到第一轮那个"，触发 `anchor_reference → first_turn` 解析，从 `reference_anchors["first_turn_brand"]` 恢复硬约束。
+
+4. **LLM 上下文注入**（`semantic_layer.py`）：SemanticParser 的 LLM prompt 包含 `session_context` 字段（`has_focus_product` / `focus_product_id` / `last_product_ids` / `last_recommendations`），让 LLM 在意图解析时知道"当前在聊哪款商品"——即使客户端传的是 `product_followup` 类型，后端仍能根据上下文推断用户到底在追问什么（解释 / 更便宜 / 换品牌 / 问参数）。
+
+5. **Followup Tool 分支处理**：`product_followup` 工具根据 LLM 给出的 `followup_kind` 走不同路径——`explain/specs/price` 直接调 LLM 用焦点商品 evidence 自由回答（不走推荐重筛），`cheaper/more_expensive/exclude_brand` 走检索替换流。
+
+效果：用户说"推荐一款咖啡"→ AI 推荐雀巢 → 用户说"这个多少钱？"→ `product_followup, followup_kind=price` → 直接回答"刚才推荐的雀巢咖啡售价 60 元，100 条装，折合每条 6 毛钱"——不再重新推荐一遍。
+
+### 问题 6：BM25 假命中 + 旧规则过滤的笨拙刻板
+
+**现象**：用户输入"完全编造的型号 XYZ-999"——本意是胡扯一句话，不应匹配任何商品。但 BM25 retriever 返回了 `Apple MacBook Pro 14英寸 M5 芯片...`，score=1.0。这是因为"型号"这个词出现在 MacBook 的 chunk 文本中（含大量 SKU 规格如"芯片型号：M5 芯片"），"Pro"也是一个高频商品词，BM25 分词后只要任一 token 命中就有分数。
+
+但问题不止于此——**旧版规则过滤让这个场景更糟糕**。在引入 ProductMatcher 之前，商品识别用的是 `resolve_named_product`（`reference_resolver.py`），它用硬编码的 score 阈值 + 关键词 heuristics：
+
+```python
+# 旧版逻辑（已废弃）
+if brand_lower and brand_lower in text: score += 30
+if text in title_lower: score += 60
+if best_score >= 50: return best_product  # 硬阈值
+```
+
+这套规则有三大问题：
+
+1. **阈值僵硬**：`best_score >= 50` 是一个拍脑袋的值。用户查"小米 17"时品牌"小米"匹配 +30，部分标题匹配不到 +0，总分 30 → 不够 50 → 返回 None → 上层不知道库里确实有小米 17 系列（Max/Ultra/Pro），直接说"库里没有"。
+2. **无法表达模糊度**：score 是单向的绝对值，没有相对信号。查"小米 17"和查"雀巢咖啡"都是匹配到了某些 token——但前者是多款同系商品的模糊匹配，后者是精准命中特定商品——score 看不出来。
+3. **对假命中无感知**：查"完全编造的型号 XYZ-999"时，"型号"和"Pro"两条 token 碰巧命中，score 堆到 60 → 超过阈值 → 返回 MacBook Pro——系统根本不怀疑"这个人问的是完全不存在的型号吗？"。
+
+**解决方案**：
+
+1. **ProductMatcher 替代硬阈值匹配**（`product_matcher.py`）：不再用绝对 score 判断，改用 **top1-vs-top2 的归一化分数差（gap）** 作为置信度信号：
+
+   | 查询 | top1 score | top2 score | gap | 判定 |
+   |------|-----------|-----------|-----|------|
+   | 雀巢咖啡 | 1.0 | 0.0 | **1.0** | ✅ 明确命中 |
+   | 华为 Pura 70 | 1.0 | 0.62 | **0.38** | ✅ 明确命中 |
+   | 小米 17 | 1.0 | 0.99 | **0.01** | ⚠️ 模糊，best=None |
+   | 完全编造 | 1.0 | 0.82 | **0.18** | ⚠️ 模糊，best=None |
+
+   关键设计：因为 BM25 的归一化只依赖当前 query 自己的 max/min，top1 始终是 1.0——**绝对分数无法区分强弱匹配**。但 gap 反映的是"top1 到底比其他候选强多少"——这是一个相对信号，不受归一化影响。当用户问"小米 17"时，gap=0.01 说明 top1(top2) 都是小米 17 系列，分不出谁更匹配 → 模糊；当用户问"雀巢咖啡"时，gap=1.0 说明 top1 远远强于所有其他候选 → 明确命中。
+
+2. **假命中保护**：当 top1 raw score ≤ 0（即 retriever 返回的所有候选归一化前原始分均为 0）时，直接返回 best=None、candidates=[]——"完全编造的型号"可能因为"型号"词触发 BM25 得分，但如果同时没有其他 token 匹配（品牌、子类目、标题特有词），top2 和 top1 之间仍然存在 gap。`min_gap=0.15` 的阈值恰好过滤掉这类"只靠 1-2 个共通词命中"的假阳性。
+
+3. **LLM Planner 做语义兜底**：即使 ProductMatcher 返回了模糊结果或假命中（best=None 但 candidates 非空），上游的 ToolPlanner 仍会根据用户消息的语义做二次判断。"完全编造的型号 XYZ-999"经过 LLM Planner 后会输出 `tool=product_analysis, target_product_query="..."`，但 ProductMatcher 的模糊结果（best=None）加上 LLM 的通用知识（"XYZ-999 不是任何已知产品型号"）最终会走 `product_analysis_unknown` 流程——"你提到的 XYZ-999 似乎不是已知产品型号，要不要看看本店现有的同类商品？"——而不是假装命中了某个商品。
+
+4. **旧规则栈完全废弃**：`resolve_named_product` 的硬阈值逻辑已被 ProductMatcher 的 gap-based 置信度完全替代。`rule_semantic_frame`、`_merge_rule_guards`、`_normalize_intent`、`_apply_product_admission_gate` 这 4 层规则栈在 ToolPlanner 架构下不再被调用（仅保留 `IntentCompiler` / `SemanticParser` 对象供 `agent.plan()` 旧路径兼容，新入口 `_do_stream_message` 不经过它们）。

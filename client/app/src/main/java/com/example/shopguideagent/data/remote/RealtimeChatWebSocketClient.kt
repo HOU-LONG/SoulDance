@@ -233,6 +233,7 @@ open class RealtimeChatWebSocketClient(
             productId = json.getString("product_id"),
             name = json.getString("name"),
             price = json.getDouble("price"),
+            brand = json.optString("brand").takeIf { it.isNotBlank() } ?: "",
             imageUrl = ProductImageUrlResolver.remoteUrl(
                 imageUrl = rawImageUrl,
                 baseHttpUrl = AppConfig.BASE_HTTP_URL,

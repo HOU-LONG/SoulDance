@@ -833,6 +833,7 @@ class ChatViewModel @JvmOverloads constructor(
             productId = product_id,
             name = name,
             price = price,
+            brand = brand,
             imageUrl = image_url.takeIf { it.isNotBlank() },
         )
     }

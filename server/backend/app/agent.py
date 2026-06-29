@@ -989,11 +989,11 @@ class ShopGuideAgent:
     async def _stream_no_retrieval_events(self, user_id: str, request: ChatRequest, intent: str = "small_talk") -> AsyncIterator[dict]:
         message_id = _message_id()
         if intent == "unclear_input":
-            label = "未识别到明确购物需求"
-            fallback = "我还没太抓到你的购物需求。你可以随便说个想买的东西、预算，或者不想要什么，我再帮你筛。"
+            label = "正在回答"
+            fallback = "稍等一下，我整理下思路再回你。"
         else:
-            label = "回应寒暄"
-            fallback = "我在，可以陪你慢慢挑。你告诉我想买什么、预算多少，或者有什么偏好就行。"
+            label = "正在回答"
+            fallback = "嗯，我在。你刚才说的我没完全收到，能再说一遍吗？"
         yield self._assistant_state(
             message_id,
             "chatting",
@@ -2919,12 +2919,44 @@ async def _stream_with_first_chunk_timeout(
 
 
 def _looks_like_single_product_analysis(message: str) -> bool:
+    """判断是否在单品分析场景：用户提到一个具体商品（品牌+型号 / 库内名）并对其发问。
+
+    放宽策略：
+    - 命中显式分析意图词（怎么样/性价比/分析一下/值得买吗/好不好/多少钱/价格/参数/规格/上市/发布）
+    - 或者像 "华为 Pura 70 Pro"、"iPhone 15 Pro"、"小米 14 Ultra" 这种品牌+型号格式
+    - 但排除对比/选择类（让 compare 路径处理）
+    - 排除明显的需求陈述（含"预算/想要/找一款/推荐"等推荐入口词），让 recommend_product 兜底
+    """
     text = message or ""
-    # e.g. "如何看待...性价比", "这个...怎么样", "分析一下..."
-    return bool(
-        re.search(r"(性价比|怎么样|如何|分析一下|值得买吗|好不好)", text)
-        and not re.search(r"(对比|比较|哪个更|怎么选|第一款|第二款)", text)
+    if not text.strip():
+        return False
+    # 排除：明确的对比/选择
+    if re.search(r"对比|比较|哪个更|哪款更|怎么选|二选一|第一款|第二款|第三款", text):
+        return False
+    # 排除：明显的"找/推荐"类需求（应该走 recommend_product 而不是单品分析）
+    if re.search(r"推荐|找一款|找个|找一个|想买|想要|要买|来一款|来一个|来个|有没有|帮我挑|帮我选", text):
+        return False
+    # 排除：明显的预算/价格上限表达（含数字 + 预算/上限关键词，应该走 recommend_product）
+    # e.g. "coffee under 30", "30以内咖啡", "预算500", "不超过30元"
+    if re.search(r"(under|below|less\s+than|<=?)\s*\d", text, flags=re.I):
+        return False
+    if re.search(r"(预算|价位|不超过|低于|最多|以内|以下)\s*\d|\d\s*(以内|以下|元|块|RMB)", text, flags=re.I):
+        return False
+    # 信号 A：显式询问商品属性的关键词（含价格/参数/规格/上市时间等单品维度）
+    has_analysis_kw = bool(
+        re.search(r"(性价比|怎么样|如何|分析一下|值得买吗?|好不好|多少钱|什么价|售价|参数|规格|配置|上市|发布|发售|评测|测评|怎样|啥样)", text)
     )
+    if has_analysis_kw:
+        return True
+    # 信号 B：品牌+型号格式（型号 token 必须含字母+数字组合，纯数字不算）
+    # e.g. "iPhone 15 Pro", "Pura 70", "小米 14 Ultra", "Pixel 8a"
+    # 限定型号 token 至少有一位字母+一位数字相邻，避开"预算 500"这种纯数字场景。
+    if re.search(r"[A-Za-z]+\s*\d+|[A-Za-z]+\d+[A-Za-z]*|\d+\s*[A-Za-z]+(?:\s*(?:Pro|Plus|Max|Ultra|Mini|SE|Lite|青春版|至尊版|全能版|增强版))?", text):
+        # 还要确认这不是预算上下文："预算 500" / "5000 元" / "100 块" / "30 岁"
+        if re.search(r"(预算|价位|价格|元|块|岁|年|号|份|月)\s*\d", text) or re.search(r"\d+\s*(元|块|岁|年|月)", text):
+            return False
+        return True
+    return False
 
 
 def _no_match_text(plan: RetrievalPlan) -> str:

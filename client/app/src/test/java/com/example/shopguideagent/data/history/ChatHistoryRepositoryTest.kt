@@ -41,14 +41,11 @@ class ChatHistoryRepositoryTest {
         val repository = ChatHistoryRepository(store, userIdProvider = { "demo_user_a" })
 
         val message = ChatMessageUiModel(
-            "m1",
-            MessageRole.User,
-            "想买防晒",
-            false,
-            100L,
-            0,
-            emptyList(),
-            null
+            id = "m1",
+            role = MessageRole.User,
+            text = "想买防晒",
+            isStreaming = false,
+            createdAtMillis = 100L,
         )
         repository.saveSession("s1", "防晒推荐", listOf(message), 200L)
 
@@ -64,14 +61,11 @@ class ChatHistoryRepositoryTest {
         val store = InMemoryChatHistoryStore()
         val repository = ChatHistoryRepository(store, userIdProvider = { "demo_user_a" })
         val message = ChatMessageUiModel(
-            "m1",
-            MessageRole.User,
-            "想买手机",
-            false,
-            100L,
-            0,
-            emptyList(),
-            null
+            id = "m1",
+            role = MessageRole.User,
+            text = "想买手机",
+            isStreaming = false,
+            createdAtMillis = 100L,
         )
         repository.saveSession("s1", "手机推荐", listOf(message), 100L)
         repository.saveSession("s2", "咖啡推荐", listOf(message), 200L)
@@ -91,14 +85,11 @@ class ChatHistoryRepositoryTest {
         val store = InMemoryChatHistoryStore()
         val repository = ChatHistoryRepository(store, userIdProvider = { "demo_user_a" })
         val message = ChatMessageUiModel(
-            "m1",
-            MessageRole.User,
-            "想买手机",
-            false,
-            100L,
-            0,
-            emptyList(),
-            null
+            id = "m1",
+            role = MessageRole.User,
+            text = "想买手机",
+            isStreaming = false,
+            createdAtMillis = 100L,
         )
         repository.saveSession("s1", "手机推荐", listOf(message), 100L)
 

@@ -32,4 +32,5 @@ data class ProductUiModel @JvmOverloads constructor(
     val positiveFeedbackSummary: List<String> = emptyList(),
     val negativeFeedbackSummary: List<String> = emptyList(),
     val riskTags: List<String> = emptyList(),
+    val brand: String = "",
 )

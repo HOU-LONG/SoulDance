@@ -31,6 +31,18 @@ PRODUCT_ANALYSIS_SYSTEM_PROMPT = (
     "不要编造价格和规格。"
 )
 
+# 未在本店库存命中时的通用商品知识回答——用 LLM 公开知识回答，并标注本店不一定在售
+PRODUCT_ANALYSIS_UNKNOWN_SYSTEM_PROMPT = (
+    "你是这个 App 的 AI 助手灵舞。用户问到一款具体商品（可能是品牌+型号，比如华为 Pura 70 Pro、iPhone 15 Pro 等），"
+    "但本店商品库里没有这款。你的任务是基于你掌握的公开信息直接回答用户的问题——"
+    "可以包括它的定位、关键参数、上市时间、价格区间、和同类产品的对比等。"
+    "回答风格：直接给信息，3-5 句话，不要堆模板。"
+    "诚实约束：如果用户问的是确切价格，说明这是公开市场信息或参考价，并提示本店是否在售以实际为准。"
+    "不要承诺本店有库存。不要编造你不知道的具体参数。如果用户问的明显是虚构产品（比如型号根本不存在），如实指出。"
+    "末尾不需要每次都引导回购物——只在用户明显在挑商品时才轻量提一下。"
+)
+
+
 
 class DoubaoLLMClient:
     """OpenAI 兼容的 LLM 客户端。支持豆包 (doubao)、DeepSeek 或任意兼容 API。
@@ -277,8 +289,13 @@ class DoubaoLLMClient:
         intent: str,
         context: SessionContext | None = None,
     ):
-        # Task 11: product_analysis 使用专用系统提示（商品分析师角色），而非闲聊提示
-        system_prompt = PRODUCT_ANALYSIS_SYSTEM_PROMPT if intent == "product_analysis" else CHITCHAT_SYSTEM_PROMPT
+        # 多 intent 选择系统提示：分析命中库内 / 分析未命中 / 普通闲聊
+        if intent == "product_analysis":
+            system_prompt = PRODUCT_ANALYSIS_SYSTEM_PROMPT
+        elif intent == "product_analysis_unknown":
+            system_prompt = PRODUCT_ANALYSIS_UNKNOWN_SYSTEM_PROMPT
+        else:
+            system_prompt = CHITCHAT_SYSTEM_PROMPT
         stream_kwargs: dict[str, Any] = {
             'model': self.model,
             'messages': [
@@ -436,10 +453,29 @@ class FakeLLMClient:
         intent: str,
         context: SessionContext | None = None,
     ):
-        if intent == 'unclear_input':
-            text = '我还没太抓到你的购物需求。你可以随便说个想买的东西、预算，或者不想要什么，我再帮你筛。'
+        if intent == 'product_analysis':
+            # 命中库内商品时，从 context 焦点商品组装一段提及商品名的分析文本，
+            # 这样下游断言能验证回复确实围绕该商品展开。
+            focus_title = None
+            focus_brand = None
+            if context is not None:
+                recs = context.last_recommendations or []
+                if recs:
+                    focus_title = recs[-1].get('title')
+                    focus_brand = recs[-1].get('brand')
+            if focus_title:
+                text = (
+                    f'关于 {focus_title}，从定位看主打{focus_brand or "该品牌"}主线场景，'
+                    f'核心卖点是材质和工艺；本店价格以实际为准。整体性价比和你描述的需求基本匹配。'
+                )
+            else:
+                text = '这款的核心卖点和适用场景我可以简单分析，价格和规格以本店实际为准。'
+        elif intent == 'product_analysis_unknown':
+            text = '基于公开信息，这款商品的定位和参数我大致能说说，但本店是否在售请以实际为准。你想先了解哪方面？'
+        elif intent == 'unclear_input':
+            text = '嗯，我在。你具体想聊什么？商品、闲聊都可以。'
         else:
-            text = '我在，可以陪你慢慢挑。你告诉我购物需求、预算多少，或者有什么偏好就行。'
+            text = '我在，你想聊什么都行。'
         for index in range(0, len(text), 12):
             yield text[index : index + 12]
 

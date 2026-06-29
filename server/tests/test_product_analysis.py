@@ -35,6 +35,7 @@ def test_product_analysis_in_catalog():
 
 
 def test_product_analysis_unknown_product_no_fake_card():
+    """未命中库内商品时，不应该伪造 product_item 事件——但应该用通用知识回答（不再拒答）。"""
     client = _app()
     resp = client.post("/api/chat", json={
         "type": "user_message",
@@ -43,6 +44,8 @@ def test_product_analysis_unknown_product_no_fake_card():
     }, headers={"X-User-Id": "demo_user_a"})
     assert resp.status_code == 200
     events = resp.json()
+    # 关键：未命中绝不能伪造商品卡（防止把虚构型号当成本店商品）
     assert not any(e.get("type") == "product_item" for e in events)
     texts = "".join(e.get("text", "") for e in events if e.get("type") in {"text_delta", "focus_text_delta"})
-    assert "没有" in texts or "商品库" in texts
+    # 应该有实际的回答内容（>= 10 字），而不是空响应
+    assert len(texts.strip()) >= 10, f"未命中场景下应给出通用知识回答，实际：{texts!r}"

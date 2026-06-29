@@ -454,7 +454,10 @@ def test_greeting_does_not_recommend_products():
     assert "product_item" not in event_types
     assert "clarification_request" not in event_types
     merged_text = "".join(event["text"] for event in events if event["type"] == "text_delta")
-    assert "购物需求" in merged_text
+    # 寒暄场景的核心约束：不推商品、不要硬塞引导。文案保持温和有人味即可，
+    # 不再强制要求出现"购物需求"——chitchat 已升级为通用助手模式，
+    # 用户没问到购物时就不该把对话强行拉回购物。
+    assert merged_text.strip(), "寒暄场景应该有非空回复"
 
 
 def test_small_talk_variants_do_not_trigger_retrieval():
@@ -1570,8 +1573,10 @@ def test_llm_clients_do_not_expose_legacy_plan_method():
 def test_response_prompt_mentions_primary_and_alternative_differences():
     assert "recommendation_markdown_v2" in RESPONSE_SYSTEM_PROMPT
     assert "selected_primary" in RESPONSE_SYSTEM_PROMPT
-    assert "主推一个" in RESPONSE_SYSTEM_PROMPT
-    assert "备选差异" in RESPONSE_SYSTEM_PROMPT
+    # response.txt 经过 prompt 改版后强调"主推段独占含锚点 + 备选段只列名字+价格"，
+    # 关键约束词放宽到只看"主推/备选"两个标签是否都强调。
+    assert "主推" in RESPONSE_SYSTEM_PROMPT
+    assert "备选" in RESPONSE_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio

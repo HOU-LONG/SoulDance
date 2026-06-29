@@ -298,10 +298,8 @@ public class ChatViewModelTest {
         assertEquals("first request", viewModel.getUiState().getValue().getRetryMessageText());
         assertEquals("Connection interrupted. Retry?", viewModel.getUiState().getValue().getErrorMessage());
         assertFalse(viewModel.getUiState().getValue().getMessages().get(2).isStreaming());
-        assertEquals(
-                viewModel.getUiState().getValue().getMessages().get(2).getProducts().size(),
-                viewModel.getUiState().getValue().getMessages().get(2).getExpectedProductCount()
-        );
+        // expectedProductCount 字段已在 F3 锚点方案中移除——断流时不再需要校验已收 / 预期商品数；
+        // 其它断言（isSending=false、retry text、error message、streaming=false）已覆盖核心行为。
     }
 
     @Test

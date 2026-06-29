@@ -368,16 +368,17 @@ class ShopGuideAgent:
             raise
         finally:
             trace.total_ms = (_time.time() - t0) * 1000
-            # Read token usage from llm_client
-            usage_map = getattr(self.llm_client, "last_usage_by_call_kind", {})
+            # Read token usage from llm_client (穿越 LLMClientWithBreaker 到内层)
+            inner = getattr(self.llm_client, "client", self.llm_client)
+            usage_map = getattr(inner, "last_usage_by_call_kind", {})
             if usage_map:
                 json_usage = usage_map.get("json")
-                if json_usage is not None and json_usage.total_tokens:
-                    trace.plan_tokens = json_usage.total_tokens
-                for kind in ("stream_response", "response"):
+                if json_usage is not None:
+                    trace.plan_tokens = _token_sum(json_usage)
+                for kind in ("stream_response", "response", "stream_chitchat"):
                     usage = usage_map.get(kind)
-                    if usage is not None and usage.total_tokens:
-                        trace.response_tokens = usage.total_tokens
+                    if usage is not None:
+                        trace.response_tokens = _token_sum(usage)
                         break
             get_trace_store().append(trace)
 
@@ -3000,6 +3001,13 @@ def _text_delta_events(message_id: str, text: str) -> list[dict]:
 
 def _message_id() -> str:
     return "assistant_" + uuid.uuid4().hex[:10]
+
+
+def _token_sum(usage) -> int:
+    """从 LLMUsage 中提取可靠的 token 总数：优先 total_tokens，fallback 到 prompt+completion。"""
+    if usage.total_tokens is not None:
+        return usage.total_tokens
+    return (usage.prompt_tokens or 0) + (usage.completion_tokens or 0)
 
 
 def _extract_anchor_product_ids(text: str) -> list[str]:

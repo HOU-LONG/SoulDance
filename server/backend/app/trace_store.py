@@ -137,6 +137,9 @@ class TraceStore:
                 tool = r.tool or "__unknown__"
                 tool_counts[tool] = tool_counts.get(tool, 0) + 1
 
+            total_plan_tokens = sum(r.plan_tokens for r in records)
+            total_response_tokens = sum(r.response_tokens for r in records)
+
             return {
                 "total_records": total,
                 "avg_total_ms": round(_avg("total_ms"), 1),
@@ -145,6 +148,9 @@ class TraceStore:
                 "avg_first_byte_ms": round(_avg("first_byte_ms"), 1),
                 "avg_plan_tokens": round(_avg("plan_tokens"), 1),
                 "avg_response_tokens": round(_avg("response_tokens"), 1),
+                "cumulative_plan_tokens": total_plan_tokens,
+                "cumulative_response_tokens": total_response_tokens,
+                "cumulative_total_tokens": total_plan_tokens + total_response_tokens,
                 "avg_tool_confidence": round(_avg("tool_confidence"), 4),
                 "error_count": error_count,
                 "tool_counts": tool_counts,

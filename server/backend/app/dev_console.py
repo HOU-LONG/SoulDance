@@ -98,10 +98,12 @@ tr.error-row td { color: #f08090; }
 <p class="subtitle">实时请求追踪 &middot; 每 5 秒自动刷新</p>
 
 <div class="cards">
-  <div class="card"><div class="card-label">平均延迟</div><div class="card-value" id="stat-latency">--<span class="card-unit">ms</span></div></div>
-  <div class="card"><div class="card-label">平均 Token</div><div class="card-value" id="stat-tokens">--<span class="card-unit">/req</span></div></div>
-  <div class="card"><div class="card-label">总请求数</div><div class="card-value" id="stat-total">--</div></div>
-  <div class="card"><div class="card-label">Plan 占比</div><div class="card-value" id="stat-plan">--<span class="card-unit">%</span></div></div>
+  <div class="card"><div class="card-label">平均延迟</div><div class="card-value" id="stat-latency">--</div></div>
+  <div class="card"><div class="card-label">首个Token</div><div class="card-value" id="stat-ttft">--</div></div>
+  <div class="card"><div class="card-label">Token/次</div><div class="card-value" id="stat-tokens">--</div></div>
+  <div class="card"><div class="card-label">累计Token</div><div class="card-value" id="stat-cumtokens">--</div></div>
+  <div class="card"><div class="card-label">请求数</div><div class="card-value" id="stat-total">--</div></div>
+  <div class="card"><div class="card-label">Plan占比</div><div class="card-value" id="stat-plan">--</div></div>
 </div>
 
 <div class="charts">
@@ -208,10 +210,12 @@ async function fetchData() {
 }
 
 function renderStats(s) {
-  document.getElementById('stat-latency').innerHTML = (s.avg_latency_ms || 0).toFixed(1) + '<span class="card-unit">ms</span>';
-  document.getElementById('stat-tokens').innerHTML = (s.avg_tokens_per_request || 0).toFixed(0) + '<span class="card-unit">/req</span>';
+  document.getElementById('stat-latency').textContent = (s.avg_latency_ms || 0).toFixed(0) + ' ms';
+  document.getElementById('stat-ttft').textContent = (s.avg_first_byte_ms || 0).toFixed(0) + ' ms';
+  document.getElementById('stat-tokens').textContent = (s.avg_tokens_per_request || 0).toFixed(0);
+  document.getElementById('stat-cumtokens').textContent = (s.cumulative_total_tokens || 0).toLocaleString();
   document.getElementById('stat-total').textContent = s.total_requests || 0;
-  document.getElementById('stat-plan').innerHTML = ((s.plan_ratio || 0) * 100).toFixed(1) + '<span class="card-unit">%</span>';
+  document.getElementById('stat-plan').textContent = ((s.plan_ratio || 0) * 100).toFixed(1) + '%';
 }
 
 function renderLatencyChart(traces) {
@@ -310,11 +314,13 @@ async def dev_stats():
     total = raw.get("total_records", 0)
     return {
         "avg_latency_ms": raw.get("avg_total_ms", 0.0),
+        "avg_first_byte_ms": raw.get("avg_first_byte_ms", 0.0),
         "avg_tokens_per_request": round(
             raw.get("avg_plan_tokens", 0.0) + raw.get("avg_response_tokens", 0.0), 1
         ),
         "total_requests": total,
         "plan_ratio": round(plan_count / total, 4) if total else 0.0,
+        "cumulative_total_tokens": raw.get("cumulative_total_tokens", 0),
         "tool_counts": tool_counts,
     }
 

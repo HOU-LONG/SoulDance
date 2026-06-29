@@ -529,10 +529,10 @@ class ShopGuideAgent:
         if args.soft_preferences:
             ir.constraint_edits.add.soft_preferences.update(args.soft_preferences)
         if args.category_hint:
-            existing = list(getattr(ir.query_intent, "category_hints", []) or [])
+            existing = list(getattr(ir.query_intent, "query_terms", []) or [])
             if args.category_hint not in existing:
                 existing.append(args.category_hint)
-                ir.query_intent.category_hints = existing
+                ir.query_intent.query_terms = existing
 
     def _record_display_messages(self, context: SessionContext, events: list[dict]) -> None:
         """Build one assistant DisplayMessage from collected stream events."""

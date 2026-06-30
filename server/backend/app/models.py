@@ -271,10 +271,11 @@ class UnifiedPlan(BaseModel):
     target_product_query: str | None = None
     category_hint: str | None = None
 
-    # ---- 对比/分析/追问（原 ToolPlanArgs） ----
+    # ---- 对比/分析/追问（原 ToolPlanArgs + SemanticFrame.response_goal） ----
     compare_targets: list[str] = Field(default_factory=list)
     analysis_aspect: str | None = None
     followup_kind: str | None = None
+    response_goal: str | None = None  # 兼容旧 SemanticFrame API
 
     # ---- cart 操作（原 CartOperation + ToolPlanArgs） ----
     cart_action: str | None = None

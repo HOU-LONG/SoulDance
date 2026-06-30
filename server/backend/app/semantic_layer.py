@@ -254,6 +254,7 @@ def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, A
         soft_preferences=soft,
         exclude_brands=list(excluded),
         followup_kind=response_goal,
+        response_goal=response_goal,
     )
 
 

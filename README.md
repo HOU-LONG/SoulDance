@@ -31,7 +31,22 @@ SoulDance/
 
 ---
 
-## 最近更新（v2.0 — 2026-06）
+## 最近更新
+
+### v2.1 — 代码清理与架构精简（2026-06）
+
+v2.1 对 v2.0 重构遗留的兼容层和死代码进行了彻底清理，消除所有过渡期冗余：
+
+- **删除 ToolPlan 旧模块** — `tool_plan.py`（ToolPlan/ToolPlanArgs）已随 UnifiedPlan 统一决策完成使命，彻底移除
+- **删除 IntentCompiler 残留** — `intent_compiler.py` 及 `SemanticParser`、`PlannerAgent` 类正式移除
+- **清理 LLM 客户端废弃方法** — `parse_semantic_frame()`、`classify_contextual_followup()` 从 LLM 客户端移除
+- **删除 UnifiedPlan 向后兼容属性** — `.intent`、`.constraint_edits`、`.cart_operation`、`.query_intent` 等兼容层属性移除
+- **删除类型别名与 workaround** — `SemanticFrame` / `ShoppingIntentIR` 别名及 `_merge_tool_plan_into_ir()` workaround 移除
+- **净删除约 1350 行死代码** — 涉及 14 个文件，架构更清晰，无冗余兼容层
+
+当前核心链路：**LLM 2 次/轮**（ToolPlanner → Generate），配合 **FactContextBuilder + AnchorValidator（流式校验）+ ConsistencyTracker（跨轮一致性）** 构成防幻觉三层防护。
+
+### v2.0 — 事实锚定管道（2026-06）
 
 v2.0 以**可靠性**和**效率**为核心进行了架构升级：
 

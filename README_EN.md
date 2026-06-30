@@ -31,7 +31,22 @@ SoulDance/
 
 ---
 
-## Recent Updates (v2.0 — 2026-06)
+## Recent Updates
+
+### v2.1 — Code Cleanup & Architecture Simplification (2026-06)
+
+v2.1 thoroughly cleaned up backward-compatibility layers and dead code left over from the v2.0 refactor, eliminating all transitional redundancy:
+
+- **Removed legacy ToolPlan module** — `tool_plan.py` (ToolPlan/ToolPlanArgs), superseded by UnifiedPlan
+- **Removed IntentCompiler remnants** — `intent_compiler.py` along with `SemanticParser` and `PlannerAgent` classes
+- **Cleaned up deprecated LLM client methods** — `parse_semantic_frame()` and `classify_contextual_followup()` removed
+- **Removed UnifiedPlan backward-compat properties** — `.intent`, `.constraint_edits`, `.cart_operation`, `.query_intent` compat layer removed
+- **Removed type aliases and workaround** — `SemanticFrame` / `ShoppingIntentIR` aliases and `_merge_tool_plan_into_ir()` workaround removed
+- **Net deletion of ~1,350 lines** — across 14 files, resulting in a cleaner architecture with zero redundant compat layers
+
+Current core pipeline: **2 LLM calls/turn** (ToolPlanner → Generate), with **FactContextBuilder + AnchorValidator (streaming validation) + ConsistencyTracker (cross-turn consistency)** forming a three-layer anti-hallucination defense.
+
+### v2.0 — Fact-Grounded Pipeline (2026-06)
 
 v2.0 brings an architectural overhaul focused on **reliability** and **efficiency**:
 

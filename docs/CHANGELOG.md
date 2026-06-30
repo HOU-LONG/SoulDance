@@ -1,5 +1,71 @@
 # 更新日志 (CHANGELOG)
 
+## v2.1 — 代码清理与架构精简（2026-06-30）
+
+### 概述
+
+v2.1 是一次纯清理版本——无新功能、无 API 变更。目标是在 v2.0 大规模重构落定后，彻底移除所有过渡期兼容层和死代码，消除代码负债。
+
+### 删除清单
+
+#### 模块级删除
+
+| 文件 | 内容 | 删除原因 |
+|------|------|---------|
+| `server/backend/app/tool_plan.py` | ToolPlan / ToolPlanArgs 数据结构 | 已由 UnifiedPlan 统一决策取代 |
+| `server/backend/app/intent_compiler.py` | IntentCompiler LLM 语义解析路径 | v2.0 已停用，现正式移除 |
+| `server/backend/app/semantic_layer.py` | SemanticParser 类、PlannerAgent 类 | 已由规则化 UnifiedPlan 方案替代 |
+
+#### 类与方法删除
+
+| 位置 | 删除项 | 说明 |
+|------|--------|------|
+| `llm_client.py` / `llm_client_doubao.py` | `parse_semantic_frame()` | LLM 语义解析方法，v2.0 已停用 |
+| `llm_client.py` / `llm_client_doubao.py` | `classify_contextual_followup()` | LLM 跟随判断方法，v2.0 已停用 |
+| `semantic_layer.py` | `SemanticParser` 类 | 旧意图解析类 |
+| `semantic_layer.py` | `PlannerAgent` 类 | 旧规划代理类 |
+
+#### 向后兼容层删除
+
+| 位置 | 删除项 | 说明 |
+|------|--------|------|
+| `models.py` — `UnifiedPlan` | `.intent` 属性 | 指向 `tool_selection` 的兼容属性 |
+| `models.py` — `UnifiedPlan` | `.constraint_edits` 属性 | 指向 `constraint_updates` 的兼容属性 |
+| `models.py` — `UnifiedPlan` | `.cart_operation` 属性 | 指向 `cart_action` 的兼容属性 |
+| `models.py` — `UnifiedPlan` | `.query_intent` 属性 | 指向 `intent_label` 的兼容属性 |
+| `models.py` | `SemanticFrame` / `ShoppingIntentIR` 类型别名 | 指向 `UnifiedPlan` 的过渡期别名 |
+| `state_reducer.py` | `_merge_tool_plan_into_ir()` | 过渡期 workaround 方法 |
+
+### 统计数据
+
+| 指标 | 数值 |
+|------|------|
+| 净删除代码行数 | ~1,350 |
+| 涉及文件数 | 14 |
+| 删除类 | 4（ToolPlan, ToolPlanArgs, SemanticParser, PlannerAgent） |
+| 删除方法/函数 | 6 |
+| 删除向后兼容属性 | 4 |
+| 删除类型别名 | 2 |
+| 删除 workaround | 1 |
+
+### 架构简化效果
+
+v2.1 清理完成后，当前架构达到最简状态：
+
+- **LLM 调用路径**：每轮 2 次（ToolPlanner 决策 → Generate 生成），无中间解析层
+- **防幻觉核心**：FactContextBuilder（事实表构建）→ AnchorValidator（流式校验）→ ConsistencyTracker（跨轮一致性），三层防护
+- **决策载体**：UnifiedPlan 唯一数据结构，无别名、无兼容属性、无 workaround
+- **分词增强**：CJK-ASCII 归一化直接嵌入检索管道
+- **会话安全**：3 阶段 Session Checkpoint + 上下文感知降级
+- **商品分析**：enriched_message 注入，消除假阴性
+
+### API 兼容性
+
+- **无破坏性变更**。所有公开 API、WebSocket 协议、事件类型、REST 端点路径和参数保持不变。
+- 删除的均为内部实现细节和未暴露的兼容层。
+
+---
+
 ## v2.0 — 事实锚定管道 (Fact-Grounded Pipeline)
 
 ### 概述

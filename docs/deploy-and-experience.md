@@ -4,6 +4,19 @@
 
 ---
 
+## 当前部署信息
+
+| 项目 | 详情 |
+|------|------|
+| 公网入口 | `https://legs-committed-orange-tears.trycloudflare.com/` |
+| 后端端口 | `8000` |
+| 后端日志 | `/tmp/souldance-backend.log` |
+| 开发者控制台 | `https://legs-committed-orange-tears.trycloudflare.com/dev` |
+
+> Cloudflare tunnel 进程重启后 URL 会变更，届时需同步更新本文档及 APK 中的 `AppConfig`。
+
+---
+
 ## 体验路径总览
 
 ```
@@ -124,6 +137,16 @@ curl -s -X POST http://127.0.0.1:8000/api/chat \
 ```bash
 cloudflared tunnel --url http://127.0.0.1:8000 &
 # 终端会打印 tunnel URL，如 https://xxx.trycloudflare.com
+```
+
+当前部署的 tunnel URL：`https://legs-committed-orange-tears.trycloudflare.com/`（进程重启后会变化）。
+
+Tunnel 断开后重建：
+
+```bash
+kill $(ps aux | grep "cloudflared.*tunnel" | grep -v grep | awk '{print $2}') 2>/dev/null
+cloudflared tunnel --url http://127.0.0.1:8000 > /tmp/souldance-tunnel.log 2>&1 &
+# 新 URL 从日志获取：grep -oP 'https://[^ ]+\.trycloudflare\.com' /tmp/souldance-tunnel.log
 ```
 
 #### B2. 构建 APK
@@ -276,11 +299,19 @@ plan_tool + stream_response 两轮 LLM 调用合计 20-40s 是正常范围。观
 
 ## 评委快速体验 Checklist
 
+**无需部署，直接访问当前运行实例：**
+- [ ] 浏览器打开 `https://legs-committed-orange-tears.trycloudflare.com/dev` → 看到仪表盘说明后端在线
+- [ ] 浏览器打开 `https://legs-committed-orange-tears.trycloudflare.com/docs` → FastAPI 自动生成的 API 文档
+
+**curl 快速验证（在服务器上执行）：**
 - [ ] `curl http://127.0.0.1:8000/health` 返回 `{"status":"ok"}`
 - [ ] curl 发 "华为 Pura 90 Pro 价格" → 得到带商品知识的自然回复
 - [ ] curl 发 "心情不好推荐甜的" → 得到先共情再推荐的真实商品卡片
 - [ ] curl 发 "推荐一款咖啡" → 得到含锚点的推荐回复 + product_item 事件
 - [ ] curl 发 "推荐一款6000元左右的小米手机" → 得到品牌约束推荐（v2.0）
 - [ ] curl 发 "分析一下小米 17Max的优缺点" → 得到产品分析回复（v2.0）
-- [ ] 浏览器打开 `/dev` → 看到 6 张统计卡片 + 图表
-- [ ] (可选) 安装 APK 手机上体验完整对话交互
+- [ ] curl 发 "有没有便宜一点的替代品？"（接推荐对话后） → 得到更便宜替代品（v2.0）
+- [ ] 浏览器打开本地 `/dev` → 看到 6 张统计卡片 + 图表
+
+**手机端体验（可选）：**
+- [ ] 安装 APK 后配置 tunnel URL，在手机上进行完整对话交互

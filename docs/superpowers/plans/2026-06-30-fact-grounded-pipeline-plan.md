@@ -129,11 +129,12 @@ def test_session_context_imports_unchanged():
     """旧模型不受影响。"""
     from server.backend.app.models import (
         ConstraintEdits, CartOperation, QueryIntent, SemanticFrame,
-        ShoppingIntentIR, RetrievalPlan, ToolPlan
+        ShoppingIntentIR, RetrievalPlan,
     )
-    # 能导入即通过
+    from server.backend.app.tool_plan import ToolPlan  # ToolPlan 在 tool_plan.py，不在 models.py
     assert ConstraintEdits is not None
     assert SemanticFrame is not None
+    assert ToolPlan is not None
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -143,9 +144,11 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_new_m
 ```
 预期: FAIL（新模型未定义，SessionState 无新字段）
 
-- [ ] **Step 3: 在 models.py 末尾追加新模型**
+- [ ] **Step 3: 在 models.py 中——注意定义顺序**
 
-在文件末尾（`UserFeedbackProfile` 类之后）追加：
+**关键：`ClaimRecord` 和 `ConsistencyState` 必须在 `SessionState` 之前定义**，因为 `SessionState` 的 `Field(default_factory=ConsistencyState)` 在类定义时立即求值（`from __future__ import annotations` 只影响 annotation，不影响 default_factory）。
+
+插入位置：在当前 `SessionState` 定义之前（约第 192 行），追加新模型：
 
 ```python
 # ========== 事实锚定管道模型（Stage 1） ==========
@@ -174,12 +177,12 @@ class ClaimRecord(BaseModel):
     """单条关于商品的声明。"""
     turn: int
     product_id: str
-    claim_type: str  # "not_exists" | "price" | "recommendation" | "comparison"
+    claim_type: str
     claim_value: str
 
 
 class ConsistencyState(BaseModel):
-    """跨轮一致性状态，追加到 SessionState。"""
+    """跨轮一致性状态——必须在 SessionState 之前定义。"""
     claims: list[ClaimRecord] = Field(default_factory=list)
     confirmed_product_id: str | None = None
     denied_product_queries: list[str] = Field(default_factory=list)
@@ -194,7 +197,7 @@ class SessionRecovery(BaseModel):
 
 - [ ] **Step 4: 在 SessionState 中追加两个字段**
 
-找到 `class SessionState(BaseModel)`（约第 193 行），在现有字段列表末尾（`trace: TraceState` 之后）追加：
+新模型插入后，`SessionState` 现在在这些类定义**之后**，可以安全引用。在 `SessionState` 现有字段列表末尾（`trace: TraceState` 之后）追加：
 
 ```python
     # 事实锚定管道（Stage 1）
@@ -443,8 +446,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 **关键设计:**
 - 普通文本 chunk：**立即透传**（零延迟）
-- 遇到 `[[`：进入缓冲模式，收集到 `]]` →查 `fact_ctx.product_index` → 展开/替换 → 退出缓冲
-- 流式结束后：deferred `detect_stray_names()` 在**原始 LLM 输出**上执行（expand 前），排除已被锚点覆盖的 title span，仅记 warning log + yield `hallucination_corrected` 事件
+- 遇到 `[[`：进入缓冲模式，收集到 `]]` → 查 `fact_ctx.product_index` → 展开/替换 → 立即透传 → 循环检查同一 chunk 中是否还有 `[[`
+- 同一 chunk 内的多个锚点（如 `"推荐 [[P1]]，备选 [[P2]]"`）通过循环状态机处理，不遗漏
+- 无效锚点 → yield `anchor_warning` 事件 + 替换为「该商品」
+- 流式结束后：deferred `detect_stray_names()` 在**原始 LLM 输出**上执行（expand 前），排除已被锚点覆盖的 title span，yield `stray_warning` 事件
 
 **文件:**
 - 创建: `server/backend/app/anchor_validator.py`
@@ -659,17 +664,12 @@ class AnchorValidator:
     ) -> AsyncIterator[dict]:
         """流式处理 LLM 输出 chunks。
 
-        对每个 chunk:
-        - 不在缓冲模式: 扫描 `[[`，之前部分立即 yield；`[[` 之后进入缓冲
-        - 在缓冲模式: 追加到 buffer，`]]` 出现时 → expand_anchor() → yield → 退出缓冲
-
-        全部 chunks 处理完后，执行 deferred 裸奔检测。
+        循环状态机：每个 chunk 内重复扫描直到没有 `[[` 为止，
+        正确处理同 chunk 内的多个锚点（如 "推荐 [[P1]]，备选 [[P2]]"）。
         """
         collected_text: list[str] = []
-        buffer_mode = False
-        anchor_buffer = ""
+        pending = ""  # 跨 chunk 的未闭合锚点缓冲 + `[` 后缀缓冲
 
-        # 支持 list 和 async iterator
         if hasattr(chunks, '__aiter__'):
             async_iter = chunks
         else:
@@ -682,35 +682,42 @@ class AnchorValidator:
             if not chunk:
                 continue
             collected_text.append(chunk)
+            text = pending + chunk
+            pending = ""
 
-            if buffer_mode:
-                anchor_buffer += chunk
-                if ']]' in anchor_buffer:
-                    # 找到闭合标记
-                    anchor_content, rest = anchor_buffer.split(']]', 1)
-                    # 提取 anchor_id（去掉可能的 [[ 前缀）
-                    anchor_id = anchor_content.lstrip('[')
-                    expanded = self.expand_anchor(anchor_id, fact_ctx)
-                    yield {"type": "text_delta", "text": expanded}
-                    buffer_mode = False
-                    anchor_buffer = ""
-                    # rest 中可能还有新内容需要处理
-                    if rest:
-                        yield {"type": "text_delta", "text": rest}
-                continue
-
-            if '[[' in chunk:
-                before, rest = chunk.split('[[', 1)
+            # 循环处理：同一 chunk 内可能包含多个 [[...]] 锚点
+            while '[[' in text:
+                before, rest = text.split('[[', 1)
                 if before:
                     yield {"type": "text_delta", "text": before}
-                buffer_mode = True
-                anchor_buffer = rest
-            else:
-                yield {"type": "text_delta", "text": chunk}
 
-        # 如果流结束还在缓冲中（截断的锚点），原样输出
-        if buffer_mode and anchor_buffer:
-            yield {"type": "text_delta", "text": f"[[{anchor_buffer}"}
+                if ']]' in rest:
+                    anchor_id, after = rest.split(']]', 1)
+                    anchor_id = anchor_id.strip()
+                    record = self.resolve(anchor_id, fact_ctx)
+                    if record is not None:
+                        yield {"type": "text_delta", "text": f"**{record.title}**"}
+                    else:
+                        logger.warning(f"[anchor_validator] unresolved anchor: {anchor_id}")
+                        yield {"type": "anchor_warning", "anchor_id": anchor_id}
+                        yield {"type": "text_delta", "text": "该商品"}
+                    text = after  # 继续循环
+                else:
+                    pending = '[[' + rest  # `]]` 在后续 chunk 中
+                    break
+            else:
+                # 没有更多 `[[`
+                # 关键: 如果 text 以 `[` 结尾，保留到 pending，
+                # 防止 `[[` 跨 chunk 分割（如 chunk1="["，chunk2="[P1]"）
+                if text and text[-1] == '[':
+                    pending = '['
+                    text = text[:-1]
+                if text:
+                    yield {"type": "text_delta", "text": text}
+
+        # 流结束：pending 中剩余的文本（截断锚点或孤立的 `[`）
+        if pending:
+            yield {"type": "text_delta", "text": pending}
 
         # deferred 裸奔检测：在原始文本上检测未被锚点覆盖的商品名
         if fact_ctx.product_index:
@@ -1193,7 +1200,7 @@ async for event in self._stream_generate_text_events(
     ...
 ```
 
-- [ ] **Step 3: 重写 _stream_generate_text_events — 流式校验**
+- [ ] **Step 3: 重写 _stream_generate_text_events — 流式校验 + 保留首 chunk 超时**
 
 ```python
 async def _stream_generate_text_events(
@@ -1204,7 +1211,7 @@ async def _stream_generate_text_events(
     ranked: list[RankedProduct],
     focus_product: Product | None,
     *,
-    fact_ctx: FactContext | None = None,  # ← 新参数
+    fact_ctx: FactContext | None = None,
 ) -> AsyncIterator[dict]:
     if not ranked:
         for event in _text_delta_events(message_id, _no_match_text(plan)):
@@ -1214,29 +1221,65 @@ async def _stream_generate_text_events(
     ctx = self.sessions.get("anonymous", request.session_id)
     fact_block = fact_ctx.prompt_block if fact_ctx else ""
 
-    # LLM 流式输出（带 fact_block 约束）
+    # ★ 保留首 chunk 超时保护
     try:
         llm_stream = self.llm_client.stream_response(
             request.message, plan, ranked, focus_product,
             context=ctx, fact_block=fact_block,
         )
     except Exception:
-        fallback = fallback_text_for_failure("llm_error", plan)
+        fallback = fallback_text_for_failure("llm_error", plan, context=ctx)
         for event in _text_delta_events(message_id, fallback):
             yield event
         return
 
-    # AnchorValidator 流式校验（逐 chunk 透传 + 锚点展开）
-    if fact_ctx and fact_ctx.product_index:
-        async for event in self.anchor_validator.stream_process(llm_stream, fact_ctx):
-            if event["type"] == "text_delta":
-                event["message_id"] = message_id
+    # 首 chunk 超时: 如果第一个 chunk 在 timeout 内不到，走 fallback
+    try:
+        first_chunk = await run_with_timeout(
+            self._first_chunk_from_stream(llm_stream),
+            timeout_seconds=DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS,
+            fallback=None,
+        )
+    except Exception:
+        first_chunk = None
+
+    if first_chunk is None:
+        fallback = fallback_text_for_failure("llm_timeout", plan, context=ctx)
+        for event in _text_delta_events(message_id, fallback):
             yield event
-    else:
-        # 无 fact_ctx 时直接透传
+        return
+
+    # ★ 恢复完整流：first_chunk + 剩余
+    async def _full_stream():
+        yield first_chunk
         async for chunk in llm_stream:
             if chunk:
-                yield {"type": "text_delta", "message_id": message_id, "text": chunk}
+                yield chunk
+
+    # AnchorValidator 流式校验（逐 chunk 透传 + 锚点展开 + 异常边界）
+    if fact_ctx and fact_ctx.product_index:
+        try:
+            async for event in self.anchor_validator.stream_process(_full_stream(), fact_ctx):
+                if event["type"] == "text_delta":
+                    event["message_id"] = message_id
+                yield event
+        except Exception:
+            logger.warning("[stream] anchor_validator error, falling back", exc_info=True)
+            fallback = fallback_text_for_failure("llm_error", plan, context=ctx)
+            for event in _text_delta_events(message_id, fallback):
+                yield event
+            return
+    else:
+        try:
+            async for chunk in _full_stream():
+                if chunk:
+                    yield {"type": "text_delta", "message_id": message_id, "text": chunk}
+        except Exception:
+            logger.warning("[stream] llm stream error", exc_info=True)
+            fallback = fallback_text_for_failure("llm_error", plan, context=ctx)
+            for event in _text_delta_events(message_id, fallback):
+                yield event
+            return
 ```
 
 - [ ] **Step 4: 修改 _stream_followup 同样构建 FactContext**
@@ -1406,32 +1449,43 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ### Task 8: 集成 ConsistencyTracker 到 agent.py（P1）
 
-**目标:** 在输出前调用 `check_before_output()`；在 recommend 和 denial 时刻记录 claims
+**目标:** 在 LLM 生成**前**执行 `check_before_output()`（阻止文本已流出后才拦截）；在 recommend 和 denial 时刻记录 claims
 
 **文件:**
 - 修改: `server/backend/app/agent.py`
 
-- [ ] **Step 1: 在 _stream_recommendation_events 推送前加入 consistency check**
+- [ ] **Step 1: 在 _stream_recommendation_events 中——LLM 生成前做 consistency check**
 
-在 `_stream_recommendation_events` 中，LLM 生成并校验后（Task 6 修改的位置之后）、推送 product cards 之前：
+**关键：检查必须在调用 `_stream_generate_text_events` 之前完成**，此时尚未向用户推送任何文本。
+
+在 `_stream_recommendation_events` 中，`selected` 确定后、`_stream_generate_text_events` 调用前：
 
 ```python
-# ConsistencyTracker 校验
-if fact_ctx:
-    consistency_result = self.consistency_tracker.check_before_output(
-        session_ctx=context,
-        ranked_product_ids=[item.product.product_id for item in selected],
-        fact_ctx=fact_ctx,
-    )
-    if not consistency_result.is_consistent:
-        logger.warning(f"[consistency] blocked: {consistency_result.blocked_reason}")
-        fallback = fallback_text_for_failure("contradiction_blocked", plan, context=context)
-        yield {"type": "consistency_blocked", "message_id": message_id,
-               "reason": consistency_result.blocked_reason}
-        for event in _text_delta_events(message_id, fallback):
-            yield event
-        yield {"type": "done", "message_id": message_id}
-        return
+# ★ LLM 生成前：构建 FactContext + consistency check
+denied = self.consistency_tracker.get_denied_queries(context)
+fact_ctx = self.fact_builder.build(selected, denied_queries=denied)
+
+# ConsistencyTracker 校验（在文本生成前）
+consistency_result = self.consistency_tracker.check_before_output(
+    session_ctx=context,
+    ranked_product_ids=[item.product.product_id for item in selected],
+    fact_ctx=fact_ctx,
+)
+if not consistency_result.is_consistent:
+    logger.warning(f"[consistency] blocked before generate: {consistency_result.blocked_reason}")
+    fallback = fallback_text_for_failure("contradiction_blocked", plan, context=context)
+    yield {"type": "consistency_blocked", "message_id": message_id,
+           "reason": consistency_result.blocked_reason}
+    for event in _text_delta_events(message_id, fallback):
+        yield event
+    yield {"type": "done", "message_id": message_id}
+    return
+
+# 通过后才生成文本（文本中不会包含矛盾内容）
+async for event in self._stream_generate_text_events(
+    message_id, request, plan, selected, None, fact_ctx=fact_ctx,
+):
+    ...
 ```
 
 - [ ] **Step 2: 在 _remember_recommendations 中记录 claims**
@@ -1946,7 +2000,8 @@ def test_unified_plan_serialization():
 
 def test_unified_plan_does_not_break_old_models():
     """UnifiedPlan 与旧模型共存，互不影响。"""
-    from server.backend.app.models import ToolPlan, SemanticFrame, RetrievalPlan
+    from server.backend.app.models import SemanticFrame, RetrievalPlan
+    from server.backend.app.tool_plan import ToolPlan  # ToolPlan 在 tool_plan.py
     tp = ToolPlan(tool="chitchat")
     assert tp.tool == "chitchat"
     assert SemanticFrame is not None
@@ -2402,32 +2457,32 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ---
 
-### Task S2-6: 更新 Tool 参数 — compiled_ir → unified_plan
+### Task S2-6: 更新 Tool 参数 — 逐 Tool 迁移 compiled_ir → unified_plan
 
-**目标:** 所有 Tool 的 `execute()` 方法参数从 `compiled_ir` 改为 `unified_plan`
+**目标:** 每个 Tool 的 `execute()` 方法从消费 `compiled_ir`（SemanticFrame）改为消费 `unified_plan`（UnifiedPlan）
 
-**文件:**
-- 修改: `server/backend/app/tools/retrieval.py`
-- 修改: `server/backend/app/tools/cart.py`
-- 修改: `server/backend/app/tools/clarify.py`
-- 修改: `server/backend/app/tools/comparison.py`
-- 修改: `server/backend/app/tools/bundle.py`
-- 修改: `server/backend/app/tools/followup.py`
-- 修改: `server/backend/app/tools/product_analysis.py`
+**关键原则:** 不是简单改名——需要逐 Tool 建立字段映射并验证行为等价。
 
-- [ ] **Step 1: 全局替换参数名**
+**文件与映射清单:**
 
-所有 `execute()` 方法中:
-```python
-# 旧: compiled_ir=compiled_ir
-# 新: unified_plan=unified_plan
-```
+| Tool | 当前消费的 compiled_ir 字段 | UnifiedPlan 等效字段 | 备注 |
+|------|---------------------------|---------------------|------|
+| `tools/retrieval.py` | `compiled_ir.constraint_edits.add` | `unified_plan` 的 price_min/max, include/exclude_brands | 直接字段，不需 edits 层 |
+| `tools/cart.py` | `compiled_ir.cart_operation.action/target/quantity` | `unified_plan.cart_action`, `cart_target_product_id`, `cart_quantity` | target 从 ProductReference 变为 product_id 字符串 |
+| `tools/clarify.py` | `compiled_ir.clarification_question` | `unified_plan.clarification_question` | 直接映射 |
+| `tools/comparison.py` | `compiled_ir.constraint_edits` + `query_intent.query_terms` | `unified_plan.compare_targets` + `soft_preferences` | 对比场景的 target 从 query_terms → compare_targets |
+| `tools/bundle.py` | `compiled_ir.query_intent` + `constraint_edits` | `unified_plan.soft_preferences` | bundle 场景偏好从 query_intent → soft_preferences |
+| `tools/followup.py` | `compiled_ir.constraint_edits.add` + `followup_kind` | `unified_plan` 直接字段 + `followup_kind` | 同上 |
+| `tools/product_analysis.py` | `compiled_ir.analysis_aspect` | `unified_plan.analysis_aspect` | 直接映射 |
 
-对应的内部引用:
-```python
-# 旧: compiled_ir.query_intent → unified_plan.soft_preferences
-# 旧: compiled_ir.constraint_edits → unified_plan (直接取字段)
-```
+**agent.py 中需同步的消费点:**
+
+| 位置 | 当前读取 | 改为 |
+|------|---------|------|
+| `_apply_pending_answer_preferences()` | `ir.constraint_edits.add.include_brands` | `unified_plan.include_brands` |
+| `_dispatch_tool` cart_operation 路径 | `compiled_ir.cart_operation` | `unified_plan.cart_action/target_product_id/quantity` |
+| `_stream_followup` 品牌排除 | `ir.constraint_edits.add.exclude_brands` | `unified_plan.exclude_brands` |
+| `try_handle_cart_message` | `frame.cart_operation` | `unified_plan.cart_action` 等字段 |
 
 - [ ] **Step 2: 确认可导入**
 

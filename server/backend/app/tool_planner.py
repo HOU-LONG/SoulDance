@@ -25,7 +25,6 @@ class ToolPlanner:
 
     async def plan(self, request: ChatRequest, context: SessionContext):
         """返回 UnifiedPlan（Stage 2 迁移后统一载体）。"""
-        import sys
         from .models import UnifiedPlan
 
         # 1. product_followup 类型的 request 直接固定 tool
@@ -38,7 +37,6 @@ class ToolPlanner:
             raw = await self.llm_client.plan_tool(request.message or "", context_payload)
             plan = self._parse_plan(raw)
             if plan is not None:
-                print(f"[DEBUG_TP] LLM tool={plan.tool}", file=sys.stderr, flush=True)
                 return plan
         except Exception:
             pass

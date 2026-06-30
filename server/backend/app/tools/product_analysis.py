@@ -73,10 +73,24 @@ class ProductAnalysisTool:
             "sub_category": product.sub_category,
         })
 
+        # ★ 关键：把商品事实注入到 LLM prompt 中
+        enriched_message = (
+            f"[本店匹配到的商品]\n"
+            f"商品ID: {product.product_id}\n"
+            f"名称: {product.title}\n"
+            f"品牌: {product.brand}\n"
+            f"价格: ¥{product.price:.0f}\n"
+            f"类目: {product.category} / {product.sub_category}\n"
+            f"卖点: {product.marketing_description or '暂无'}\n\n"
+            f"用户问题: {request.message}\n\n"
+            f"请基于以上真实商品数据进行分析，从性价比、适用场景、优缺点角度给出简短分析（2-4句话）。"
+            f"必须引用商品的实际名称、价格和规格。绝对禁止说该商品不存在。"
+        )
+
         got_any_chunk = False
         try:
             stream = self._agent.llm_client.stream_chitchat_response(
-                request.message, "product_analysis", context
+                enriched_message, "product_analysis", context
             )
             async for chunk in _stream_with_first_chunk_timeout(
                 stream, first_chunk_timeout=12.0, chunk_timeout=12.0,
@@ -104,9 +118,7 @@ class ProductAnalysisTool:
         """
         import logging
         logger = logging.getLogger(__name__)
-        import sys
         match = self._agent.product_matcher.match(request.message)
-        print(f"[DEBUG_PA] best={match.best.title if match.best else 'None'} conf={match.confidence:.3f} cand={len(match.candidates)}", file=sys.stderr, flush=True)
         logger.warning(
             f"[product_analysis] query='{request.message[:60]}' "
             f"best={match.best.title if match.best else 'None'} "
@@ -119,7 +131,6 @@ class ProductAnalysisTool:
         # 降级：confidence 低但 top-1 候选存在 → 直接使用 top-1
         if match.candidates:
             top = match.candidates[0]
-            print(f"[DEBUG_PA] FALLBACK to {top.title[:50]}", file=sys.stderr, flush=True)
             logger.warning(f"[product_analysis] fallback to top candidate: {top.title[:50]}")
             return top
 

@@ -41,6 +41,11 @@ SoulDance/
 - **自然回复风格**：去掉五段标签模板（理解/结论/主推/评论摘要/下一步），LLM 生成自然短段落回复
 - **复合需求处理**：”心情不好推荐甜的” → LLM 先共情 “抱抱你～吃点甜的确实治愈”，再自然带出商品推荐 + 真实锚点
 - **Chitchat 内嵌商品推荐**：闲聊流自动注入库内 top-5 相关商品摘要，LLM 可用 `[[商品名#product_id]]` 锚点直接在对话中推荐真实库存商品
+- **事实锚定管道 (Fact-Grounded Pipeline)**：FactContextBuilder 构建 `[[product_id]]` 锚点事实表 → AnchorValidator 流式循环状态机逐 chunk 校验 → ConsistencyTracker 跨轮 denial cache + focus drift 检测。LLM 只能引用数据库真实商品，虚构的 product_id 在流式输出中被实时拦截替换
+- **UnifiedPlan 统一决策**：合并 ToolPlan + SemanticFrame + RetrievalPlan，LLM 调用从 3 次减少到 2 次，删除 IntentCompiler LLM 路径
+- **3 阶段会话 Checkpoint**：Turn Start → Post-Retrieve → Turn End 自动保存，服务异常恢复时不丢上下文
+- **上下文感知降级**：LLM 超时/检索异常/幻觉拦截时，fallback 提示包含用户最后查询词和关注商品
+- **CJK-ASCII 分词归一化**：在 jieba 分词前自动在中文与英文/数字之间插入空格，修复 "小米17Max" 无法匹配数据库 "小米 17 Max" 的问题
 
 #### 多轮对话与上下文
 - **多轮上下文记忆架构**：`dialog_turns` 对话流水 + `ConstraintState` 结构化约束 + `LivingSummary` 摘要压缩
@@ -150,6 +155,15 @@ bash server/scripts/setup_backend_env.sh
 
 ```bash
 bash server/scripts/start_backend.sh
+```
+
+### 后端服务
+
+```bash
+cd server
+nohup python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --log-level info \
+  --timeout-keep-alive 120 --ws-ping-interval 20 --ws-ping-timeout 10 \
+  --limit-concurrency 20 > /tmp/souldance-backend.log 2>&1 &
 ```
 
 配置 LLM Provider：编辑仓库根目录 `.env`，设置 `LLM_PROVIDER`：

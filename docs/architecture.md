@@ -54,29 +54,39 @@ Implemented (Stage 0/01):
 - **SQLite + SQLAlchemy 持久化**（`server/backend/app/db/`）：购物车、订单、会话、用户画像、反馈事件均已接入 SQLite 存储，Alembic 迁移就绪（`server/alembic/`），数据库 URL 通过 `SHOPGUIDE_DATABASE_URL` 环境变量配置，留空自动落到仓库根 `data/shopguide.db`。
 - **订单状态机**（`server/backend/app/order_service.py`）：支持 `address_required → awaiting_confirmation → completed` 三态流转，含 `confirmation_token` 生命周期、`idempotency_key` 去重、内存/DB 双写，REST API 通过 `/api/order/*` 暴露。
 
-### LLM Agent 架构（Stage 1, 2026-06）
+### LLM Agent 架构（Stage 2, 2026-06 — 事实锚定管道）
 
 ```
 用户输入
   ↓
-ToolPlanner (LLM → ToolPlan JSON)
+ToolPlanner (LLM → UnifiedPlan JSON)  ← 合并 ToolPlan + SemanticFrame + RetrievalPlan
+  ↓
+StateReducer.apply_unified() → 写入 SessionState
   ↓
 _dispatch_tool → 具体 tool 执行
-  ├── product_analysis → ProductMatcher (BM25 模糊匹配) → LLM 流式分析
+  ├── product_analysis → ProductMatcher (BM25 + CJK-ASCII 归一化) → LLM 流式分析
   ├── chitchat         → LLM 闲聊流（注入库内 top-5 商品供自然锚点）
-  ├── recommend_product → IR 编译 + retrieval + ranking + LLM 生成
-  ├── product_followup → context 焦点商品追问/替换
+  ├── recommend_product → QueryBuilder.build_from_unified() → retrieval → ranking
+  │                       → FactContextBuilder ([[pid]] 锚点事实表)
+  │                       → ConsistencyTracker.check_before_output()
+  │                       → LLM 流式生成
+  │                       → AnchorValidator.stream_process() (流式校验)
+  ├── product_followup → context 焦点商品追问/替换 + FactContext
   ├── compare_products → 多维度对比
   ├── scenario_bundle  → 场景分解 + 逐 slot 检索
   └── cart_operation   → 购物车状态机
 ```
 
-**核心模块**：
-- `tool_planner.py` / `tool_plan.py`：LLM 优先的工具调度器，cart 等硬性短语 deterministic 前置，其它全部 LLM 决策
-- `product_matcher.py`：共享 BM25/dense retriever 的模糊商品识别，top-5 候选 + gap 置信度
-- `prompts/v1/tool_planner.txt`：Planner 系统提示（7 tool 判断标准 + 复合需求路由规则）
-- `prompts/v1/response.txt`：推荐回复 prompt（自然短段落风格，主推锚点 + 备选纯文字）
-- `prompts/v1/chitchat.txt`：闲聊 prompt（支持复合需求 + 内嵌商品锚点）
+**核心模块（Stage 2 新增/更改）**：
+- `UnifiedPlan`：合并 ToolPlan + SemanticFrame + RetrievalPlan 的单一决策载体，LLM 调用 3→2
+- `fact_context.py`：FactContextBuilder — `[[product_id]]` 锚点事实表，LLM 唯一商品信息来源
+- `anchor_validator.py`：AnchorValidator — 流式循环状态机，逐 chunk 锚点校验（零普通文本延迟）
+- `consistency_tracker.py`：ConsistencyTracker — 跨轮 denial cache + focus drift 检测
+- `semantic_layer.py`：`rule_semantic_frame()` / `_merge_rule_guards()` / `_parse_frame()` 重写为 UnifiedPlan 扁平字段
+- `embedding_retriever.py`：`_normalize_cjk_ascii()` — CJK ↔ ASCII + 数字 ↔ 字母边界插入空格
+- **已删除**：`intent_compiler.py`（IntentCompiler LLM 路径）、`_merge_tool_plan_into_ir()`
+- **会话持久化**：`SessionStore.checkpoint()` / `recover()` — 3 阶段回合级自动保存
+- **降级**：`degradation.py` — 上下文感知 fallback 文案（含用户查询词 + 关注商品）
 
 **与旧架构的关键区别**：
 - 旧架构：5 层规则互斥（rule_semantic_frame → _merge_rule_guards → _normalize_intent → _apply_product_admission_gate → _primary_text_matches_selected），LLM 输出被 FakeLLM 模板覆盖

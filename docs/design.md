@@ -13,35 +13,33 @@
                 │ HTTPS + WebSocket
                 │ (Cloudflare Tunnel 公网穿透)
 ┌───────────────▼──────────────────────────────────────┐
-│              FastAPI 后端 (Python 3.12)                │
+│              FastAPI 后端 (Python 3.13)                │
 │                                                       │
 │  ┌──────────────────────────────────────────────┐     │
-│  │         ToolPlanner (LLM 决策入口)             │     │
-│  │  plan_tool() → ToolPlan JSON                  │     │
-│  │  7 种 tool: recommend / analysis / compare    │     │
-│  │  / cart / bundle / followup / chitchat        │     │
+│  │    ToolPlanner → UnifiedPlan (单一决策入口)    │     │
+│  │    plan_tool() → UnifiedPlan JSON             │     │
+│  │    合并 ToolPlan + SemanticFrame + RetrievalPlan   │
 │  └───────────────┬──────────────────────────────┘     │
-│                  │ _dispatch_tool                      │
+│                  │ _dispatch_tool + StateReducer       │
 │  ┌───────────────┼──────────────────────────────┐     │
-│  │  ProductMatcher  │  BM25 模糊匹配 (共享索引)   │     │
-│  │  IntentCompiler  │  旧 IR 编译器 (检索流用)    │     │
-│  │  QueryBuilder    │  RetrievalPlan 构建         │     │
-│  │  StateReducer    │  约束状态管理               │     │
-│  │  HallucinationChecker │ 幻觉检测 (安全网)      │     │
+│  │  FactContextBuilder │  [[pid]] 锚点事实表      │     │
+│  │  AnchorValidator    │  流式校验 (循环状态机)   │     │
+│  │  ConsistencyTracker │  跨轮 denial cache      │     │
+│  │  QueryBuilder       │  build_from_unified()    │     │
+│  │  ProductMatcher     │  BM25 模糊匹配 (共享索引) │     │
+│  │  HallucinationChecker │ 价格偏差兜底检测        │     │
 │  └──────────────────────────────────────────────┘     │
 │                                                       │
 │  ┌──────────────────────────────────────────────┐     │
 │  │         Retrieval Layer                       │     │
 │  │  EmbeddingRetriever / BM25OnlyRetriever        │     │
-│  │  BM25(jieba) + Dense(sentence-transformers)   │     │
+│  │  BM25(jieba) + CJK-ASCII 分词预处理            │     │
 │  │  RRF/weighted fusion + CrossEncoder rerank    │     │
 │  └──────────────────────────────────────────────┘     │
 │                                                       │
 │  ┌──────────────────────────────────────────────┐     │
-│  │         Trace & Observability                 │     │
-│  │  TraceStore ring buffer + JSONL               │     │
-│  │  /dev Developer Console (Chart.js dashboard)  │     │
-│  │  Prompt 热更新 (零重启)                        │     │
+│  │    SessionStore + 3-stage checkpoint           │     │
+│  │    degradation (上下文感知降级)                  │     │
 │  └──────────────────────────────────────────────┘     │
 └──────────────────────────────────────────────────────┘
 ```
@@ -63,6 +61,45 @@
 | **公网穿透** | Cloudflare Tunnel | 真机调试零配置 |
 | **测试** | pytest + JUnit + MockWebServer | 后端 129 单测 / Android 178 单测 |
 | **仪表盘** | Chart.js v4 (CDN) | 零依赖可视化 |
+
+## 事实锚定管道 (Fact-Grounded Pipeline)
+
+为解决 LLM 幻觉（虚构不存在的商品型号/价格）和前后回答矛盾，引入事实锚定管道。
+
+### 核心组件
+
+| 组件 | 职责 |
+|------|------|
+| **FactContextBuilder** | 将检索排序结果组装为 LLM 唯一事实来源——prompt_block 含 `[[product_id]]` 锚点格式，LLM 只能引用库内真实商品 |
+| **AnchorValidator** | 流式循环状态机：逐 chunk 透传普通文本（零延迟），遇到 `[[pid]]` 锚点时微缓冲校验 → 命中则展开为商品名，未命中则替换为「该商品」 |
+| **ConsistencyTracker** | 跨轮一致性校验：denial cache（已声明"不存在"的查询不重复出现）、focus drift 检测（用户确认的商品不被后续推荐遗忘） |
+| **UnifiedPlan** | 合并 ToolPlan + SemanticFrame + RetrievalPlan 的单一决策载体，LLM 调用从 3 次减少到 2 次 |
+| **HallucinationChecker** | 价格偏差兜底检测（AnchorValidator 已覆盖虚构 ID/名称检测） |
+
+### 链路简化
+
+- 删除 `IntentCompiler`（其 LLM 语义解析路径），`rule_semantic_frame()` 改为直接返回 UnifiedPlan 扁平字段
+- 删除 `_merge_tool_plan_into_ir()` workaround
+- `StateReducer` 新增 `apply_unified()` 直接消费 UnifiedPlan
+- `SemanticFrame` / `ShoppingIntentIR` → `UnifiedPlan` type alias
+
+### 流式校验流程
+
+```
+LLM 逐 token 输出
+  → 普通文本: 立即透传 (零延迟)
+  → 遇到 [[ : 进入锚点缓冲 → 收集到 ]] → 查 product_index
+      → 命中: 展开为 **商品名** → 立即透传
+      → 未命中: 替换为「该商品」+ yield anchor_warning
+  → 同 chunk 内多锚点: 循环状态机处理
+  → 流结束后: deferred 裸奔名检测 + 价格偏差检测
+```
+
+### 降级与持久化
+
+- **3 阶段 Checkpoint**：Turn Start → Post-Retrieve → Turn End，回合级自动保存
+- **上下文感知降级**：fallback 提示包含用户最后查询词和关注商品
+- **统一异常边界**：`_do_stream_message` 内 try/except 包裹全链路，异常时保留上下文
 
 ## 依赖环境
 
@@ -323,3 +360,45 @@ if best_score >= 50: return best_product  # 硬阈值
 3. **LLM Planner 做语义兜底**：即使 ProductMatcher 返回了模糊结果或假命中（best=None 但 candidates 非空），上游的 ToolPlanner 仍会根据用户消息的语义做二次判断。"完全编造的型号 XYZ-999"经过 LLM Planner 后会输出 `tool=product_analysis, target_product_query="..."`，但 ProductMatcher 的模糊结果（best=None）加上 LLM 的通用知识（"XYZ-999 不是任何已知产品型号"）最终会走 `product_analysis_unknown` 流程——"你提到的 XYZ-999 似乎不是已知产品型号，要不要看看本店现有的同类商品？"——而不是假装命中了某个商品。
 
 4. **旧规则栈完全废弃**：`resolve_named_product` 的硬阈值逻辑已被 ProductMatcher 的 gap-based 置信度完全替代。`rule_semantic_frame`、`_merge_rule_guards`、`_normalize_intent`、`_apply_product_admission_gate` 这 4 层规则栈在 ToolPlanner 架构下不再被调用（仅保留 `IntentCompiler` / `SemanticParser` 对象供 `agent.plan()` 旧路径兼容，新入口 `_do_stream_message` 不经过它们）。
+
+## 分词边界归一化
+
+### 问题
+
+jieba 分词把"小米17Max"切成 `['小米', '17Max']`，而数据库标题"小米 17 Max"切成 `['小米', '17', 'Max']`。由于"17Max"作为一个整体 token 无法匹配到分别独立的"17"和"Max"，BM25 匹配失败，导致商品明明在库中却检索不到。
+
+### 根因验证
+
+```
+Query: 小米17Max       → tokens: ['小米', '17Max']   → best=None (confidence=0.03)
+Query: 小米 17 Max     → tokens: ['小米', '17', 'Max'] → best=小米 17 Max (confidence=0.34)
+```
+
+关键差异仅仅是用户输入中没有空格——这在移动端输入场景中非常常见。
+
+### 修复
+
+在 `EmbeddingRetriever._tokenize()` 中增加 `_normalize_cjk_ascii()` 预处理：
+
+1. **CJK ↔ ASCII 边界插入空格**：`小米17` → `小米 17`
+2. **数字 ↔ 字母边界插入空格**：`17Max` → `17 Max`
+
+```python
+_CJK_ASCII_BOUNDARY = re.compile(r'([一-鿿])([a-zA-Z0-9])|([a-zA-Z0-9])([一-鿿])')
+_DIGIT_ALPHA_BOUNDARY = re.compile(r'([0-9])([a-zA-Z])|([a-zA-Z])([0-9])')
+
+def _normalize_cjk_ascii(text: str) -> str:
+    text = _CJK_ASCII_BOUNDARY.sub(r'\1\3 \2\4', text)
+    text = _DIGIT_ALPHA_BOUNDARY.sub(r'\1\3 \2\4', text)
+    return text
+```
+
+修复后所有变体均正确命中：
+
+| Query | 归一化后 | Best Match |
+|-------|---------|------------|
+| 小米17Max | 小米 17 Max | 小米 17 Max ✓ |
+| 详细分析一下小米17Max的优缺点 | 详细分析一下小米 17 Max 的优缺点 | 小米 17 Max ✓ |
+| 小米17Max性价比怎么样 | 小米 17 Max 性价比怎么样 | 小米 17 Max ✓ |
+
+因为检索索引构建时也经过同一 `_tokenize()`，查询端和文档端分词完全对称，BM25 匹配正确。

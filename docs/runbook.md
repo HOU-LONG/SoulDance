@@ -137,7 +137,11 @@ The preferred real-device path is Cloudflare tunnel access, not `adb reverse`.
 
 ### LLM 回复模板化（理解/结论/主推标签）
 - 确认 `prompts/v1/response.txt` 为自然回复版本（不含"必须按以下顺序输出"）
-- 后端改过 prompt 后需重启：`kill $(lsof -ti :8000) && bash server/scripts/start_backend.sh`
+- 后端改过代码后需重启（prompt 已支持热更新，无需重启）：
+  ```bash
+  kill $(ps aux | grep "uvicorn.*8000" | grep -v grep | awk '{print $2}') 2>/dev/null
+  sleep 2 && cd server && nohup python3 -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --log-level info --timeout-keep-alive 120 --ws-ping-interval 20 --ws-ping-timeout 10 --limit-concurrency 20 > /tmp/souldance-backend.log 2>&1 &
+  ```
 
 ### 商品查询被拒答（"我没太抓到你的购物需求"）
 - 旧规则栈残留；确认 `tool_planner.txt` 和 `chitchat.txt` 为最新版本 + 重启后端

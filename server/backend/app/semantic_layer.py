@@ -156,111 +156,74 @@ def resolve_cart_operation(operation: CartOperation, context: SessionContext, pr
     return action, quantity, product_id
 
 
-def rule_semantic_frame(request: ChatRequest) -> SemanticFrame:
-    """纯规则引擎的语义帧构建——LLM 不可用或解析失败时的回退路径。
-
-    按优先级检查：
-    1. 购物车操作（购买意图 + 购物车关键词）→ cart_operation
-    2. 商品对比请求（"对比"、"哪个更"）→ compare_products
-    3. 闲聊（"你好"、"谢谢"）→ small_talk
-    4. 缺少购物信号 → unclear_input
-    5. 其余 → recommend_product + 正则提取的价格/品牌/偏好约束
-
-    这套规则覆盖了最常见的用户输入模式。对于复杂的自然语言表达
-    （如"上次那个太贵了，换个便宜点的但是拍照不能差"），LLM 解析更合适。
-    """
+def rule_semantic_frame(request: ChatRequest):
+    """纯规则引擎 — 直接返回 UnifiedPlan（Stage 2 扁平字段）。"""
+    from .models import UnifiedPlan
     text = request.message or ""
-    intent = "product_followup" if request.type == "product_followup" else "recommend_product"
+    tool = "product_followup" if request.type == "product_followup" else "recommend_product"
+
     cart_action = _detect_cart_action(text)
     if cart_action != "get_cart" or any(word in text for word in ["购物车", "下单", "结算"]):
-        return SemanticFrame(
-            intent="cart_operation",
-            cart_operation=CartOperation(
-                action=cart_action,
-                quantity=_detect_quantity(text) or request.quantity,
-                target=_rule_product_reference(text),
-            ),
+        return UnifiedPlan(
+            tool="cart_operation",
+            cart_action=cart_action,
+            cart_quantity=_detect_quantity(text) or request.quantity,
         )
     if request.type == "user_message" and _is_compare_request(text):
-        return SemanticFrame(intent="compare_products")
+        return UnifiedPlan(tool="compare_products")
     if request.type == "user_message" and _is_small_talk(text):
-        return SemanticFrame(intent="small_talk")
+        return UnifiedPlan(tool="small_talk")
     if request.type == "user_message" and not _has_shopping_signal(text):
-        return SemanticFrame(intent="unclear_input")
-    edits = ConstraintEdits()
+        return UnifiedPlan(tool="unclear_input")
+
+    frame = UnifiedPlan(tool=tool)
     price_min = _detect_price_min(text)
     if price_min is not None:
-        edits.add.price_min = price_min
+        frame.price_min = price_min
     price_max = _detect_price_max(text)
     if price_max is not None:
-        edits.add.price_max = price_max
-    if re.search(r"可以接受|不用排除|不介意|接受", text):
-        if "酒精" in text or "乙醇" in text:
-            edits.remove.exclude_terms.append("酒精")
-        if "日系" in text or "日本" in text:
-            edits.remove.exclude_brand_regions.append("日本")
+        frame.price_max = price_max
     included_brands = extract_included_brands(text)
     if included_brands:
-        edits.add.include_brands.extend(included_brands)
+        frame.include_brands = dedupe(list(frame.include_brands) + included_brands)
     if re.search(r"不要|不含|排除|除了", text):
-        if "酒精" in text or "乙醇" in text:
-            edits.add.exclude_terms.append("酒精")
-        if "日系" in text or "日本" in text:
-            edits.add.exclude_brand_regions.append("日本")
-        edits.add.exclude_brands.extend(extract_excluded_brands(text))
-    soft = edits.add.soft_preferences
-    if "拍照" in text:
-        soft["priority"] = "拍照"
-    if "续航" in text:
-        soft["priority"] = "续航"
-    if "性价比" in text:
-        soft["priority"] = "性价比"
-    if "轻薄" in text or "便携" in text:
-        soft["priority"] = "轻薄便携"
-    if "性能" in text or "游戏" in text:
-        soft["priority"] = "性能优先"
-    if "油皮" in text or "混油" in text:
-        soft["skin_type"] = "油皮"
-    if "敏感肌" in text:
-        soft["skin_type"] = "敏感肌"
-    if "干性皮肤" in text or "干皮" in text or "干性" in text:
-        soft["skin_type"] = "干性"
-    if "秋冬" in text:
-        soft["season"] = "秋冬"
-    if "春天" in text or "春季" in text:
-        soft["season"] = "春季"
-    if "夏天" in text or "夏季" in text:
-        soft["season"] = "夏季"
-    if "冬天" in text or "冬季" in text:
-        soft["season"] = "冬季"
-    if "保湿" in text or "修护" in text:
-        soft["effect"] = "保湿修护"
-    if "女朋友" in text or "女生" in text:
-        soft["recipient"] = "女朋友"
-    if "男朋友" in text or "男生" in text:
-        soft["recipient"] = "男朋友"
-    if "爸" in text or "妈" in text or "父母" in text or "长辈" in text:
-        soft["recipient"] = "长辈"
-    if "礼物" in text or "送人" in text or "送给" in text or "送" in text:
-        soft["occasion"] = "送礼"
-    if "惊喜" in text:
-        soft["gift_style"] = "惊喜感"
-    if "稳妥" in text or "不踩雷" in text:
-        soft["gift_style"] = "稳妥不踩雷"
-    if "实用" in text:
-        soft["gift_style"] = "实用"
-    # Long-session anchor resolution
+        frame.exclude_brands = dedupe(list(frame.exclude_brands) + extract_excluded_brands(text))
+    # soft preferences
+    soft: dict[str, str] = {}
+    if "拍照" in text: soft["priority"] = "拍照"
+    if "续航" in text: soft["priority"] = "续航"
+    if "性价比" in text: soft["priority"] = "性价比"
+    if "轻薄" in text or "便携" in text: soft["priority"] = "轻薄便携"
+    if "性能" in text or "游戏" in text: soft["priority"] = "性能优先"
+    if "油皮" in text or "混油" in text: soft["skin_type"] = "油皮"
+    if "敏感肌" in text: soft["skin_type"] = "敏感肌"
+    if "干性皮肤" in text or "干皮" in text or "干性" in text: soft["skin_type"] = "干性"
+    if "秋冬" in text: soft["season"] = "秋冬"
+    if "春天" in text or "春季" in text: soft["season"] = "春季"
+    if "夏天" in text or "夏季" in text: soft["season"] = "夏季"
+    if "冬天" in text or "冬季" in text: soft["season"] = "冬季"
+    if "保湿" in text or "修护" in text: soft["effect"] = "保湿修护"
+    if "女朋友" in text or "女生" in text: soft["recipient"] = "女朋友"
+    if "男朋友" in text or "男生" in text: soft["recipient"] = "男朋友"
+    if "爸" in text or "妈" in text or "父母" in text or "长辈" in text: soft["recipient"] = "长辈"
+    if "礼物" in text or "送人" in text or "送给" in text or "送" in text: soft["occasion"] = "送礼"
+    if "惊喜" in text: soft["gift_style"] = "惊喜感"
+    if "稳妥" in text or "不踩雷" in text: soft["gift_style"] = "稳妥不踩雷"
+    if "实用" in text: soft["gift_style"] = "实用"
     if any(phrase in text for phrase in ["回到第一轮", "最开始那个", "第一轮那个", "回到最开始"]):
         soft["anchor_reference"] = "first_turn"
     if request.type == "product_followup":
-        intent = "product_followup"
-    return SemanticFrame(intent=intent, constraint_edits=edits)
+        tool = "product_followup"
+    frame.tool = tool
+    frame.soft_preferences = soft
+    return frame
 
 
-def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, Any]) -> SemanticFrame | None:
+def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, Any]):
+    """Stage 2: 直接返回 UnifiedPlan。"""
+    from .models import UnifiedPlan
     if request.type != "user_message":
         return None
-    # 检查是否有必要的上下文：需要 has_focus_product 或者有 last_plan + last_product_ids
     has_context = (
         context_payload.get("has_focus_product") or
         (context_payload.get("last_plan") and context_payload.get("last_product_ids"))
@@ -268,20 +231,16 @@ def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, A
     if not has_context:
         return None
     text = request.message or ""
-    edits = ConstraintEdits()
+    soft: dict[str, str] = {}
     response_goal = None
     has_cheaper_cue = any(word in text for word in ["再便宜", "便宜点", "更便宜", "价格低", "低价"])
-    has_alternative_cue = any(word in text for word in ["替代品", "平替"])
-    if has_cheaper_cue or has_alternative_cue:
-        edits.add.soft_preferences["price_preference"] = "更便宜"
+    if has_cheaper_cue or any(word in text for word in ["替代品", "平替"]):
+        soft["price_preference"] = "更便宜"
         response_goal = "recommend_cheaper_alternative"
     if any(word in text for word in ["更贵", "贵一点", "高端", "高价位", "价位高"]):
-        edits.add.soft_preferences["price_preference"] = "更贵"
+        soft["price_preference"] = "更贵"
         response_goal = "recommend_more_expensive_alternative"
     excluded = extract_excluded_brands(text)
-    if excluded:
-        edits.add.exclude_brands.extend(excluded)
-        response_goal = "exclude_current_brand"
     if any(word in text for word in ["不要这个品牌", "不要这个牌子", "换个品牌", "别的品牌"]):
         response_goal = "exclude_current_brand"
     if any(word in text for word in ["刚刚那个", "为什么推荐", "是什么", "介绍一下"]):
@@ -290,70 +249,59 @@ def _contextual_rule_followup(request: ChatRequest, context_payload: dict[str, A
         response_goal = "recommend_alternative"
     if response_goal is None:
         return None
-    return SemanticFrame(
-        intent="product_followup",
-        constraint_edits=edits,
-        target=ProductReference(reference="focus_product", selection_strategy="primary"),
-        response_goal=response_goal,
+    return UnifiedPlan(
+        tool="product_followup",
+        soft_preferences=soft,
+        exclude_brands=list(excluded),
+        followup_kind=response_goal,
     )
 
 
-def _parse_frame(raw: str) -> SemanticFrame:
+def _parse_frame(raw: str):
+    """Stage 2: 解析 LLM JSON，旧格式 → UnifiedPlan 扁平字段。"""
+    from .models import UnifiedPlan
     data = extract_json(raw)
-    _normalize_semantic_frame_data(data)
-    return SemanticFrame.model_validate(data)
-
-
-
-
-def _normalize_semantic_frame_data(data: dict[str, Any]) -> None:
     edits = data.get("constraint_edits")
-    if not isinstance(edits, dict):
-        return
-    for key in ("add", "remove"):
-        if edits.get(key) == []:
-            edits[key] = {}
-    if edits.get("relax") in ({}, None):
-        edits["relax"] = []
+    if isinstance(edits, dict):
+        add = edits.get("add") or {}
+        data.setdefault("price_min", add.get("price_min"))
+        data.setdefault("price_max", add.get("price_max"))
+        data.setdefault("include_brands", add.get("include_brands") or [])
+        data.setdefault("exclude_brands", add.get("exclude_brands") or [])
+        data.setdefault("soft_preferences", add.get("soft_preferences") or {})
+    cart = data.get("cart_operation")
+    if isinstance(cart, dict):
+        data.setdefault("cart_action", cart.get("action"))
+        data.setdefault("cart_quantity", cart.get("quantity", 1))
+        target = cart.get("target")
+        if isinstance(target, dict):
+            data.setdefault("cart_target_product_id", target.get("product_id"))
+    if "intent" in data and "tool" not in data:
+        data["tool"] = data.pop("intent")
+    return UnifiedPlan.model_validate(data)
 
 
-def _merge_rule_guards(frame: SemanticFrame, request: ChatRequest) -> SemanticFrame:
+def _merge_rule_guards(frame, request: ChatRequest):
+    """Stage 2: 直接操作 UnifiedPlan 扁平字段。"""
     guarded = rule_semantic_frame(request)
-    if guarded.intent == "small_talk":
-        frame.intent = "small_talk"
+    if guarded.tool == "small_talk":
+        frame.tool = "small_talk"
         return frame
-    if guarded.intent == "unclear_input" and frame.intent == "recommend_product":
-        frame.intent = "unclear_input"
+    if guarded.tool == "unclear_input" and frame.tool == "recommend_product":
+        frame.tool = "unclear_input"
         return frame
-    if guarded.intent == "cart_operation" and frame.intent not in {"product_followup", "compare_products"} and frame.cart_operation is None:
-        frame.intent = guarded.intent
-        frame.cart_operation = guarded.cart_operation
-    frame.constraint_edits.add.exclude_terms = dedupe(
-        frame.constraint_edits.add.exclude_terms + guarded.constraint_edits.add.exclude_terms
-    )
-    frame.constraint_edits.add.exclude_brand_regions = dedupe(
-        frame.constraint_edits.add.exclude_brand_regions + guarded.constraint_edits.add.exclude_brand_regions
-    )
-    frame.constraint_edits.add.include_brands = dedupe(
-        frame.constraint_edits.add.include_brands + guarded.constraint_edits.add.include_brands
-    )
-    frame.constraint_edits.add.exclude_brands = dedupe(
-        frame.constraint_edits.add.exclude_brands + guarded.constraint_edits.add.exclude_brands
-    )
-    if guarded.constraint_edits.add.price_min is not None:
-        frame.constraint_edits.add.price_min = guarded.constraint_edits.add.price_min
-    if guarded.constraint_edits.add.price_max is not None:
-        frame.constraint_edits.add.price_max = guarded.constraint_edits.add.price_max
-    frame.constraint_edits.add.soft_preferences.update(guarded.constraint_edits.add.soft_preferences)
-    frame.constraint_edits.remove.exclude_terms = dedupe(
-        frame.constraint_edits.remove.exclude_terms + guarded.constraint_edits.remove.exclude_terms
-    )
-    frame.constraint_edits.remove.exclude_brand_regions = dedupe(
-        frame.constraint_edits.remove.exclude_brand_regions + guarded.constraint_edits.remove.exclude_brand_regions
-    )
-    frame.constraint_edits.remove.exclude_brands = dedupe(
-        frame.constraint_edits.remove.exclude_brands + guarded.constraint_edits.remove.exclude_brands
-    )
+    if guarded.tool == "cart_operation" and frame.tool not in {"product_followup", "compare_products"} and frame.cart_action is None:
+        frame.tool = guarded.tool
+        frame.cart_action = guarded.cart_action
+        frame.cart_target_product_id = guarded.cart_target_product_id
+        frame.cart_quantity = guarded.cart_quantity
+    frame.include_brands = dedupe(list(frame.include_brands) + list(guarded.include_brands))
+    frame.exclude_brands = dedupe(list(frame.exclude_brands) + list(guarded.exclude_brands))
+    if guarded.price_min is not None:
+        frame.price_min = guarded.price_min
+    if guarded.price_max is not None:
+        frame.price_max = guarded.price_max
+    frame.soft_preferences.update(guarded.soft_preferences)
     return frame
 
 

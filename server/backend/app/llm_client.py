@@ -201,6 +201,7 @@ class DoubaoLLMClient:
         focus_product: Product | None = None,
         *,
         context=None,
+        fact_block: str = "",
     ) -> str:
         response = await self.client.chat.completions.create(
             model=self.model,
@@ -211,7 +212,7 @@ class DoubaoLLMClient:
                     'content': json.dumps(
                         {
                             'message': user_message,
-                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=context),
+                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=context, fact_block=fact_block),
                         },
                         ensure_ascii=False,
                     ),
@@ -255,6 +256,7 @@ class DoubaoLLMClient:
         focus_product: Product | None = None,
         *,
         context=None,
+        fact_block: str = "",
     ):
         stream_kwargs: dict[str, Any] = {
             'model': self.model,
@@ -265,7 +267,7 @@ class DoubaoLLMClient:
                     'content': json.dumps(
                         {
                             'message': user_message,
-                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=context),
+                            'evidence_payload': _response_evidence_payload(plan, ranked_products, focus_product, context=context, fact_block=fact_block),
                         },
                         ensure_ascii=False,
                     ),
@@ -391,6 +393,7 @@ class FakeLLMClient:
         focus_product: Product | None = None,
         *,
         context=None,
+        fact_block: str = "",
     ) -> str:
         if not ranked_products:
             return (
@@ -526,6 +529,7 @@ class FakeLLMClient:
         focus_product: Product | None = None,
         *,
         context=None,
+        fact_block: str = "",
     ):
         text = await self.generate_response(user_message, plan, ranked_products, focus_product, context=context)
         for index in range(0, len(text), 12):
@@ -645,6 +649,7 @@ def _response_evidence_payload(
     focus_product: Product | None = None,
     *,
     context: SessionContext | None = None,
+    fact_block: str = "",
 ) -> dict[str, Any]:
     products = [
         {
@@ -687,6 +692,7 @@ def _response_evidence_payload(
         },
         'focus_product': focus_product.model_dump(mode='json') if focus_product else None,
         'forbidden_claims': ['疗效承诺', '未给出的商品属性', '后端没有返回的 product_id'],
+        'fact_block': fact_block,
     }
 
 
@@ -805,6 +811,7 @@ class LLMClientWithBreaker:
         focus_product: Product | None = None,
         *,
         context=None,
+        fact_block: str = "",
     ) -> str:
         return await self.breaker.call(
             self.client.generate_response,
@@ -838,11 +845,13 @@ class LLMClientWithBreaker:
         focus_product: Product | None = None,
         *,
         context=None,
+        fact_block: str = "",
     ):
         async for chunk in self.breaker.call_stream(
             self.client.stream_response,
             self._fallback.stream_response,
-            user_message, plan, ranked_products, focus_product, context=context,
+            user_message, plan, ranked_products, focus_product,
+            context=context, fact_block=fact_block,
         ):
             yield chunk
 

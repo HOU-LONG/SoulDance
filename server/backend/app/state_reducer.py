@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 from .constraint_filter import dedupe
-from .models import ConstraintEdits, HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR, UnifiedPlan
+from .models import ConstraintEdits, HardConstraints, RetrievalPlan, SessionContext, UnifiedPlan
 from .semantic_layer import _add_constraints, _relax_constraints, _remove_constraints
 
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .constraint_filter import dedupe
-from .models import HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR, UnifiedPlan
+from .models import HardConstraints, RetrievalPlan, SessionContext, UnifiedPlan
 from .planner_agent import _clarification_policy, _detect_category, _parent_category
 from .taxonomy import TaxonomyResolver
 

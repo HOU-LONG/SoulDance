@@ -1640,20 +1640,21 @@ class ShopGuideAgent:
 
     async def try_handle_cart_message(self, user_id: str, request: ChatRequest, cart: CartService, compiled_ir=None) -> dict | None:
         context = self.sessions.get(user_id, request.session_id)
+        from .models import ProductReference
         frame = compiled_ir or rule_semantic_frame(request)
-        if compiled_ir is None and (frame.intent != "cart_operation" or frame.cart_operation is None):
+        if compiled_ir is None and (frame.tool != "cart_operation" or frame.cart_action is None):
             frame = rule_semantic_frame(request)
-        if frame.intent != "cart_operation" or frame.cart_operation is None:
+        if frame.tool != "cart_operation" or frame.cart_action is None:
             return None
-        action = _normalize_cart_action(frame.cart_operation.action)
-        quantity = max(frame.cart_operation.quantity, 0)
+        action = _normalize_cart_action(frame.cart_action)
+        quantity = max(frame.cart_quantity, 0)
         product_id = None
         if action in {"get_cart", "clear_cart", "checkout"}:
             return self._execute_cart_action(user_id, request.session_id, action, None, quantity, cart)
         if action == "update_sku":
             if not product_id:
                 resolution = self.reference_resolver.resolve(
-                    frame.cart_operation.target,
+                    ProductReference(product_id=frame.cart_target_product_id),
                     context,
                     cart.get(user_id, request.session_id),
                 )
@@ -1667,7 +1668,7 @@ class ShopGuideAgent:
                 return self._named_product_not_resolved_event(user_id, request.session_id, action, request.message, cart)
         if not product_id:
             resolution = self.reference_resolver.resolve(
-                frame.cart_operation.target,
+                ProductReference(product_id=frame.cart_target_product_id),
                 context,
                 cart.get(user_id, request.session_id),
             )

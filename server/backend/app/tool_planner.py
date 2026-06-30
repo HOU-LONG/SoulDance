@@ -14,9 +14,6 @@ import re
 from typing import Any
 
 from .models import ChatRequest, SessionContext
-from .tool_plan import ToolPlan, ToolPlanArgs
-
-
 class ToolPlanner:
     """LLM 优先的工具调度入口。"""
 
@@ -63,33 +60,6 @@ class ToolPlanner:
             data = json.loads(raw)
         except json.JSONDecodeError:
             return None
-
-        # ★ 先检测旧 ToolPlan 格式 ({tool, confidence, args: {...}})
-        if "args" in data:
-            try:
-                old = ToolPlan.model_validate(data)
-                from .models import UnifiedPlan
-                return UnifiedPlan(
-                    tool=old.tool,
-                    confidence=old.confidence,
-                    category_hint=old.args.category_hint,
-                    target_product_query=old.args.target_product_query,
-                    price_min=old.args.price_min,
-                    price_max=old.args.price_max,
-                    include_brands=list(old.args.include_brands),
-                    exclude_brands=list(old.args.exclude_brands),
-                    soft_preferences=dict(old.args.soft_preferences),
-                    compare_targets=list(old.args.compare_targets),
-                    analysis_aspect=old.args.analysis_aspect,
-                    followup_kind=old.args.followup_kind,
-                    cart_action=old.args.cart_action,
-                    cart_quantity=old.args.cart_quantity,
-                    retrieval_query=old.args.target_product_query or "",
-                )
-            except Exception:
-                return None
-
-        # 新 UnifiedPlan 格式
         try:
             from .models import UnifiedPlan
             return UnifiedPlan.model_validate(data)

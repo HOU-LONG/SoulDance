@@ -60,6 +60,7 @@ agent.py 就是指挥家，LLM/RAG/Cart/Order 是各个乐器组。
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from collections.abc import AsyncIterator
 import json
@@ -410,7 +411,14 @@ class ShopGuideAgent:
             import time as _time
             seed_constraint_state_from_plan(context, context.last_plan)
             plan_t0 = _time.time()
-            unified_plan = await self.tool_planner.plan(request, context)
+            try:
+                unified_plan = await asyncio.wait_for(
+                    self.tool_planner.plan(request, context),
+                    timeout=3.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("[agent] ToolPlanner timed out, falling back to rule")
+                unified_plan = self.tool_planner._rule_fallback(request, context)
             if trace is not None:
                 trace.plan_tool_ms = (_time.time() - plan_t0) * 1000
                 trace.tool = unified_plan.tool
@@ -762,7 +770,15 @@ class ShopGuideAgent:
             ):
                 yield event
             return
-        ranked_raw = await self.retrieve_and_rank(plan, user_id=user_id, session_id=request.session_id)
+        try:
+            ranked_raw = await asyncio.wait_for(
+                self.retrieve_and_rank(plan, user_id=user_id, session_id=request.session_id),
+                timeout=2.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[agent] retrieval timed out in followup, using full product list")
+            ranked_raw = [RankedProduct(product=p, score=0.0, tier=3, reason="timeout fallback")
+                          for p in self.products[:8]]
         ranked = [item for item in ranked_raw if hard_filter(item.product, plan.hard_constraints)]
         if cheaper_than_price is not None:
             ranked = [item for item in ranked if item.product.price < cheaper_than_price]
@@ -870,7 +886,14 @@ class ShopGuideAgent:
         )
         for event in _text_delta_events(message_id, intro):
             yield event
-        selected = selected_override or await self._select_products(request, plan, ranked)
+        try:
+            selected = selected_override or await asyncio.wait_for(
+                self._select_products(request, plan, ranked),
+                timeout=4.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("[agent] product selection timed out, using tier-based fallback")
+            selected = _fallback_selected_products(ranked)
         yield self._assistant_state(
             message_id,
             "selecting",

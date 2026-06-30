@@ -335,9 +335,13 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                     if rule_frame.tool == "cart_operation" and rule_frame.cart_action is not None:
                         if await send_cart_tool_events(rule_frame):
                             continue
-                async for event in agent.stream_message(user_id, request):
-                    await websocket.send_json(envelope.wrap(event))
-                    metrics.increment("ws.events.sent")
+                await guard.acquire_llm()
+                try:
+                    async for event in agent.stream_message(user_id, request):
+                        await websocket.send_json(envelope.wrap(event))
+                        metrics.increment("ws.events.sent")
+                finally:
+                    guard.release_llm()
                 session_store.save(user_id, request.session_id)
         except WebSocketDisconnect:
             for uid, sid in active_sessions:

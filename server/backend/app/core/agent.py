@@ -331,7 +331,7 @@ class ShopGuideAgent:
 
     async def stream_message(self, user_id: str, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
         import time as _time
-        from .trace_store import get_trace_store, TraceRecord
+        from ..trace_store import get_trace_store, TraceRecord
 
         t0 = _time.time()
         trace = TraceRecord(

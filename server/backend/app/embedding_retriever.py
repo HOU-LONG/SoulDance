@@ -72,6 +72,13 @@ class EmbeddingRetriever:
         return [(self.products[int(i)], float(scores[int(i)])) for i in order]
 
     def _tokenize(self, text: str) -> list[str]:
+        # 预处理：在 CJK 字符和 ASCII/数字之间插入空格，修复"小米17Max"→"小米 17 Max"
+        normalized = _normalize_cjk_ascii(text)
+        return [token.strip().lower() for token in jieba.lcut(normalized) if token.strip()]
+
+    def _tokenize_product(self, product: Product) -> list[str]:
+        """对商品文本分词——标题/搜索文本中的空格已足够，不需要额外预处理。"""
+        text = product.chunk
         return [token.strip().lower() for token in jieba.lcut(text) if token.strip()]
 
 
@@ -88,3 +95,14 @@ def _normalize(scores: np.ndarray) -> np.ndarray:
     if max_score == min_score:
         return np.zeros_like(scores)
     return (scores - min_score) / (max_score - min_score)
+
+
+_CJK_ASCII_BOUNDARY = __import__('re').compile(r'([一-鿿㐀-䶿])([a-zA-Z0-9])|([a-zA-Z0-9])([一-鿿㐀-䶿])')
+_DIGIT_ALPHA_BOUNDARY = __import__('re').compile(r'([0-9])([a-zA-Z])|([a-zA-Z])([0-9])')
+
+
+def _normalize_cjk_ascii(text: str) -> str:
+    """CJK↔ASCII + 数字↔字母 之间插入空格，修复"小米17Max"→"小米 17 Max"。"""
+    text = _CJK_ASCII_BOUNDARY.sub(r'\1\3 \2\4', text)
+    text = _DIGIT_ALPHA_BOUNDARY.sub(r'\1\3 \2\4', text)
+    return text

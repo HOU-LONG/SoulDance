@@ -83,7 +83,7 @@ class ProductAnalysisTool:
             f"类目: {product.category} / {product.sub_category}\n"
             f"卖点: {product.marketing_description or '暂无'}\n\n"
             f"用户问题: {request.message}\n\n"
-            f"请基于以上真实商品数据进行分析，从性价比、适用场景、优缺点角度给出简短分析（2-4句话）。"
+            f"请基于以上真实商品数据进行分析，从性价比、适用场景、优缺点角度给出分析。"
             f"必须引用商品的实际名称、价格和规格。绝对禁止说该商品不存在。"
         )
 

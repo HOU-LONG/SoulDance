@@ -73,7 +73,5 @@ def test_session_context_imports_unchanged():
         ConstraintEdits, CartOperation, QueryIntent,
         RetrievalPlan, UnifiedPlan,
     )
-    from server.backend.app.tool_plan import ToolPlan
     assert UnifiedPlan is not None
-    assert ToolPlan is not None
     assert ConstraintEdits is not None

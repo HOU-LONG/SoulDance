@@ -281,8 +281,52 @@ class UnifiedPlan(BaseModel):
     cart_target_product_id: str | None = None
     cart_quantity: int = 1
 
-    # ---- 否定缓存（从 ConsistencyState 透传，供 FactContextBuilder 使用） ----
+    # ---- 否定缓存 ----
     denied_queries: list[str] = Field(default_factory=list)
+
+    # ---- 向后兼容：旧 SemanticFrame API ----
+    @property
+    def intent(self) -> str:
+        return self.tool
+
+    @intent.setter
+    def intent(self, value: str) -> None:
+        self.tool = value
+
+    @property
+    def constraint_edits(self) -> ConstraintEdits:
+        """兼容旧代码访问 frame.constraint_edits.add / .remove。"""
+        return ConstraintEdits(
+            add=ConstraintPatch(
+                price_min=self.price_min,
+                price_max=self.price_max,
+                include_brands=list(self.include_brands),
+                exclude_brands=list(self.exclude_brands),
+                soft_preferences=dict(self.soft_preferences),
+            ),
+            remove=ConstraintPatch(),
+        )
+
+    @property
+    def cart_operation(self):
+        """兼容旧代码访问 frame.cart_operation。"""
+        if self.cart_action:
+            return CartOperation(
+                action=self.cart_action,
+                target=ProductReference(product_id=self.cart_target_product_id),
+                quantity=self.cart_quantity,
+            )
+        return None
+
+    @property
+    def query_intent(self):
+        """兼容旧代码访问 frame.query_intent。"""
+        return QueryIntent(
+            query_terms=[self.retrieval_query] if self.retrieval_query else [],
+            category=self.category,
+            sub_category=self.sub_category,
+            soft_preferences=dict(self.soft_preferences),
+        )
 
 
 # ========== Stage 2 向后兼容别名 ==========

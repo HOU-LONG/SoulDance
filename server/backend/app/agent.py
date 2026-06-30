@@ -2970,7 +2970,7 @@ def _is_explain_focus_request(text: str, ir) -> bool:
 def _wants_cheaper_alternative(text: str, ir) -> bool:
     if ir.response_goal == "recommend_cheaper_alternative":
         return True
-    if ir.constraint_edits.add.soft_preferences.get("price_preference") == "更便宜":
+    if ir.soft_preferences.get("price_preference") == "更便宜":
         return True
     return any(word in text for word in CHEAPER_ALTERNATIVE_MARKERS)
 
@@ -2978,7 +2978,7 @@ def _wants_cheaper_alternative(text: str, ir) -> bool:
 def _wants_more_expensive_alternative(text: str, ir) -> bool:
     if ir.response_goal == "recommend_more_expensive_alternative":
         return True
-    if ir.constraint_edits.add.soft_preferences.get("price_preference") == "更贵":
+    if ir.soft_preferences.get("price_preference") == "更贵":
         return True
     return any(word in text for word in MORE_EXPENSIVE_ALTERNATIVE_MARKERS)
 

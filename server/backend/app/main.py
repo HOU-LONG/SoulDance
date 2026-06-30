@@ -330,21 +330,12 @@ def create_app(use_fake_llm: bool = False, use_fake_retriever: bool = False, con
                     await send_cart_tool_events()
                     continue
 
-                compiled_ir = None
                 if request.type != "product_followup":
                     rule_frame = rule_semantic_frame(request)
-                    if rule_frame.intent == "cart_operation" and rule_frame.cart_operation is not None:
+                    if rule_frame.tool == "cart_operation" and rule_frame.cart_action is not None:
                         if await send_cart_tool_events(rule_frame):
                             continue
-                    else:
-                        compiled_ir = await agent.compile_intent(user_id, request)
-                        if (
-                            compiled_ir.intent == "cart_operation"
-                            and compiled_ir.cart_operation is not None
-                            and await send_cart_tool_events(compiled_ir)
-                        ):
-                            continue
-                async for event in agent.stream_message(user_id, request, compiled_ir):
+                async for event in agent.stream_message(user_id, request):
                     await websocket.send_json(envelope.wrap(event))
                     metrics.increment("ws.events.sent")
                 session_store.save(user_id, request.session_id)

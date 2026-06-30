@@ -190,6 +190,50 @@ class TraceState(BaseModel):
     decision_log: list[dict[str, Any]] = Field(default_factory=list)
 
 
+# ========== 事实锚定管道模型（Stage 1） ==========
+
+
+class FactRecord(BaseModel):
+    """单个商品的事实卡片 — LLM prompt 中的一行事实。"""
+    product_id: str
+    title: str
+    brand: str
+    price: float
+    category: str
+    sub_category: str
+    key_specs: list[str] = Field(default_factory=list)
+
+
+class FactContext(BaseModel):
+    """注入 LLM prompt 的事实上下文 + 供 AnchorValidator 使用的校验索引。"""
+    prompt_block: str = ""
+    product_index: dict[str, FactRecord] = Field(default_factory=dict)
+    brand_index: dict[str, list[str]] = Field(default_factory=dict)
+    denied_queries: list[str] = Field(default_factory=list)
+
+
+class ClaimRecord(BaseModel):
+    """单条关于商品的声明。"""
+    turn: int
+    product_id: str
+    claim_type: str
+    claim_value: str
+
+
+class ConsistencyState(BaseModel):
+    """跨轮一致性状态——必须在 SessionState 之前定义。"""
+    claims: list[ClaimRecord] = Field(default_factory=list)
+    confirmed_product_id: str | None = None
+    denied_product_queries: list[str] = Field(default_factory=list)
+
+
+class SessionRecovery(BaseModel):
+    """会话恢复结果。"""
+    user_message_restored: bool = False
+    products_cached: bool = False
+    hint: str | None = None
+
+
 class SessionState(BaseModel):
     session_id: str = ""
     user_profile: UserProfile = Field(default_factory=UserProfile)
@@ -203,6 +247,9 @@ class SessionState(BaseModel):
     pending_recovery: PendingRecovery | None = None
     context_events: list[ContextEvent] = Field(default_factory=list)
     trace: TraceState = Field(default_factory=TraceState)
+    # 事实锚定管道（Stage 1）
+    consistency: ConsistencyState = Field(default_factory=ConsistencyState)
+    checkpoint_stage: str = ""
 
 
 class RankedProduct(BaseModel):

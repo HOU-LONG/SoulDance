@@ -1,5 +1,15 @@
 # SoulDance — AI Personalized Dynamic Shopping Guide
 
+SoulDance is an **LLM Agent-driven intelligent shopping assistant** — conversational shopping from natural language to product recommendation to cart, all in one flow. Unlike keyword-search + filter e-commerce, SoulDance transforms "purchase decisions" into "dialogue experiences."
+
+## Product Highlights
+
+1. **Sprite Companion Space**: A 2D virtual sprite "SoulDance" as your shopping companion — posture changes in real-time with the conversation (thinking/searching/recommending/celebrating), with level progression + Mars points + outfit system, giving AI shopping a human touch
+2. **Empathy Before Recommendation**: Recognizes compound needs like "I feel down, recommend something sweet" — the LLM first offers emotional comfort, then naturally surfaces real product cards
+3. **Dialogue Is Decision**: Recommend → inline card → detail sheet → add to cart, all without leaving the chat interface — zero page jumps
+
+---
+
 SoulDance is a monorepo for a low-pressure AI shopping-guide experience. It contains a native Android client (Kotlin + Jetpack Compose) and a FastAPI backend that owns recommendation, product retrieval, multi-turn context management, cart state, ASR, and streaming TTS integration. The client never implements recommendation logic or stores LLM/TTS/STT keys — it renders backend-owned results only.
 
 ---
@@ -21,53 +31,93 @@ SoulDance/
 
 ---
 
+## Recent Updates (v2.0 — 2026-06)
+
+v2.0 brings an architectural overhaul focused on **reliability** and **efficiency**:
+
+- **Fact-Grounded Pipeline** — The LLM can ONLY reference products that exist in the database. Fabricated product_ids are intercepted and replaced in real-time during streaming. Cross-turn focus drift is detected and hallucination is automatically blocked.
+- **UnifiedPlan Architecture** — Merged ToolPlan + SemanticFrame + RetrievalPlan into a single LLM call, reducing LLM invocations from 3 to 2 per turn. The IntentCompiler (redundant LLM semantic parsing) has been deleted.
+- **3-Stage Session Checkpoint** — Auto-save at turn_start / post_retrieve / turn_end. Context and cached products are preserved across service interruptions.
+- **Context-Aware Degradation** — Fallback messages for LLM timeout, retrieval errors, hallucination blocks, and contradiction detection include the user's last query and focused products.
+- **CJK-ASCII Tokenization Normalization** — Auto-insert spaces between CJK↔ASCII and digit↔letter boundaries before jieba tokenization, fixing failures like "小米17Max" failing to match database entry "小米 17 Max".
+- **Product Analysis Enhancement** — Matched product facts are injected directly into the LLM prompt, eliminating "product not found" false negatives when BM25 correctly matches the product.
+
+---
+
 ## Core Capabilities
 
+### Fact-Grounded Pipeline
+
+End-to-end guarantee that the LLM references only real database products:
+
+- **FactContextBuilder** — Builds `[[product_id]]` anchor fact sheets from current-turn products + cross-turn caches, injected into the LLM prompt
+- **AnchorValidator** — Streaming cyclic state machine validates `[[...]]` anchors chunk-by-chunk: normal text passes through with zero delay, `[[` triggers micro-buffering → closure check → validity comparison → invalid anchors replaced in real-time
+- **ConsistencyTracker** — Cross-turn denial cache (denied attributes won't be re-recommended) + focus drift detection (category drift triggers automatic alerts)
+- **HallucinationChecker** — Post-hoc audit: detects fabricated product_ids, fabricated attributes, and contradictory claims
+
 ### Shopping Guide Dialogue Engine
-- **Five-Scene Demo End-to-End**: skincare serum recommendation → cheaper alternative follow-up → named product + fuzzy reference comparison → cross-domain long-session anchor recall → cart add/view/SKU switch. All 10 turns pass strict-assertion golden regression.
-- **Multi-Turn Context Memory Architecture** (added 2026-06):
-  - Form A: full `[{role, content}]` dialog log (`dialog_turns`), 100-message sliding window
-  - Form B: structured constraint state (`ConstraintState`) + product parameter cache (`entity_params`) + long-session summary compression (`LivingSummary`, triggered at 16 messages)
-  - Prompt injection: dialog history + constraint notes injected into Response LLM evidence payload in real time
-- **Semantic Intent Compilation**: LLM + rule-based dual-path parsing, confidence gating with contextual fallback re-judgment
-- **Intent Routing**: 8 intents (`recommend_product`, `product_followup`, `compare_products`, `cart_operation`, `scenario_bundle`, `clarification`, `small_talk`, `unclear_input`) with tool-based dispatch
+
+- **UnifiedPlan Architecture**: Merges ToolPlan (tool selection) + SemanticFrame (slot filling) + RetrievalPlan (retrieval strategy) into a single LLM call, reducing LLM invocations from 3 to 2 per turn. IntentCompiler has been deleted.
+- **ToolPlanner — LLM-First Tool Dispatcher**: Replaced the old multi-layer rule stack (5 exclusive rules → 1 LLM decision entry point). The LLM directly decides which tool to call and extracts parameters.
+- **ProductMatcher — BM25 Fuzzy Product Recognition**: User shorthand like "Huawei Pura 70 Pro" / "Little Brown Bottle" / "Nescafe" auto-matches long-title products in the database
+- **CJK-ASCII Tokenization Normalization**: Auto-inserts spaces between CJK↔ASCII and digit↔letter boundaries before jieba tokenization, fixing "小米17Max" failing to match database "小米 17 Max"
+- **Natural Response Style**: Removed the five-segment label template (understanding/conclusion/primary recommendation/review summary/next steps). The LLM generates natural short-paragraph replies.
+- **Compound Need Handling**: "I feel down, recommend something sweet" → LLM first empathizes "Hang in there — something sweet does help," then naturally surfaces product recommendations with real anchors
+- **Chitchat with Embedded Product Recommendations**: Chitchat flow auto-injects top-5 relevant product summaries; the LLM can use `[[name#product_id]]` anchors to recommend real inventory products directly in conversation
+- **Product Analysis Enhancement**: Matched product facts are directly injected into the LLM prompt, eliminating "product not found" false negatives when BM25 correctly matches
+
+### Intent Routing (7 tools)
+
+`recommend_product` / `product_analysis` / `compare_products` / `cart_operation` / `scenario_bundle` / `product_followup` / `chitchat`
+
+### Multi-Turn Dialogue & Context
+
+- **Multi-Turn Context Memory Architecture**: `dialog_turns` dialog log (100-message sliding window) + `ConstraintState` structured constraints + `LivingSummary` compression (triggered at 16 messages)
+- **3-Stage Session Checkpoint**: Auto-save at Turn Start → Post-Retrieve → Turn End. Context and cached products preserved across service interruptions.
+- **Context-Aware Degradation**: 6 fallback scenarios — LLM timeout / retrieval error / LLM error / hallucination detected / contradiction blocked / internal error — each fallback message includes the user's last query and focused products
+- **Session History & User Isolation**: `SessionContext.display_messages` unified recording; REST API isolated by `X-User-Id` header; Android locally retains up to 30 sessions
+- **Long-Session Anchors**: First-turn brand/category/product_ids stored as `reference_anchors`; "go back to the first round" triggers brand hard-constraint binding
 
 ### Retrieval & Ranking
+
 - **Hybrid RAG**: BM25 keyword + vector semantic search with RRF/weighted fusion, CrossEncoder reranking (default) + LLM reranking (strong-scenario fallback), silent degradation on failure
-- **Mid-Price Primary Promotion**: when same-tier candidates span ≥2× price range, a mid-price product is promoted to primary, leaving room for cheaper-alternative follow-ups
+- **Mid-Price Primary Promotion**: When same-tier candidates span ≥2× price range, a mid-price product is promoted to primary, leaving room for cheaper-alternative follow-ups
 - **Cache System**: B1 recommendation memory cache (exact + semantic match) + B2 rank cache, bypassing LLM selection on hit
 
 ### Product Comparison
-- **Named Product Resolution**: brand + title n-gram matching → `_product_mention_score` hierarchical scoring (brand 45 / sub_category 35 / alias 160+ / title 160), with sub_category anchor filtering to prevent same-brand false matches
+
+- **Named Product Resolution**: Brand + title n-gram matching → `_product_mention_score` hierarchical scoring (brand 45 / sub_category 35 / alias 160+ / title 160), with sub_category anchor filtering to prevent same-brand false matches
 - **Fuzzy Reference Resolution**: "the cheaper one from earlier" → `reference_anchors[last_cheaper_alternative]`
-- **Hard Constraint Bypass**: user-explicitly-named products skip historical-turn `hard_filter` constraints
+- **Hard Constraint Bypass**: User-explicitly-named products skip historical-turn `hard_filter` constraints
 
 ### Cart Operations
+
 - **Action Separation**: `view_cart` (read-only), `add_to_cart`, `update_sku`, `update_quantity`, `remove`, `clear_cart`, `checkout`
-- **SKU Switching**: natural-language "switch to the 50ml one" → flexible property matching (`50ml in value`), returning available-option clarification on mismatch
+- **SKU Switching**: Natural-language "switch to the 50ml one" → flexible property matching (`50ml in value`), returning available-option clarification on mismatch
 - **Dual-Mode Persistence**: SQLite (DB path) + JSON file, with `_sku_selections` persistence and clean/remove cleanup
 
 ### Context & Constraint Management
-- **Soft Preference Extraction**: skin type (dry/oily/sensitive), season (autumn-winter/spring-summer), effects (moisturizing/repair) auto-detected
-- **Domain Switch Detection**: category change triggers soft-constraint reset + recommendation memory clear, preserving dialog log and summary
-- **Long-Session Anchors**: first-turn brand/category/product_ids stored as `reference_anchors`; "go back to the first round" triggers brand hard-constraint binding
+
+- **Soft Preference Extraction**: Skin type (dry/oily/sensitive), season (autumn-winter/spring-summer), effects (moisturizing/repair) auto-detected
+- **Domain Switch Detection**: Category change triggers soft-constraint reset + recommendation memory clear, preserving dialog log and summary
 
 ### Voice Interaction
+
 - STT (streaming WebSocket) + TTS (chunked streaming playback), Doubao voice engine support
 
-### Inline Product Anchor
-- **Unified inline product entry**: products in AI messages are embedded as `[[name#product_id]]` anchors inside the message text, replacing standalone product cards
-- **Tap to expand details**: every anchor opens the `ProductDetailBottomSheet`, covering recommendation, comparison, bundle, and follow-up flows
-- **Cross-stack protocol alignment**:
-  - Backend prompts inject `[[title#product_id]]` into primary, alternative, comparison, and bundle text, and validate that `product_id` belongs to `allowed_products`
-  - Invalid or missing anchors degrade gracefully: markup is stripped and a warning is logged, preventing frontend parse failures
-  - Dialogue history compresses anchors to `[product:product_id]` to save tokens while preserving references
-- **Implementation plan**: `docs/superpowers/plans/2026-06-27-inline-product-anchor.md`
+### Inline Product Cards
+
+- **Paragraph-Card Alternating Layout**: AI messages are split by `\n\n` into segments; segments containing anchors are followed by auto-inserted inline product cards (left thumbnail + right name/price/brand)
+- **Primary/Alternative Hierarchy**: Primary product cards embedded inside the chat bubble; alternative products displayed as horizontal thumbnails below the bubble
+- **Chitchat Also Supports Product Cards**: In compound-need scenarios, the LLM mentions products using `[[name#product_id]]` anchors in casual replies; the backend auto-scans and emits `product_item` events → frontend renders cards
+- **Tap to Expand Details**: All anchors/cards uniformly invoke `ProductDetailBottomSheet`
 
 ### Feedback Loop
+
 - Explicit feedback (ratings/action labels) + implicit signal aggregation, driving personalized ranking and user preference profiles
 
 ### Evaluation Framework
+
 - WebSocket real-time smoke test (`server/scripts/demo_ws_smoke.py`), 10-turn demo with per-turn assertions and non-zero exit
 - Long-session evaluation framework (`eval/`): token budget limits, compression effectiveness, degradation detection
 
@@ -185,6 +235,10 @@ Run `client/scripts/ensure_tunnel.sh` before building to automate the full flow:
 GET  /health
 GET  /api/products
 GET  /api/products/{product_id}
+GET  /api/sessions
+GET  /api/sessions/latest
+GET  /api/sessions/{session_id}
+DELETE /api/sessions/{session_id}
 GET  /api/cart
 POST /api/cart/add
 POST /api/cart/clear
@@ -201,11 +255,12 @@ WebSocket event types: `text_delta`, `product_item`, `replacement_product`, `com
 
 | Document | Content |
 |----------|---------|
+| `docs/design.md` | **Design doc**: system architecture / tech stack / directory structure / configuration / key problems and solutions |
+| `docs/highlights.md` | **Product & technical highlights**: sprite space / compound needs / dialogue closure / Agent architecture |
+| `docs/deploy-and-experience.md` | **Deployment & experience guide**: 5-minute quick deploy / reviewer experience checklist |
 | `docs/architecture.md` | System architecture |
 | `docs/api-contract.md` | API contract |
 | `docs/realtime-protocol.md` | Realtime communication protocol |
-| `docs/runbook.md` | Development runbook |
-| `docs/superpowers/specs/` | Design specs (demo agent flow, context memory architecture, etc.) |
-| `docs/superpowers/plans/` | Implementation plans |
+| `docs/runbook.md` | Development runbook + troubleshooting |
 | `deploy/README.md` | Deployment guide |
 | `client/AGENTS.md` | Client development guide |

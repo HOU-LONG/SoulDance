@@ -104,7 +104,9 @@ class ProductAnalysisTool:
         """
         import logging
         logger = logging.getLogger(__name__)
+        import sys
         match = self._agent.product_matcher.match(request.message)
+        print(f"[DEBUG_PA] best={match.best.title if match.best else 'None'} conf={match.confidence:.3f} cand={len(match.candidates)}", file=sys.stderr, flush=True)
         logger.warning(
             f"[product_analysis] query='{request.message[:60]}' "
             f"best={match.best.title if match.best else 'None'} "
@@ -117,6 +119,7 @@ class ProductAnalysisTool:
         # 降级：confidence 低但 top-1 候选存在 → 直接使用 top-1
         if match.candidates:
             top = match.candidates[0]
+            print(f"[DEBUG_PA] FALLBACK to {top.title[:50]}", file=sys.stderr, flush=True)
             logger.warning(f"[product_analysis] fallback to top candidate: {top.title[:50]}")
             return top
 

@@ -91,21 +91,6 @@ class QueryIntent(BaseModel):
     query_terms: list[str] = Field(default_factory=list)
 
 
-class SemanticFrame(BaseModel):
-    intent: str = "recommend_product"
-    confidence: float = 1.0
-    constraint_edits: ConstraintEdits = Field(default_factory=ConstraintEdits)
-    cart_operation: CartOperation | None = None
-    target: ProductReference | None = None
-    references: list[ProductReference] = Field(default_factory=list)
-    query_intent: QueryIntent = Field(default_factory=QueryIntent)
-    response_goal: str | None = None
-    clarification_question: str | None = None
-
-
-ShoppingIntentIR = SemanticFrame
-
-
 class ExecutionPlan(BaseModel):
     execution_type: str
     retrieval_plan: RetrievalPlan | None = None

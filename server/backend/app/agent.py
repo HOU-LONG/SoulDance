@@ -112,11 +112,10 @@ from .models import (
     SessionContext,
     UnifiedPlan,
 )
-from .planner_agent import PlannerAgent
 from .query_builder import QueryBuilder
 from .ranker import rank_products
 from .reference_resolver import ReferenceResolver
-from .semantic_layer import SemanticParser, rule_semantic_frame
+from .semantic_layer import rule_semantic_frame
 from .session_store import SessionStore
 from .state_reducer import StateReducer, seed_constraint_state_from_plan
 from .taxonomy import TaxonomyResolver
@@ -161,10 +160,8 @@ class ShopGuideAgent:
         from .tool_planner import ToolPlanner
         self.tool_planner = ToolPlanner(self.llm_client)
         self.sessions = session_store or SessionStore()
-        self.planner = PlannerAgent()
         # settings 仅长会话评测专用，production 默认 None → 全部走 C4 全开行为
         self.settings = settings
-        self.semantic_parser = SemanticParser(self.llm_client, settings=self.settings)
         self.state_reducer = StateReducer()
         self.reference_resolver = ReferenceResolver(self.product_map)
         self.tts = tts_adapter or TTSAdapter()

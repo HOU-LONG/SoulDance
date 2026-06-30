@@ -17,11 +17,9 @@ from .response_contract import recommendation_contract_text
 
 _prompts = PromptRegistry(Path(__file__).parent / "prompts")
 
-SEMANTIC_SYSTEM_PROMPT = _prompts.load("semantic_parser")
 RESPONSE_SYSTEM_PROMPT = _prompts.load("response")
 SELECTION_SYSTEM_PROMPT = _prompts.load("selection")
 CHITCHAT_SYSTEM_PROMPT = _prompts.load("chitchat")
-CONTEXTUAL_FOLLOWUP_SYSTEM_PROMPT = _prompts.load("contextual_followup")
 TOOL_PLANNER_SYSTEM_PROMPT = _prompts.load("tool_planner")
 # Task 11: 单品分析专用系统提示——与闲聊不同，LLM 需要扮演商品分析师角色
 PRODUCT_ANALYSIS_SYSTEM_PROMPT = (
@@ -121,62 +119,6 @@ class DoubaoLLMClient:
             response = await self.client.chat.completions.create(**kwargs)
         self.record_usage(extract_usage(response, call_kind='json'))
         return response.choices[0].message.content or '{}'
-
-    async def parse_semantic_frame(
-        self,
-        message: str,
-        context: SessionContext | dict[str, Any] | None = None,
-        request_type: str = 'user_message',
-    ) -> str:
-        context_payload: dict[str, Any] = {}
-        if isinstance(context, dict):
-            context_payload = context
-        elif context:
-            context_payload = {
-                'last_plan': context.last_plan.model_dump(mode='json') if context.last_plan else None,
-                'focus_product_id': context.focus_product_id,
-                'last_product_ids': context.last_product_ids,
-                'last_recommendations': context.last_recommendations,
-                'recent_cart_product_id': context.recent_cart_product_id,
-                'global_profile': context.global_profile,
-            }
-        return await self._json_completion(
-            [
-                {'role': 'system', 'content': SEMANTIC_SYSTEM_PROMPT},
-                {
-                    'role': 'user',
-                    'content': json.dumps(
-                        {
-                            'message': message,
-                            'request_type': request_type,
-                            'session_context': context_payload,
-                            'contextual_intent_task': _contextual_intent_task(message, context_payload),
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            temperature=0,
-        )
-
-    async def classify_contextual_followup(self, message: str, context: dict[str, Any]) -> str:
-        return await self._json_completion(
-            [
-                {'role': 'system', 'content': CONTEXTUAL_FOLLOWUP_SYSTEM_PROMPT},
-                {
-                    'role': 'user',
-                    'content': json.dumps(
-                        {
-                            'message': message,
-                            'session_context': context,
-                            'contextual_intent_task': _contextual_intent_task(message, context),
-                        },
-                        ensure_ascii=False,
-                    ),
-                },
-            ],
-            temperature=0,
-        )
 
     async def plan_tool(self, message: str, context: dict[str, Any]) -> str:
         """Phase B: LLM-driven Tool Planner——返回 ToolPlan JSON 字符串。
@@ -382,14 +324,6 @@ class DoubaoLLMClient:
 
 
 class FakeLLMClient:
-    async def parse_semantic_frame(
-        self,
-        message: str,
-        context: SessionContext | None = None,
-        request_type: str = 'user_message',
-    ) -> str:
-        return '{}'
-
     async def generate_response(
         self,
         user_message: str,
@@ -459,9 +393,6 @@ class FakeLLMClient:
     async def generate_summary(self, history_text: str) -> str:
         """Return a fixed summary for testing. Production override uses real LLM."""
         return "前几轮为购物咨询对话，用户当前需求如上。"
-
-    async def classify_contextual_followup(self, message: str, context: dict[str, Any]) -> str:
-        return json.dumps({'intent': 'unclear_input'}, ensure_ascii=False)
 
     async def plan_tool(self, message: str, context: dict[str, Any]) -> str:
         """FakeLLMClient 的 plan_tool：用关键词启发式给一个合理 ToolPlan，方便单测。
@@ -777,28 +708,6 @@ class LLMClientWithBreaker:
             recovery_timeout=recovery_timeout,
         )
         self._fallback = FakeLLMClient()
-
-    async def parse_semantic_frame(
-        self,
-        message: str,
-        context: SessionContext | dict[str, Any] | None = None,
-        request_type: str = 'user_message',
-    ) -> str:
-        return await self.breaker.call(
-            self.client.parse_semantic_frame,
-            self._fallback.parse_semantic_frame,
-            message,
-            context,
-            request_type,
-        )
-
-    async def classify_contextual_followup(self, message: str, context: dict[str, Any]) -> str:
-        return await self.breaker.call(
-            self.client.classify_contextual_followup,
-            self._fallback.classify_contextual_followup,
-            message,
-            context,
-        )
 
     async def plan_tool(self, message: str, context: dict[str, Any]) -> str:
         return await self.breaker.call(

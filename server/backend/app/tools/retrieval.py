@@ -14,7 +14,6 @@ class RetrieveProductsTool:
 
     async def execute(self, request: ChatRequest, context: SessionContext, **kwargs) -> AsyncIterator[dict]:
         plan = kwargs.get("plan")
-        compiled_ir = kwargs.get("compiled_ir")
         context_action = kwargs.get("context_action", "same_task")
         memory_hit = kwargs.get("memory_hit")
         user_id = kwargs.get("user_id", "anonymous")

@@ -98,17 +98,31 @@ class ProductAnalysisTool:
     def _resolve_target_product(self, request: ChatRequest, context: SessionContext):
         """决定单品分析的目标商品：
         1. 用户原话先走 ProductMatcher 模糊匹配（命中 → 用 best）
-        2. 模糊不确定但有焦点商品上下文 → 用 focus_product
-        3. 都没有 → None（走 unknown 流）
+        2. 模糊但 top-1 候选 raw score > 0 → 降级使用 top-1
+        3. 有焦点商品上下文 → 用 focus_product
+        4. 都没有 → None（走 unknown 流）
         """
+        import logging
+        logger = logging.getLogger(__name__)
         match = self._agent.product_matcher.match(request.message)
+        logger.info(
+            f"[product_analysis] query='{request.message[:60]}' "
+            f"best={match.best.title if match.best else 'None'} "
+            f"confidence={match.confidence:.3f} "
+            f"candidates={len(match.candidates)}"
+        )
         if match.best is not None:
             return match.best
+
+        # 降级：confidence 低但 top-1 候选存在 → 直接使用 top-1
+        if match.candidates:
+            top = match.candidates[0]
+            logger.info(f"[product_analysis] fallback to top candidate: {top.title[:50]}")
+            return top
 
         # 模糊不确定时回退到 context focus（"这个/刚才那个"语义）
         focus_id = context.state.active_focus.product_id or context.focus_product_id
         if focus_id and focus_id in self._agent.product_map:
-            # 仅在用户消息含"这个/刚才/那个/它/继续"等指代词时才用焦点商品
             import re
             if re.search(r"(这个|这款|那个|刚才|刚刚|它|前面|继续|还是)", request.message or ""):
                 return self._agent.product_map[focus_id]

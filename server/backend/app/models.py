@@ -234,6 +234,57 @@ class SessionRecovery(BaseModel):
     hint: str | None = None
 
 
+# ========== UnifiedPlan（Stage 2 — 最终合并 ToolPlan + SemanticFrame + RetrievalPlan） ==========
+
+
+class UnifiedPlan(BaseModel):
+    """单次 LLM 调用的完整决策输出。
+
+    字段设计原则: 覆盖 ToolPlan.args 全部子字段 + SemanticFrame 意图字段 +
+    RetrievalPlan 检索字段。所有字段设默认值，LLM 只需填它能抽取的部分。
+    """
+    # ---- 工具路由（原 ToolPlan.tool） ----
+    tool: str = "chitchat"
+    confidence: float = 0.5
+
+    # ---- 意图标记（原 SemanticFrame.intent + clarification） ----
+    need_clarification: bool = False
+    clarification_question: str | None = None
+
+    # ---- 硬约束（原 HardConstraints + ConstraintEdits.add） ----
+    category: str | None = None
+    sub_category: str | None = None
+    price_min: float | None = None
+    price_max: float | None = None
+    include_brands: list[str] = Field(default_factory=list)
+    exclude_brands: list[str] = Field(default_factory=list)
+    in_stock_only: bool = True
+
+    # ---- 软偏好（原 RetrievalPlan.soft_preferences） ----
+    soft_preferences: dict[str, str] = Field(default_factory=dict)
+
+    # ---- 检索参数（原 RetrievalPlan.retrieval_query + ToolPlanArgs.category_hint） ----
+    retrieval_query: str = ""
+    retrieval_mode: str = "single"
+
+    # ---- 商品识别（原 ToolPlanArgs.target_product_query / category_hint） ----
+    target_product_query: str | None = None
+    category_hint: str | None = None
+
+    # ---- 对比/分析/追问（原 ToolPlanArgs） ----
+    compare_targets: list[str] = Field(default_factory=list)
+    analysis_aspect: str | None = None
+    followup_kind: str | None = None
+
+    # ---- cart 操作（原 CartOperation + ToolPlanArgs） ----
+    cart_action: str | None = None
+    cart_target_product_id: str | None = None
+    cart_quantity: int = 1
+
+    # ---- 否定缓存（从 ConsistencyState 透传，供 FactContextBuilder 使用） ----
+    denied_queries: list[str] = Field(default_factory=list)
+
+
 class SessionState(BaseModel):
     session_id: str = ""
     user_profile: UserProfile = Field(default_factory=UserProfile)

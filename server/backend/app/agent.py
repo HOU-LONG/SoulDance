@@ -101,6 +101,7 @@ from .models import (
     ContextEvent,
     DisplayMessage,
     DisplayMessageProduct,
+    FactContext,
     HardConstraints,
     PendingClarification,
     PendingRecovery,
@@ -121,6 +122,9 @@ from .state_reducer import StateReducer, seed_constraint_state_from_plan
 from .taxonomy import TaxonomyResolver
 from .timeout_policy import TimeoutBudget, run_with_timeout
 from .degradation import fallback_text_for_failure
+from .fact_context import FactContextBuilder
+from .anchor_validator import AnchorValidator
+from .consistency_tracker import ConsistencyTracker
 from .tts_adapter import TTSAdapter
 
 
@@ -176,6 +180,10 @@ class ShopGuideAgent:
         self._last_cache_probe: dict = {}
         # 长会话评测专用：记录上一轮 degradation（如 context_overflow_forced_trim）
         self._last_degradation: str | None = None
+        # 事实锚定管道（Stage 1）
+        self.fact_builder = FactContextBuilder()
+        self.anchor_validator = AnchorValidator()
+        self.consistency_tracker = ConsistencyTracker()
         self._init_tool_registry()
 
     def _init_tool_registry(self) -> None:
@@ -340,6 +348,8 @@ class ShopGuideAgent:
             context = self.sessions.get(user_id, request.session_id)
             # Append user message to dialog history before processing
             context.dialog_turns.append({"role": "user", "content": request.message or ""})
+            # Checkpoint 1: Turn Start
+            self.sessions.checkpoint(user_id, request.session_id, "turn_start")
 
             # Record user display message
             user_display = DisplayMessage(
@@ -363,6 +373,8 @@ class ShopGuideAgent:
                 yield event
 
             self._record_display_messages(context, collected)
+            # Checkpoint 3: Turn End
+            self.sessions.checkpoint(user_id, request.session_id, "turn_end")
         except Exception as exc:
             trace.error = f"{type(exc).__name__}: {exc}"[:200]
             raise
@@ -383,33 +395,44 @@ class ShopGuideAgent:
             get_trace_store().append(trace)
 
     async def _do_stream_message(self, user_id: str, request: ChatRequest, compiled_ir, context: SessionContext, trace=None) -> AsyncIterator[dict]:
-        # 1. pending recovery 优先（用户在回答上一轮的"换类目/放宽预算"提示）
-        recovery_events = self._build_pending_recovery_events(context, request)
-        if recovery_events is not None:
-            for event in recovery_events:
+        try:
+            # 1. pending recovery 优先
+            recovery_events = self._build_pending_recovery_events(context, request)
+            if recovery_events is not None:
+                for event in recovery_events:
+                    yield event
+                return
+
+            # 2. 立即通知客户端"正在思考"
+            message_id = _message_id()
+            yield self._assistant_state(
+                message_id, "thinking", "正在理解你的需求",
+                intent="thinking", retrieval_mode="no_retrieval",
+            )
+
+            # 3. ToolPlanner 唯一入口
+            import time as _time
+            seed_constraint_state_from_plan(context, context.last_plan)
+            plan_t0 = _time.time()
+            tool_plan = await self.tool_planner.plan(request, context)
+            if trace is not None:
+                trace.plan_tool_ms = (_time.time() - plan_t0) * 1000
+                trace.tool = tool_plan.tool
+                trace.tool_confidence = tool_plan.confidence
+
+            # 4. 按 tool_plan.tool 分发
+            async for event in self._dispatch_tool(user_id, request, context, tool_plan, compiled_ir):
                 yield event
-            return
-
-        # 2. 立即通知客户端"正在思考"——plan_tool LLM 调用可能 15-25s，不能让它干等
-        message_id = _message_id()
-        yield self._assistant_state(
-            message_id, "thinking", "正在理解你的需求",
-            intent="thinking", retrieval_mode="no_retrieval",
-        )
-
-        # 3. 让 ToolPlanner 做唯一意图入口
-        import time as _time
-        seed_constraint_state_from_plan(context, context.last_plan)
-        plan_t0 = _time.time()
-        tool_plan = await self.tool_planner.plan(request, context)
-        if trace is not None:
-            trace.plan_tool_ms = (_time.time() - plan_t0) * 1000
-            trace.tool = tool_plan.tool
-            trace.tool_confidence = tool_plan.confidence
-
-        # 4. 按 tool_plan.tool 单点分发
-        async for event in self._dispatch_tool(user_id, request, context, tool_plan, compiled_ir):
-            yield event
+        except Exception as exc:
+            logger.error(f"[stream] unhandled error for {user_id}/{request.session_id}: {exc}", exc_info=True)
+            self.sessions.checkpoint(user_id, request.session_id, "post_error")
+            message_id = _message_id()
+            fallback = fallback_text_for_failure("internal_error", context=context)
+            yield self._assistant_state(message_id, "error", "服务暂时不可用",
+                                        intent="error", retrieval_mode="no_retrieval")
+            for event in _text_delta_events(message_id, fallback):
+                yield event
+            yield {"type": "done", "message_id": message_id}
 
     async def _dispatch_tool(
         self,
@@ -514,6 +537,8 @@ class ShopGuideAgent:
                 )
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
+        # Checkpoint 2: Post-Retrieve
+        self.sessions.checkpoint(user_id, request.session_id, "post_retrieve")
 
         if plan.need_clarification or plan.intent == "clarification":
             async for event in self.tool_registry.execute(
@@ -622,6 +647,12 @@ class ShopGuideAgent:
             return None
         option = _match_pending_recovery_option(pending, request.message)
         if option is None:
+            # 记录 denial：用户再次提及未匹配的查询词
+            if pending.failed_query:
+                self.consistency_tracker.record_denial(
+                    context, pending.failed_query,
+                    turn=context.state.dialog_state.turn_index,
+                )
             return None
         message_id = _message_id()
         payload = option.get("payload", {}) if isinstance(option.get("payload"), dict) else {}
@@ -911,13 +942,35 @@ class ShopGuideAgent:
         self._remember_recommendations(context, plan, selected)
         if self.recommendation_memory and selected_override is None:
             self.recommendation_memory.put(plan, request.message, selected)
+
+        # ★ 事实锚定管道：LLM 生成前构建 FactContext + consistency check
+        denied = self.consistency_tracker.get_denied_queries(context)
+        fact_ctx = self.fact_builder.build(selected, denied_queries=denied)
+
+        consistency_result = self.consistency_tracker.check_before_output(
+            session_ctx=context,
+            ranked_product_ids=[item.product.product_id for item in selected],
+            fact_ctx=fact_ctx,
+        )
+        if not consistency_result.is_consistent:
+            logger.warning(f"[consistency] blocked before generate: {consistency_result.blocked_reason}")
+            fallback = fallback_text_for_failure("contradiction_blocked", plan, context=context)
+            yield {"type": "consistency_blocked", "message_id": message_id,
+                   "reason": consistency_result.blocked_reason}
+            for event in _text_delta_events(message_id, fallback):
+                yield event
+            yield {"type": "done", "message_id": message_id}
+            return
+
         text_parts: list[str] = []
         if cached_summary:
             for event in _text_delta_events(message_id, cached_summary):
                 text_parts.append(event["text"])
                 yield event
         else:
-            async for event in self._stream_generate_text_events(message_id, request, plan, selected, None):
+            async for event in self._stream_generate_text_events(
+                message_id, request, plan, selected, None, fact_ctx=fact_ctx,
+            ):
                 if event.get("type") == "text_delta":
                     text_parts.append(event["text"])
                 yield event
@@ -1009,7 +1062,7 @@ class ShopGuideAgent:
                 return text
         except Exception:
             pass
-        return await FakeLLMClient().generate_response(request.message, plan, ranked, focus_product)
+        return fallback_text_for_failure("llm_error", plan)
 
     async def _stream_generate_text_events(
         self,
@@ -1018,58 +1071,86 @@ class ShopGuideAgent:
         plan: RetrievalPlan,
         ranked: list[RankedProduct],
         focus_product: Product | None,
+        *,
+        fact_ctx: FactContext | None = None,
     ) -> AsyncIterator[dict]:
         if not ranked:
             for event in _text_delta_events(message_id, _no_match_text(plan)):
                 yield event
             return
         ctx = self.sessions.get("anonymous", request.session_id)
+        fact_block = fact_ctx.prompt_block if fact_ctx else ""
+
+        # 创建 LLM 流（带 fact_block）
         try:
-            chunks: list[str] = []
+            llm_stream = self.llm_client.stream_response(
+                request.message, plan, ranked, focus_product,
+                context=ctx, fact_block=fact_block,
+            )
+        except Exception:
+            fallback = fallback_text_for_failure("llm_error", plan, context=ctx)
+            for event in _text_delta_events(message_id, fallback):
+                yield event
+            return
+
+        # 首 chunk 超时保护
+        try:
             first_chunk = await run_with_timeout(
-                self._first_chunk_from_stream(
-                    self.llm_client.stream_response(request.message, plan, ranked, focus_product, context=ctx)
-                ),
+                self._first_chunk_from_stream(llm_stream),
                 timeout_seconds=DEFAULT_RESPONSE_FIRST_CHUNK_TIMEOUT_SECONDS,
                 fallback=None,
             )
-            if first_chunk is None:
-                # timeout before first chunk
-                fallback = fallback_text_for_failure("llm_timeout", plan)
+        except Exception:
+            first_chunk = None
+
+        if first_chunk is None:
+            fallback = fallback_text_for_failure("llm_timeout", plan, context=ctx)
+            for event in _text_delta_events(message_id, fallback):
+                yield event
+            return
+
+        # 恢复完整流：first_chunk + 剩余
+        async def _full_stream():
+            yield first_chunk
+            async for chunk in llm_stream:
+                if chunk:
+                    yield chunk
+
+        # AnchorValidator 流式校验（逐 chunk 透传 + 锚点展开 + 异常边界）
+        if fact_ctx and fact_ctx.product_index:
+            collected_for_price_check: list[str] = []
+            try:
+                async for event in self.anchor_validator.stream_process(_full_stream(), fact_ctx):
+                    if event["type"] == "text_delta":
+                        event["message_id"] = message_id
+                        collected_for_price_check.append(event["text"])
+                    yield event
+            except Exception:
+                logger.warning("[stream] anchor_validator error, falling back", exc_info=True)
+                fallback = fallback_text_for_failure("llm_error", plan, context=ctx)
                 for event in _text_delta_events(message_id, fallback):
                     yield event
                 return
-            chunks.append(first_chunk)
-            async for chunk in self.llm_client.stream_response(request.message, plan, ranked, focus_product, context=ctx):
-                if chunk:
-                    chunks.append(chunk)
-            streamed_text = "".join(chunks)
-            if streamed_text and _primary_text_matches_selected(streamed_text, ranked):
-                # 幻觉检测
+            # deferred 价格偏差检测
+            if collected_for_price_check:
+                full_text = "".join(collected_for_price_check)
                 from .hallucination_checker import HallucinationChecker
-                report = HallucinationChecker().verify(streamed_text, ranked)
+                report = HallucinationChecker().verify(full_text, fact_ctx)
                 if not report.is_clean:
-                    text = await FakeLLMClient().generate_response(request.message, plan, ranked, focus_product)
-                    yield {"type": "hallucination_corrected", "message_id": message_id, "original_issues": report.fabricated_product_ids + report.fabricated_attributes}
-                    for event in _text_delta_events(message_id, text):
-                        yield event
-                    return
-                for chunk in chunks:
-                    yield {"type": "text_delta", "message_id": message_id, "text": chunk}
+                    logger.warning(f"[hallucination] price mismatches: {report.price_mismatches}")
+                    yield {"type": "price_mismatch_warning", "message_id": message_id,
+                           "mismatches": report.price_mismatches}
+        else:
+            try:
+                async for chunk in _full_stream():
+                    if chunk:
+                        yield {"type": "text_delta", "message_id": message_id, "text": chunk}
+            except Exception:
+                logger.warning("[stream] llm stream error", exc_info=True)
+                fallback = fallback_text_for_failure("llm_error", plan, context=ctx)
+                for event in _text_delta_events(message_id, fallback):
+                    yield event
                 return
-        except Exception:
-            pass
-        text = await self._safe_generate_text(request, plan, ranked, focus_product)
-        # Phase C: 弱化输出守门——不再用 FakeLLM 模板整段覆盖 LLM 输出。
-        # LLM 没说"主推 XX"不意味着输出有问题；只有明显编造 product_id 才算严重错误。
-        # 这里仅 log 警告，让 LLM 的自然输出透传到用户。
-        if not _primary_text_matches_selected(text, ranked):
-            logger.warning(
-                f"_primary_text_matches_selected: LLM output may not follow primary/alternative conventions. "
-                f"Keeping original output. primary={ranked[0].product.title[:30] if ranked else 'none'}"
-            )
-        for event in _text_delta_events(message_id, text):
-            yield event
 
     async def _first_chunk_from_stream(self, stream):
         async for chunk in stream:
@@ -1572,6 +1653,14 @@ class ShopGuideAgent:
         # Track shopping domain
         if plan.hard_constraints.category:
             context.state.constraint_state.current_domain = plan.hard_constraints.category
+
+        # 一致性追踪：记录推荐 claims
+        turn = context.state.dialog_state.turn_index
+        for item in ranked:
+            self.consistency_tracker.record_claim(
+                context, item.product.product_id, "recommendation",
+                f"推荐 {item.product.title} ¥{item.product.price:.0f}", turn=turn,
+            )
 
         _append_context_event(
             context,

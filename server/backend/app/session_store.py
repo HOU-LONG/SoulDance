@@ -222,6 +222,49 @@ class SessionStore:
         except OSError:
             pass
 
+    def checkpoint(self, user_id: str, session_id: str, stage: str) -> None:
+        """回合级自动保存。走 get() 而非私有字典，正确支持 repo/file/in-memory。
+
+        先通过 get() 确保 session 在 _sessions 中存在（repo 模式会从 DB 加载），
+        然后更新 checkpoint_stage，最后调用 save() 持久化。
+        """
+        try:
+            ctx = self.get(user_id, session_id)
+            ctx.state.checkpoint_stage = stage
+            self.save(user_id, session_id)
+        except Exception:
+            logger.warning(f"[checkpoint] save failed for {user_id}/{session_id}", exc_info=True)
+
+    def recover(self, user_id: str, session_id: str):
+        """恢复会话，返回 SessionRecovery 或 None。"""
+        from .models import SessionRecovery
+        try:
+            ctx = self.get(user_id, session_id)
+        except Exception:
+            return None
+
+        stage = ctx.state.checkpoint_stage
+        has_history = bool(ctx.dialog_turns)
+
+        if stage == "turn_start":
+            return SessionRecovery(
+                user_message_restored=True, products_cached=False,
+                hint="你刚才的消息我已收到，正在重新理解...",
+            )
+        elif stage == "post_retrieve":
+            return SessionRecovery(
+                user_message_restored=True, products_cached=True,
+                hint="刚才的检索结果已恢复，我继续为你分析...",
+            )
+        elif stage == "turn_end":
+            return SessionRecovery(user_message_restored=True, products_cached=True, hint=None)
+        elif has_history:
+            return SessionRecovery(
+                user_message_restored=True, products_cached=False,
+                hint="对话历史已恢复，请告诉我你最后的问题。",
+            )
+        return None
+
     def _migrate_if_needed(self, ctx: SessionContext) -> SessionContext:
         # v1→current: no structural changes yet. When schema changes, add per-version
         # migration steps here before bumping CURRENT_SCHEMA_VERSION.

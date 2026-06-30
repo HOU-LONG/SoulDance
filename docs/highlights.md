@@ -42,34 +42,39 @@ SoulDance 把整个决策闭环压缩到**一个聊天界面**内：
 
 ## 技术亮点
 
-### 亮点 1：LLM Agent 架构 — 1 个 Planner 替代 5 层规则栈
+### 亮点 1：LLM Agent 架构 — UnifiedPlan 统一决策替代 5 层规则栈
 
 旧方案是 5 层互斥规则（`rule_semantic_frame → _merge_rule_guards → _normalize_intent → _apply_product_admission_gate → _primary_text_matches_selected`）——LLM 的输出被规则强行覆盖，导致"华为 Pura 90 Pro 价格多少"被拒答、"心情不好推荐甜的"被踢回类目选择。
 
-新架构是 1 个 LLM Planner 入口：
+v2.1 新架构是 1 个 LLM Planner 入口，输出单一决策载体 `UnifiedPlan`：
 
 ```
-用户输入 → ToolPlanner (LLM) → ToolPlan JSON → 单点分发 → 具体 Tool 执行
+用户输入 → planning/tool_planner.py ToolPlanner (LLM) → UnifiedPlan JSON
+        → core/agent.py _dispatch_tool() 单点分发 → tools/ 具体 Tool 执行
 ```
 
-LLM 只做决策（调哪个 tool + 参数），不做具体的商品匹配/检索/回复——这些由 Tool 内部的确定性系统完成。规则仅保留 2 处安全网（cart 硬性短语 + LLM 失败兜底）。
+`UnifiedPlan` 合并了旧的 ToolPlan（工具选择）、SemanticFrame（语义槽位）和 RetrievalPlan（检索策略），扁平化字段一次性携带工具路由、硬约束、软偏好、检索参数、购物车操作等全部决策信息。LLM 只做决策（调哪个 tool + 参数），不做具体的商品匹配/检索/回复——这些由 Tool 内部的确定性系统完成。规则仅保留 2 处安全网（`product_followup` 硬性短路 + `planning/semantic_layer.py` 中 LLM 失败兜底）。
 
-**与 LangChain / AutoGPT 的差异**：不是"LLM 生成 action 链然后逐步执行"——SoulDance 的 Planner 每次只输出 1 个 ToolPlan，执行完毕后等待用户下一轮输入。避免了 token 消耗爆炸和无限循环，同时保持每轮响应的确定性和可控性。
+**与 LangChain / AutoGPT 的差异**：不是"LLM 生成 action 链然后逐步执行"——SoulDance 的 Planner 每次只输出 1 个 `UnifiedPlan`，执行完毕后等待用户下一轮输入。这避免了 token 消耗爆炸和无限循环，同时保持每轮响应的确定性和可控性。v2.1 进一步删除了 `tool_plan.py`、`intent_compiler.py` 及所有兼容属性，净减少约 1350 行死代码。
 
-### 亮点 2：chitchat 内嵌商品推荐 — 对话中自然带货
+### 亮点 2：事实锚定管道 + chitchat 内嵌商品推荐 — 流式防幻觉与自然带货
 
-传统方案里"闲聊"和"推荐"是两条互斥路径。SoulDance 让 chitchat 工具在内部分两步走：
+传统方案里"闲聊"和"推荐"是两条互斥路径，且 LLM 在推荐文案中可以自由引用任何商品，导致虚构 product_id 和价格。SoulDance 把两者合二为一，形成**事实锚定 + 自然嵌入**的闭环：
 
-1. **注入 catalog 上下文**：在调 LLM 之前，用 BM25 retriever 取 top-5 相关商品摘要注入 prompt
-2. **锚点扫描下发**：LLM 在自然回复中嵌入 `[[商品名#product_id]]` 锚点，后端扫描后下发 `product_item` 事件 → 前端渲染内联卡片
+1. **事实注入**：`pipeline/fact_context.py` 在 LLM 生成前构建 `[[product_id]]` 锚点事实表，只有库内真实商品才能进入 LLM 上下文。
+2. **流式校验**：`pipeline/anchor_validator.py` 在 LLM 逐 chunk 输出时实时校验锚点——普通文本零延迟直通，`[[` 触发微缓冲，无效锚点立即替换。
+3. **跨轮一致**：`pipeline/consistency_tracker.py` 维护 denial cache 和 focus drift 检测，防止同一商品既被否认又被推荐。
+4. **chitchat 带货**：`tools/small_talk.py` 在调 LLM 之前用 BM25 retriever 取 top-5 相关商品摘要注入 prompt；LLM 在自然回复中嵌入 `[[商品名#product_id]]` 锚点后，后端扫描并下发真实 `product_item` 事件 → 前端渲染内联卡片。
 
-这让"心情不好推荐甜的"在不走推荐流的情况下，直接产出真实的商品卡片——零额外 LLM 调用，零 context 切换。
+这让"心情不好推荐甜的"在不走推荐流的情况下，先共情再直接产出真实的商品卡片——零额外 LLM 调用，零 context 切换，且所有商品 ID 都经过事实表验证。
 
-### 亮点 3：BM25 共享索引 + gap 置信度 — 零额外成本的模糊匹配
+### 亮点 3：BM25 共享索引 + gap 置信度 + CJK-ASCII 归一化 — 零额外成本的模糊匹配
 
-传统的模糊商品匹配需要额外的 embedding 模型或别名字典。SoulDance 的 ProductMatcher 直接复用推荐流已有的 BM25/Hybrid retriever 索引，用 top1-vs-top2 的分数差（gap）作为置信度信号：
+传统的模糊商品匹配需要额外的 embedding 模型或别名字典。SoulDance 直接复用推荐流已有的 BM25/Hybrid retriever 索引，并解决中文混合型号的分词断裂问题：
 
-- "雀巢咖啡" → top1 1.0, top2 0.0, gap=1.0 → 明确命中 ✅
-- "小米 17" → top1 1.0, top2 0.99, gap=0.01 → 候选模糊（库里小米 17 系列有 Max/Ultra/Pro 多款）→ best=None，candidates 透传
+- **gap 置信度**：`retrieval/product_matcher.py` 用 top1-vs-top2 的分数差判断匹配强弱：
+  - "雀巢咖啡" → top1 1.0, top2 0.0, gap=1.0 → 明确命中 ✅
+  - "小米 17" → top1 1.0, top2 0.99, gap=0.01 → 候选模糊（库里小米 17 系列有 Max/Ultra/Pro 多款）→ best=None，candidates 透传
+- **CJK-ASCII 归一化**：`retrieval/embedding_retriever.py` 在 jieba 分词前自动在 CJK↔ASCII、数字↔字母边界插入空格，使"小米17Max"与数据库"小米 17 Max"的 token 化对齐，修复中英文混合型号的匹配失败。
 
-零额外索引、零额外模型，只是换个入口调同一套 retriever。
+零额外索引、零额外模型，只是复用同一套 retriever 并补充分词预处理。

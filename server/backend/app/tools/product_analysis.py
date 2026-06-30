@@ -105,7 +105,7 @@ class ProductAnalysisTool:
         import logging
         logger = logging.getLogger(__name__)
         match = self._agent.product_matcher.match(request.message)
-        logger.info(
+        logger.warning(
             f"[product_analysis] query='{request.message[:60]}' "
             f"best={match.best.title if match.best else 'None'} "
             f"confidence={match.confidence:.3f} "
@@ -117,7 +117,7 @@ class ProductAnalysisTool:
         # 降级：confidence 低但 top-1 候选存在 → 直接使用 top-1
         if match.candidates:
             top = match.candidates[0]
-            logger.info(f"[product_analysis] fallback to top candidate: {top.title[:50]}")
+            logger.warning(f"[product_analysis] fallback to top candidate: {top.title[:50]}")
             return top
 
         # 模糊不确定时回退到 context focus（"这个/刚才那个"语义）

@@ -9,11 +9,11 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from ..constraint_filter import hard_filter
+from ..planning.constraint_filter import hard_filter
 from ..data_loader import load_products
 from ..db import get_session, init_db
 from ..db.seed import seed_products
-from ..embedding_retriever import EmbeddingRetriever
+from ..retrieval.embedding_retriever import EmbeddingRetriever
 from ..models import HardConstraints, Product
 from ..rag.fusion import rrf_fuse
 from ..rag.lexical_search import lexical_search_chunks

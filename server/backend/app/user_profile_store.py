@@ -5,8 +5,8 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .feedback_aggregator import FeedbackAggregator
-from .feedback_store import FeedbackStore
+from .feedback.feedback_aggregator import FeedbackAggregator
+from .feedback.feedback_store import FeedbackStore
 from .models import FeedbackSignal, UserFeedbackProfile
 
 logger = logging.getLogger(__name__)

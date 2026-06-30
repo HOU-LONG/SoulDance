@@ -21,7 +21,7 @@ class ProductAnalysisTool:
 
     async def execute(self, request: ChatRequest, context: SessionContext, **kwargs) -> AsyncIterator[dict]:
         user_id = kwargs.get("user_id", "anonymous")
-        from ..agent import _text_delta_events, _assistant_state, _focus_product_explanation, _stream_with_first_chunk_timeout
+        from ..core.agent import _text_delta_events, _assistant_state, _focus_product_explanation, _stream_with_first_chunk_timeout
 
         product = self._resolve_target_product(request, context)
         message_id = _message_id()

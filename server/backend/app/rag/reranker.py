@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Protocol, Sequence, runtime_checkable, Optional
 
-from ..timeout_policy import TimeoutBudget
+from ..services.timeout_policy import TimeoutBudget
 
 from .reranker_scenarios import RerankScenario
 from .types import ProductRetrievalResult

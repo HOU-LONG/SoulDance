@@ -9,30 +9,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .agent import ShopGuideAgent
-from .cart import CartService
+from .core.agent import ShopGuideAgent
+from .services.cart import CartService
 from .config import Settings, get_settings
-from .concurrency import ConcurrencyGuard
+from .services.concurrency import ConcurrencyGuard
 from .data_loader import load_products
 from .db import get_session, init_db
-from .embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
-from .feedback_aggregator import FeedbackAggregator
-from .feedback_ranker import FeedbackAwareRanker
-from .feedback_store import FeedbackStore
+from .retrieval.embedding_retriever import BM25OnlyRetriever, EmbeddingRetriever
+from .feedback.feedback_aggregator import FeedbackAggregator
+from .feedback.feedback_ranker import FeedbackAwareRanker
+from .feedback.feedback_store import FeedbackStore
 from .identity import get_current_user_id, is_valid_user_id, ANONYMOUS_USER_ID
-from .image_assets import product_image_url_auto as product_image_url
-from .llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
-from .memory_cache import RecommendationMemoryCache, StructuredMemoryCache
+from .adapters.image_assets import product_image_url_auto as product_image_url
+from .services.llm_client import DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker
+from .memory.memory_cache import RecommendationMemoryCache, StructuredMemoryCache
 from .models import CartActionRequest, ChatRequest, DisplayMessage, FeedbackEvent, OrderActionRequest
-from .order_service import OrderError, OrderService
+from .services.order_service import OrderError, OrderService
 from .rag.fusion import HybridRetriever
 from .rag.reranker import build_reranker
 from .rag.vector_search import DenseIndex, build_dense_index
-from .semantic_layer import rule_semantic_frame
-from .realtime_envelope import RealtimeEnvelope
-from .session_store import SessionStore
-from .stt_adapter import STTAdapter
-from .tts_adapter import TTSAdapter
+from .planning.semantic_layer import rule_semantic_frame
+from .services.realtime_envelope import RealtimeEnvelope
+from .services.session_store import SessionStore
+from .adapters.stt_adapter import STTAdapter
+from .adapters.tts_adapter import TTSAdapter
 from .user_profile_store import UserProfileStore
 
 

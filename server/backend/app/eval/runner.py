@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from ..constraint_filter import hard_filter
+from ..planning.constraint_filter import hard_filter
 from ..models import RetrievalPlan
 from .metrics import evaluate_step
 from .models import (

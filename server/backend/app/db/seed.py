@@ -8,7 +8,7 @@ from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
 from ..data_loader import load_products
-from ..embedding_retriever import EmbeddingRetriever
+from ..retrieval.embedding_retriever import EmbeddingRetriever
 from ..models import Product
 from ..rag.chunking import ChunkMeta, chunk_product
 from .base import Base
@@ -183,7 +183,7 @@ def seed_database(settings=None, products: list[Product] | None = None, reset: b
     Base.metadata.create_all(bind=engine)
     if products is None:
         products = load_products(settings.dataset_path)
-    from ..embedding_retriever import EmbeddingRetriever
+    from ..retrieval.embedding_retriever import EmbeddingRetriever
     device = settings.embedding_device
     import torch
     if device.startswith("cuda") and not torch.cuda.is_available():

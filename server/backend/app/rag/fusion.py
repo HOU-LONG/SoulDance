@@ -10,7 +10,7 @@ import numpy as np
 from sqlalchemy.orm import Session
 
 from ..config import RetrievalConfig
-from ..constraint_filter import hard_filter
+from ..planning.constraint_filter import hard_filter
 from ..db import get_session
 from ..models import Product, RetrievalPlan
 from .lexical_search import lexical_search_chunks

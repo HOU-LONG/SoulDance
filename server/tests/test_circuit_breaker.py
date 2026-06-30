@@ -152,11 +152,11 @@ async def test_wrapper_all_methods_are_wrapped():
             self.count += 1
             return "{}"
 
-        async def generate_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
+        async def generate_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None, fact_block=""):
             self.count += 1
             return "ok"
 
-        async def stream_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None):
+        async def stream_response(self, user_message, plan, ranked_products, focus_product=None, *, context=None, fact_block=""):
             self.count += 1
             yield "ok"
 

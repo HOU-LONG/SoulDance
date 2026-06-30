@@ -1,184 +1,158 @@
-# 事实锚定管道 — 实现计划
+# 事实锚定管道 — 实现计划（两阶段）
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** 实现事实锚定管道，彻底消除 LLM 幻觉导致的商品虚构和前后矛盾问题，同时简化 Plan 链路（2 次 LLM 调用 → 1 次）。
+**总体目标:** 引入事实锚定管道彻底消除 LLM 幻觉，同时简化 Plan 链路将 LLM 调用从 3 次降到 2 次。
 
-**Architecture:** 新增 `UnifiedPlan` 统一 ToolPlan+SemanticFrame+RetrievalPlan 三层模型；新增 `FactContextBuilder` 构建 LLM 唯一事实来源；新增 `AnchorValidator` 做 `[[product_id]]` 锚点校验；新增 `ConsistencyTracker` 做跨轮一致性校验。链路从 3 次 LLM 调用减少到 2 次（1 次决策 + 1 次锚定生成）。
+**分阶段策略:**
+- **Stage 1（12 Tasks）:** 在现有模型不变的前提下，引入 FactContext + 流式 AnchorValidator + ConsistencyTracker + Checkpoint。保留 ToolPlan/SemanticFrame/RetrievalPlan 三层不变。
+- **Stage 2（8 Tasks）:** UnifiedPlan 迁移——合并三层模型，删除 IntentCompiler LLM 路径，LLM 调用 3→2。
+
+**LLM 调用目标:** 当前 3 次（ToolPlanner + IntentCompiler + Generate），Stage 1 保持 3 次，Stage 2 降为 2 次。
 
 **Tech Stack:** Python 3.11+, Pydantic v2, pytest, 现有 Doubao/DeepSeek LLM 客户端不变
 
 ## 全局约束
 
-- 不改变 Cart/Order/TTS/STT/WebSocket 协议
+- **不删除任何现有模型**（ConstraintEdits、CartOperation、QueryIntent 等全部保留），只追加新模型
+- **不改变 ToolPlan / SemanticFrame / RetrievalPlan 的任何字段**
+- **不改变 Cart/Order/TTS/STT/WebSocket 协议**
 - 不引入新的外部依赖
-- 所有新增模块遵循项目现有的 `from __future__ import annotations` + dataclass/Pydantic 模式
-- `SemanticFrame` 保留为 `UnifiedPlan` 的 type alias，向后兼容
+- 所有新增模块遵循项目现有的 `from __future__ import annotations` + Pydantic/dataclass 模式
 - 每个 Task 完成后必须通过关联的 pytest 测试
-- Phase 2 完成后必须跑全量 `pytest server/tests/` 确认无回归
+- 最终 Task 必须跑全量 `pytest server/tests/` 确认无回归
 
 ---
 
-### Task 1: 新增模型 — UnifiedPlan + FactContext + ConsistencyState
+## 文件结构
 
-**目标**: 在 `models.py` 中新增统一决策模型、事实上下文模型和一致性状态模型
+| 文件 | 职责 | 改动类型 |
+|------|------|----------|
+| `models.py` | 追加 FactRecord、FactContext、ClaimRecord、ConsistencyState、SessionRecovery；SessionState 新增 consistency + checkpoint_stage 字段 | 修改 |
+| `fact_context.py` | FactContextBuilder：UnifiedPlan-like 约束 + RankedProduct → FactContext（prompt_block + product_index + brand_index） | **新建** |
+| `anchor_validator.py` | AnchorValidator（流式模式）：逐 chunk 检测 `[[pid]]`，微缓冲校验，命中→展开，未命中→替换为「该商品」 | **新建** |
+| `consistency_tracker.py` | ConsistencyTracker：denial cache 记录/查询、price consistency、focus drift 检测 | **新建** |
+| `llm_client.py` | 三个 stream_response + _response_evidence_payload 全部追加 `fact_block: str = ""` 参数 | 修改 |
+| `agent.py` | 集成 FactContextBuilder → AnchorValidator → ConsistencyTracker；3 个 checkpoint 插入点；统一异常边界 | 修改 |
+| `hallucination_checker.py` | verify() 签名改为接收 FactContext；去掉虚构 ID/名称检测（已被 AnchorValidator 覆盖） | 修改 |
+| `session_store.py` | 新增公开方法 checkpoint() 和 recover() | 修改 |
+| `degradation.py` | fallback_text_for_failure() 接收 context 参数，输出上下文感知提示 | 修改 |
+
+---
+
+### Task 1: 追加新模型到 models.py（不删不改旧模型）
+
+**目标:** 在 `models.py` 末尾追加新模型；SessionState 追加 consistency 和 checkpoint_stage 字段
 
 **文件:**
 - 修改: `server/backend/app/models.py`
-- 测试: `server/tests/test_unified_plan.py`
+- 测试: `server/tests/test_new_models.py`
 
 **接口:**
-- 产出: `UnifiedPlan`, `FactRecord`, `FactContext`, `ClaimRecord`, `ConsistencyState`, `SessionRecovery` 类
-- 后续 Task 2-19 依赖所有这些模型
+- 产出: `FactRecord`, `FactContext`, `ClaimRecord`, `ConsistencyState`, `SessionRecovery` 类
+- SessionState 新增: `consistency: ConsistencyState`、`checkpoint_stage: str`
+- 后续 Task 2-12 依赖这些模型
 
 - [ ] **Step 1: 编写测试**
 
 ```python
-# server/tests/test_unified_plan.py
+# server/tests/test_new_models.py
 from __future__ import annotations
-from server.backend.app.models import UnifiedPlan, FactRecord, FactContext, ClaimRecord, ConsistencyState, SessionRecovery
-
-
-def test_unified_plan_defaults():
-    plan = UnifiedPlan()
-    assert plan.tool == "chitchat"
-    assert plan.confidence == 0.5
-    assert plan.need_clarification is False
-    assert plan.price_min is None
-    assert plan.include_brands == []
-    assert plan.soft_preferences == {}
-
-
-def test_unified_plan_full():
-    plan = UnifiedPlan(
-        tool="recommend_product",
-        confidence=0.9,
-        category="智能手机",
-        sub_category="旗舰机",
-        price_min=3000,
-        price_max=7000,
-        include_brands=["小米", "华为"],
-        soft_preferences={"拍照": "优秀"},
-        retrieval_query="旗舰手机 拍照好",
-    )
-    assert plan.tool == "recommend_product"
-    assert plan.price_max == 7000
-    assert "小米" in plan.include_brands
+from server.backend.app.models import (
+    FactRecord, FactContext, ClaimRecord, ConsistencyState,
+    SessionRecovery, SessionState, SessionContext,
+)
 
 
 def test_fact_record():
-    record = FactRecord(
-        product_id="XIAOMI_14_ULTRA",
-        title="小米 14 Ultra",
-        brand="小米",
-        price=5999.0,
-        category="手机数码",
-        sub_category="智能手机",
-        key_specs=["徕卡镜头", "骁龙8Gen3"],
-    )
-    assert record.product_id == "XIAOMI_14_ULTRA"
-    assert record.price == 5999.0
+    r = FactRecord(product_id="P1", title="商品1", brand="小米", price=100.0,
+                   category="手机", sub_category="智能机", key_specs=["快"])
+    assert r.product_id == "P1"
+    assert r.price == 100.0
 
 
-def test_fact_context_product_index():
-    records = [
-        FactRecord(product_id="P1", title="商品1", brand="小米", price=100, category="手机", sub_category="智能机", key_specs=["快"]),
-        FactRecord(product_id="P2", title="商品2", brand="华为", price=200, category="手机", sub_category="智能机", key_specs=["好"]),
-    ]
+def test_fact_context():
+    r1 = FactRecord(product_id="P1", title="A", brand="小米", price=100,
+                    category="手机", sub_category="智能机")
+    r2 = FactRecord(product_id="P2", title="B", brand="华为", price=200,
+                    category="手机", sub_category="智能机")
     ctx = FactContext(
-        prompt_block="测试用事实块",
-        product_index={r.product_id: r for r in records},
-        brand_index={"小米": {"P1"}, "华为": {"P2"}},
-        denied_queries=["小米 17 Max"],
+        prompt_block="事实块",
+        product_index={"P1": r1, "P2": r2},
+        brand_index={"小米": ["P1"], "华为": ["P2"]},
+        denied_queries=["不存在商品"],
     )
     assert ctx.product_index["P1"].brand == "小米"
-    assert "P2" in ctx.brand_index["华为"]
-    assert "小米 17 Max" in ctx.denied_queries
+    assert ctx.brand_index["小米"] == ["P1"]
+    assert "不存在商品" in ctx.denied_queries
 
 
-def test_claim_record():
-    claim = ClaimRecord(turn=3, product_id="P1", claim_type="not_exists", claim_value="小米 17 Max 不存在")
-    assert claim.turn == 3
-    assert claim.claim_type == "not_exists"
+def test_fact_context_defaults():
+    ctx = FactContext()
+    assert ctx.prompt_block == ""
+    assert ctx.product_index == {}
+    assert ctx.denied_queries == []
 
 
 def test_consistency_state():
     cs = ConsistencyState(
-        claims=[
-            ClaimRecord(turn=1, product_id="P1", claim_type="price", claim_value="¥5999"),
-        ],
+        claims=[ClaimRecord(turn=1, product_id="P1", claim_type="price", claim_value="¥100")],
         confirmed_product_id="P1",
-        denied_product_queries=["小米 17 Max"],
+        denied_product_queries=["不存在查询"],
     )
     assert cs.confirmed_product_id == "P1"
     assert len(cs.denied_product_queries) == 1
+    assert cs.claims[0].claim_type == "price"
+
+
+def test_consistency_state_defaults():
+    cs = ConsistencyState()
+    assert cs.claims == []
+    assert cs.confirmed_product_id is None
 
 
 def test_session_recovery():
-    sr = SessionRecovery(
-        user_message_restored=True,
-        products_cached=False,
-        hint="你的消息已收到，正在重新理解...",
-    )
+    sr = SessionRecovery(user_message_restored=True, products_cached=False,
+                         hint="你的消息已收到")
     assert sr.user_message_restored is True
     assert sr.hint is not None
+
+
+def test_session_state_has_consistency_field():
+    """SessionState 默认应有 consistency 和 checkpoint_stage 字段。"""
+    state = SessionState()
+    assert state.consistency == ConsistencyState()
+    assert state.checkpoint_stage == ""
+
+
+def test_session_context_imports_unchanged():
+    """旧模型不受影响。"""
+    from server.backend.app.models import (
+        ConstraintEdits, CartOperation, QueryIntent, SemanticFrame,
+        ShoppingIntentIR, RetrievalPlan, ToolPlan
+    )
+    # 能导入即通过
+    assert ConstraintEdits is not None
+    assert SemanticFrame is not None
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
 
 ```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_new_models.py -v
 ```
-预期: 全部 FAIL（模型未定义）
+预期: FAIL（新模型未定义，SessionState 无新字段）
 
-- [ ] **Step 3: 在 models.py 末尾添加新模型**
+- [ ] **Step 3: 在 models.py 末尾追加新模型**
+
+在文件末尾（`UserFeedbackProfile` 类之后）追加：
 
 ```python
-# ========== 以下追加到 models.py 末尾 ==========
+# ========== 事实锚定管道模型（Stage 1） ==========
 
-# ---- UnifiedPlan: 合并 ToolPlan + SemanticFrame + RetrievalPlan ----
-
-class UnifiedPlan(BaseModel):
-    """单次 LLM 调用的完整决策输出。"""
-    # 工具路由
-    tool: str = "chitchat"
-    confidence: float = 0.5
-
-    # 意图标记
-    need_clarification: bool = False
-    clarification_question: str | None = None
-
-    # 硬约束
-    category: str | None = None
-    sub_category: str | None = None
-    price_min: float | None = None
-    price_max: float | None = None
-    include_brands: list[str] = Field(default_factory=list)
-    exclude_brands: list[str] = Field(default_factory=list)
-    in_stock_only: bool = True
-
-    # 软偏好
-    soft_preferences: dict[str, str] = Field(default_factory=dict)
-
-    # 检索参数
-    retrieval_query: str = ""
-    retrieval_mode: str = "single"
-
-    # cart 操作
-    cart_action: str | None = None
-    cart_target_product_id: str | None = None
-    cart_quantity: int = 1
-
-    # 对比/分析/追问场景
-    compare_targets: list[str] = Field(default_factory=list)
-    analysis_aspect: str | None = None
-    followup_kind: str | None = None
-
-
-# ---- FactContext: LLM 唯一事实来源 ----
 
 class FactRecord(BaseModel):
-    """单个商品的事实卡片。"""
+    """单个商品的事实卡片 — LLM prompt 中的一行事实。"""
     product_id: str
     title: str
     brand: str
@@ -189,557 +163,82 @@ class FactRecord(BaseModel):
 
 
 class FactContext(BaseModel):
-    """注入 LLM prompt 的事实上下文 + 供校验使用的索引。"""
+    """注入 LLM prompt 的事实上下文 + 供 AnchorValidator 使用的校验索引。"""
     prompt_block: str = ""
     product_index: dict[str, FactRecord] = Field(default_factory=dict)
     brand_index: dict[str, list[str]] = Field(default_factory=dict)
     denied_queries: list[str] = Field(default_factory=list)
 
 
-# ---- ConsistencyState: 跨轮一致性追踪 ----
-
 class ClaimRecord(BaseModel):
     """单条关于商品的声明。"""
     turn: int
     product_id: str
-    claim_type: str  # "exists" | "not_exists" | "price" | "recommendation" | "comparison"
+    claim_type: str  # "not_exists" | "price" | "recommendation" | "comparison"
     claim_value: str
 
 
 class ConsistencyState(BaseModel):
-    """跨轮一致性状态。"""
+    """跨轮一致性状态，追加到 SessionState。"""
     claims: list[ClaimRecord] = Field(default_factory=list)
     confirmed_product_id: str | None = None
     denied_product_queries: list[str] = Field(default_factory=list)
 
 
-# ---- SessionRecovery: 会话恢复结果 ----
-
 class SessionRecovery(BaseModel):
-    """会话恢复时返回的状态。"""
+    """会话恢复结果。"""
     user_message_restored: bool = False
     products_cached: bool = False
     hint: str | None = None
 ```
 
-- [ ] **Step 4: 运行测试确认通过**
+- [ ] **Step 4: 在 SessionState 中追加两个字段**
 
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
-```
-预期: 全部 PASS
-
-- [ ] **Step 5: 将 ConsistencyState 追加到 SessionState**
-
-修改 `models.py` 中 `SessionState` 类（约第 205 行），追加字段:
+找到 `class SessionState(BaseModel)`（约第 193 行），在现有字段列表末尾（`trace: TraceState` 之后）追加：
 
 ```python
-# 在 SessionState 的现有字段之后追加:
+    # 事实锚定管道（Stage 1）
     consistency: ConsistencyState = Field(default_factory=ConsistencyState)
     checkpoint_stage: str = ""
 ```
 
-- [ ] **Step 6: 删除废弃模型，添加 backwards-compat alias**
-
-在 `models.py` 中:
-- 删除整段 `ConstraintEdits`（约第 56-67 行）、`ConstraintPatch`（约第 56-67 行，同一段）、`CartOperation`（约第 81-84 行）、`QueryIntent`（约第 87-92 行）
-- 保留 `ProductReference`（仍有其他地方使用）
-- 在文件顶部（import 段之后）追加:
-
-```python
-# Backwards-compat alias: SemanticFrame → UnifiedPlan
-# 旧代码中的 ShoppingIntentIR / SemanticFrame 引用自动映射到 UnifiedPlan
-SemanticFrame = UnifiedPlan
-ShoppingIntentIR = UnifiedPlan
-```
-
-- [ ] **Step 7: 确认全量导入不报错**
+- [ ] **Step 5: 运行测试确认通过**
 
 ```bash
-cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.models import UnifiedPlan, FactContext, ConsistencyState, SemanticFrame, ShoppingIntentIR; print('OK')"
-```
-预期: `OK`
-
-- [ ] **Step 8: 提交**
-
-```bash
-git add server/backend/app/models.py server/tests/test_unified_plan.py
-git commit -m "feat(models): add UnifiedPlan, FactContext, ConsistencyState, SessionRecovery
-
-- UnifiedPlan merges ToolPlan + SemanticFrame + RetrievalPlan
-- FactContext provides LLM's sole source of product truth
-- ConsistencyState tracks cross-turn claim consistency
-- Delete deprecated ConstraintEdits, ConstraintPatch, CartOperation, QueryIntent
-- SemanticFrame → UnifiedPlan type alias for backwards compat
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
-
----
-
-### Task 2: 更新 tool_plan.py — ToolPlan → UnifiedPlan 过渡
-
-**目标**: 使 `tool_planner.py` 的 `_parse_plan()` 能解析 `UnifiedPlan`，同时保持 `ToolPlan` 向后兼容
-
-**文件:**
-- 修改: `server/backend/app/tool_plan.py`
-- 修改: `server/backend/app/tool_planner.py`
-- 测试: `server/tests/test_unified_plan.py`（追加）
-
-- [ ] **Step 1: 追加测试**
-
-```python
-# 追加到 server/tests/test_unified_plan.py
-
-import json
-from server.backend.app.tool_planner import ToolPlanner
-
-
-def test_tool_planner_parse_unified_plan_json():
-    """ToolPlanner 应能解析 LLM 输出的 UnifiedPlan JSON。"""
-    from server.backend.app.tool_plan import ToolPlan  # 旧类型
-    planner = ToolPlanner(llm_client=None)  # type: ignore
-    raw = json.dumps({
-        "tool": "recommend_product",
-        "confidence": 0.85,
-        "category": "智能手机",
-        "sub_category": "旗舰机",
-        "price_min": 3000,
-        "price_max": 7000,
-        "include_brands": ["小米"],
-        "soft_preferences": {"拍照": "好"},
-        "retrieval_query": "旗舰拍照手机",
-        "retrieval_mode": "single",
-    })
-    plan = planner._parse_plan(raw)
-    assert plan is not None
-    # 解析出的应是 UnifiedPlan，tool 字段为首要字段
-    assert plan.tool == "recommend_product"
-
-
-def test_tool_planner_parse_minimal_json():
-    """最小 JSON 也应成功解析。"""
-    planner = ToolPlanner(llm_client=None)  # type: ignore
-    raw = json.dumps({"tool": "chitchat", "confidence": 0.3})
-    plan = planner._parse_plan(raw)
-    assert plan is not None
-    assert plan.tool == "chitchat"
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py::test_tool_planner_parse_unified_plan_json -v
-```
-预期: FAIL（`_parse_plan` 仍解析为 `ToolPlan`，缺少 category 等字段）
-
-- [ ] **Step 3: 修改 tool_planner.py 的 _parse_plan**
-
-```python
-# 替换 tool_planner.py 中的 _parse_plan 方法
-def _parse_plan(self, raw: str):
-    if not raw or not raw.strip():
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    try:
-        # 优先解析为 UnifiedPlan
-        from .models import UnifiedPlan
-        return UnifiedPlan.model_validate(data)
-    except Exception:
-        # 向后兼容：旧 ToolPlan JSON 格式
-        try:
-            from .tool_plan import ToolPlan
-            old = ToolPlan.model_validate(data)
-            # 转换为 UnifiedPlan
-            return UnifiedPlan(
-                tool=old.tool,
-                confidence=old.confidence,
-                category=old.args.category_hint,
-                price_min=old.args.price_min,
-                price_max=old.args.price_max,
-                include_brands=list(old.args.include_brands),
-                exclude_brands=list(old.args.exclude_brands),
-                soft_preferences=dict(old.args.soft_preferences),
-                retrieval_query=old.args.target_product_query or "",
-                cart_action=old.args.cart_action,
-                cart_quantity=old.args.cart_quantity,
-                compare_targets=list(old.args.compare_targets),
-                analysis_aspect=old.args.analysis_aspect,
-                followup_kind=old.args.followup_kind,
-            )
-        except Exception:
-            return None
-```
-
-- [ ] **Step 4: 运行测试确认通过**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_new_models.py -v
 ```
 预期: 全部 PASS
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 确认旧模型导入不受影响**
 
 ```bash
-git add server/backend/app/tool_planner.py server/tests/test_unified_plan.py
-git commit -m "feat(tool_planner): parse UnifiedPlan JSON, backwards-compat with old ToolPlan
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
+cd /home/huadabioa/houlong/SoulDance && python -c "
+from server.backend.app.models import ConstraintEdits, CartOperation, QueryIntent, SemanticFrame, ShoppingIntentIR
+print('All old models import OK')
+"
 ```
-
----
-
-### Task 3: 重写 StateReducer — 适配 UnifiedPlan，吸收 IntentCompiler 规则
-
-**目标**: StateReducer 不再依赖 `ConstraintEdits`，直接消费 `UnifiedPlan`；吸收 `_prepare_context_for_turn` 规则
-
-**文件:**
-- 修改: `server/backend/app/state_reducer.py`
-- 测试: `server/tests/test_unified_plan.py`（追加）
-
-- [ ] **Step 1: 追加测试**
-
-```python
-# 追加到 server/tests/test_unified_plan.py
-
-from server.backend.app.models import SessionContext, SessionState, UnifiedPlan
-from server.backend.app.state_reducer import StateReducer, seed_constraint_state_from_plan
-
-
-def test_state_reducer_apply_with_unified_plan():
-    ctx = SessionContext(session_id="test")
-    plan = UnifiedPlan(
-        tool="recommend_product",
-        category="手机数码",
-        sub_category="智能手机",
-        price_min=2000,
-        price_max=5000,
-        include_brands=["小米"],
-        soft_preferences={"拍照": "好"},
-        retrieval_query="小米拍照手机",
-    )
-    reducer = StateReducer()
-    reducer.apply(ctx, plan, "推荐小米拍照手机")
-    state = ctx.state
-    assert state.dialog_state.turn_index == 1
-    assert state.dialog_state.last_intent == "recommend_product"
-    assert state.constraint_state.hard.category == "手机数码"
-    assert state.constraint_state.hard.sub_category == "智能手机"
-    assert state.constraint_state.hard.price_min == 2000
-    assert state.constraint_state.hard.price_max == 5000
-    assert "小米" in state.constraint_state.hard.include_brands
-    assert state.constraint_state.soft.get("拍照") == "好"
-
-
-def test_state_reducer_seed_from_unified_plan():
-    ctx = SessionContext(session_id="test")
-    plan = UnifiedPlan(
-        tool="recommend_product",
-        category="个护美妆",
-        price_max=300,
-    )
-    seed_constraint_state_from_plan(ctx, plan)
-    assert ctx.state.constraint_state.hard.category == "个护美妆"
-    assert ctx.state.constraint_state.hard.price_max == 300
-```
-
-- [ ] **Step 2: 运行测试确认失败**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py::test_state_reducer_apply_with_unified_plan -v
-```
-预期: FAIL（StateReducer 仍期望 ShoppingIntentIR / ConstraintEdits）
-
-- [ ] **Step 3: 重写 state_reducer.py**
-
-```python
-"""
-会话状态归约器 — 将 UnifiedPlan 的约束应用到对话状态上。
-"""
-from __future__ import annotations
-
-from .constraint_filter import dedupe
-from .models import UnifiedPlan, SessionContext, HardConstraints
-
-
-class StateReducer:
-    """将 UnifiedPlan 中的约束直接应用到 SessionState。
-
-    每轮调用一次 apply()，执行顺序：
-    1. 更新对话元数据（轮次、意图、用户消息）
-    2. 直接将 UnifiedPlan 的 hard/soft 约束覆盖到状态中
-    3. 记录审计日志
-    4. 同步 legacy global_profile
-    """
-
-    def apply(self, context: SessionContext, plan: UnifiedPlan, user_message: str) -> None:
-        state = context.state
-        state.dialog_state.turn_index += 1
-        state.dialog_state.last_intent = plan.tool
-        state.dialog_state.last_user_message = user_message
-        # 直接消费 UnifiedPlan 的约束字段
-        hc = state.constraint_state.hard
-        if plan.category:
-            hc.category = plan.category
-        if plan.sub_category:
-            hc.sub_category = plan.sub_category
-        if plan.price_min is not None:
-            hc.price_min = plan.price_min
-        if plan.price_max is not None:
-            hc.price_max = plan.price_max
-        if plan.include_brands:
-            hc.include_brands = dedupe(list(hc.include_brands) + list(plan.include_brands))
-        if plan.exclude_brands:
-            hc.exclude_brands = dedupe(list(hc.exclude_brands) + list(plan.exclude_brands))
-        # soft preferences
-        for key, value in plan.soft_preferences.items():
-            if value:
-                state.constraint_state.soft[key] = value
-        # 审计
-        state.constraint_state.source_turns.append({
-            "turn_index": state.dialog_state.turn_index,
-            "intent": plan.tool,
-            "message": user_message,
-            "plan": plan.model_dump(mode="json"),
-        })
-        _sync_legacy_context(context)
-
-
-def seed_constraint_state_from_plan(context: SessionContext, plan: UnifiedPlan | None) -> None:
-    if plan is None:
-        return
-    state = context.state
-    if state.constraint_state.hard == HardConstraints() and not state.constraint_state.soft:
-        state.constraint_state.hard = HardConstraints(
-            category=plan.category,
-            sub_category=plan.sub_category,
-            price_min=plan.price_min,
-            price_max=plan.price_max,
-            include_brands=list(plan.include_brands),
-            exclude_brands=list(plan.exclude_brands),
-        )
-        state.constraint_state.soft = dict(plan.soft_preferences)
-        _sync_legacy_context(context)
-
-
-def _sync_legacy_context(context: SessionContext) -> None:
-    hard = context.state.constraint_state.hard
-    soft = context.state.constraint_state.soft
-    if context.last_plan is not None:
-        context.last_plan.hard_constraints = hard.model_copy(deep=True)
-        context.last_plan.soft_preferences = dict(soft)
-        context.last_plan.category = hard.sub_category or hard.category or context.last_plan.category
-    context.global_profile.update({key: value for key, value in soft.items() if value})
-    if hard.price_min is not None:
-        context.global_profile["budget_min"] = hard.price_min
-    if hard.price_max is not None:
-        context.global_profile["budget_max"] = hard.price_max
-    if hard.include_brands:
-        context.global_profile["include_brands"] = dedupe(hard.include_brands)
-    if hard.exclude_terms:
-        context.global_profile["exclude_terms"] = dedupe(hard.exclude_terms)
-    if hard.exclude_brand_regions:
-        context.global_profile["exclude_brand_regions"] = dedupe(hard.exclude_brand_regions)
-```
-
-- [ ] **Step 4: 运行测试确认通过**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
-```
-预期: 全部 PASS
-
-- [ ] **Step 5: 提交**
-
-```bash
-git add server/backend/app/state_reducer.py server/tests/test_unified_plan.py
-git commit -m "refactor(state_reducer): consume UnifiedPlan directly, absorb IntentCompiler rules
-
-- StateReducer.apply() now takes UnifiedPlan instead of ShoppingIntentIR
-- Removes dependency on ConstraintEdits (deleted model)
-- seed_constraint_state_from_plan updated for UnifiedPlan
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
-
----
-
-### Task 4: 简化 agent.py 分派 — 移除 IntentCompiler，统一 UnifiedPlan 驱动
-
-**目标**: `_do_stream_message()` 和 `_dispatch_tool()` 改为 UnifiedPlan 驱动，删除 `_merge_tool_plan_into_ir()`
-
-**文件:**
-- 修改: `server/backend/app/agent.py`
-- 测试: `server/tests/test_demo_agent_flow.py`（作为回归测试）
-
-- [ ] **Step 1: 运行现有回归测试确认基线**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_demo_agent_flow.py -v -x 2>&1 | head -80
-```
-记录基线：哪些通过、哪些失败（预期有因模型变更导致的 FAIL）
-
-- [ ] **Step 2: 修改 _do_stream_message — 移除 IntentCompiler.compile 调用**
-
-在 `agent.py` 中找到 `_do_stream_message` 方法（约第 385 行），修改为:
-
-```python
-async def _do_stream_message(self, user_id: str, request: ChatRequest, compiled_ir, context: SessionContext, trace=None) -> AsyncIterator[dict]:
-    # 1. pending recovery 优先
-    recovery_events = self._build_pending_recovery_events(context, request)
-    if recovery_events is not None:
-        for event in recovery_events:
-            yield event
-        return
-
-    # 2. 立即通知客户端"正在思考"
-    message_id = _message_id()
-    yield self._assistant_state(
-        message_id, "thinking", "正在理解你的需求",
-        intent="thinking", retrieval_mode="no_retrieval",
-    )
-
-    # 3. ToolPlanner 唯一入口 → UnifiedPlan
-    import time as _time
-    seed_constraint_state_from_plan(context, context.last_plan)
-    plan_t0 = _time.time()
-    unified_plan = await self.tool_planner.plan(request, context)
-    if trace is not None:
-        trace.plan_tool_ms = (_time.time() - plan_t0) * 1000
-        trace.tool = unified_plan.tool
-        trace.tool_confidence = unified_plan.confidence
-
-    # 4. UnifiedPlan → StateReducer.apply()
-    self._prepare_context_for_turn(context, request, unified_plan)
-    self.state_reducer.apply(context, unified_plan, request.message or "")
-
-    # 5. 按 unified_plan.tool 分发
-    async for event in self._dispatch_tool(user_id, request, context, unified_plan):
-        yield event
-```
-
-- [ ] **Step 3: 修改 _dispatch_tool — 参数 unified_plan 替换 compiled_ir + tool_plan**
-
-将 `_dispatch_tool` 签名和相关参数统一为 `unified_plan: UnifiedPlan`。
-
-针对 `recommend_product / compare_products / scenario_bundle` 路径（约第 470 行），修改为:
-
-```python
-# 剩下 recommend_product / compare_products / scenario_bundle
-async for event in self._run_retrieval_flow(user_id, request, context, unified_plan):
-    yield event
-```
-
-- [ ] **Step 4: 修改 _run_retrieval_flow — 删除 _merge_tool_plan_into_ir**
-
-将 `_run_retrieval_flow` 的签名改为接收 `unified_plan: UnifiedPlan`，内部直接使用 `unified_plan` 的约束字段构建 `RetrievalPlan`，不再通过 `IntentCompiler.compile()` 和 `_merge_tool_plan_into_ir()`。
-
-关键改动:
-
-```python
-async def _run_retrieval_flow(
-    self, user_id: str, request: ChatRequest,
-    context: SessionContext, unified_plan,
-) -> AsyncIterator[dict]:
-    # 不再调用 intent_compiler.compile()
-    # 直接从 unified_plan 构建 RetrievalPlan
-    context_action = unified_plan.tool  # same_task / new_task 逻辑由 _prepare_context_for_turn 处理
-    plan = self.query_builder.build_from_unified(unified_plan, context, request.message)
-    self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
-    plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
-    
-    context.last_plan = plan
-    context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
-    
-    # ... 后续澄清/对比/Bundle/推荐逻辑保持不变 ...
-```
-
-- [ ] **Step 5: 删除 _merge_tool_plan_into_ir 方法**
-
-在 `agent.py` 中删除 `_merge_tool_plan_into_ir` 方法（约第 570-591 行）。
-
-- [ ] **Step 6: 确认导入和语法**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent import ShopGuideAgent; print('OK')"
-```
-预期: `OK`
+预期: `All old models import OK`
 
 - [ ] **Step 7: 提交**
 
 ```bash
-git add server/backend/app/agent.py
-git commit -m "refactor(agent): dispatch via UnifiedPlan, remove IntentCompiler.compile + _merge_tool_plan_into_ir
+git add server/backend/app/models.py server/tests/test_new_models.py
+git commit -m "feat(models): add FactContext, ConsistencyState, SessionRecovery for Stage 1
+
+- FactRecord/FactContext: LLM's sole source of product truth
+- ClaimRecord/ConsistencyState: cross-turn claim tracking
+- SessionRecovery: session restore status
+- SessionState gains consistency + checkpoint_stage fields
+- All existing models (ConstraintEdits/CartOperation/etc.) kept unchanged
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 5: 删除 IntentCompiler，精简 SemanticParser
+### Task 2: 创建 FactContextBuilder
 
-**目标**: 删除 `intent_compiler.py`，`semantic_layer.py` 只保留规则兜底
-
-**文件:**
-- 修改: `server/backend/app/semantic_layer.py`
-- 删除: `server/backend/app/intent_compiler.py`
-- 修改: `server/backend/app/agent.py`（移除导入）
-
-- [ ] **Step 1: 从 agent.py 移除 IntentCompiler 导入**
-
-在 `agent.py` 顶部 import 段中删除:
-```python
-from .intent_compiler import IntentCompiler
-```
-
-在 `__init__` 中删除:
-```python
-self.intent_compiler = IntentCompiler(self.llm_client, self.semantic_parser)
-```
-
-- [ ] **Step 2: 删除 intent_compiler.py**
-
-```bash
-rm /home/huadabioa/houlong/SoulDance/server/backend/app/intent_compiler.py
-```
-
-- [ ] **Step 3: 精简 semantic_layer.py — 保留 rule_semantic_frame，删除 SemanticParser LLM 路径**
-
-在 `semantic_layer.py` 中:
-- 删除 `SemanticParser` 类（及其 LLM 路径 `parse()` 方法）
-- 保留 `rule_semantic_frame()` 函数（在 ToolPlanner LLM 失败时兜底）
-- 保留 `_add_constraints` / `_relax_constraints` / `_remove_constraints`（其他地方仍在用）
-
-- [ ] **Step 4: 确认项目可导入**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.semantic_layer import rule_semantic_frame; print('OK')"
-```
-预期: `OK`
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent import ShopGuideAgent; print('OK')"
-```
-预期: `OK`
-
-- [ ] **Step 5: 提交**
-
-```bash
-git rm server/backend/app/intent_compiler.py
-git add server/backend/app/semantic_layer.py server/backend/app/agent.py
-git commit -m "refactor: delete IntentCompiler, trim SemanticParser to rule-only fallback
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
-
----
-
-### Task 6: 创建 FactContextBuilder
-
-**目标**: 从 `UnifiedPlan` + 检索排序结果构建 `FactContext`
+**目标:** 从检索排序结果构建 FactContext（prompt_block + product_index + brand_index）
 
 **文件:**
 - 创建: `server/backend/app/fact_context.py`
@@ -750,64 +249,73 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 ```python
 # server/tests/test_fact_context.py
 from __future__ import annotations
-from server.backend.app.models import Product, UnifiedPlan, RankedProduct, FactContext, FactRecord
+from server.backend.app.models import Product, RankedProduct, FactContext
 from server.backend.app.fact_context import FactContextBuilder
 
 
-def _make_product(pid: str, title: str, brand: str, price: float, cat: str = "手机", sub: str = "智能机") -> Product:
+def _mk_product(pid: str, title: str, brand: str, price: float,
+                cat: str = "手机", sub: str = "智能机", desc: str = "") -> Product:
     return Product(
         product_id=pid, title=title, brand=brand, price=price,
         category=cat, sub_category=sub, image_path="",
-        marketing_description=f"{title} 优质产品", search_text=title,
+        marketing_description=desc or f"{title} 优质产品",
+        search_text=title,
     )
 
 
-def _make_ranked(product: Product, score: float = 0.9) -> RankedProduct:
-    return RankedProduct(product=product, score=score, tier=1, reason="匹配")
+def _mk_ranked(p: Product, score: float = 0.9) -> RankedProduct:
+    return RankedProduct(product=p, score=score, tier=1, reason="匹配")
 
 
 def test_build_empty():
-    builder = FactContextBuilder()
-    ctx = builder.build(UnifiedPlan(), [])
+    ctx = FactContextBuilder().build([])
     assert ctx.prompt_block == ""
     assert ctx.product_index == {}
     assert ctx.brand_index == {}
+    assert ctx.denied_queries == []
 
 
 def test_build_with_products():
-    p1 = _make_product("P1", "小米 14 Ultra", "小米", 5999.0)
-    p2 = _make_product("P2", "华为 Mate 70 Pro", "华为", 6999.0)
-    ranked = [_make_ranked(p1), _make_ranked(p2)]
-    plan = UnifiedPlan(tool="recommend_product", denied_queries=["小米 17 Max"])
-    builder = FactContextBuilder()
-    ctx = builder.build(plan, ranked)
-    # product_index
+    p1 = _mk_product("P1", "小米 14 Ultra", "小米", 5999.0)
+    p2 = _mk_product("P2", "华为 Mate 70 Pro", "华为", 6999.0)
+    ranked = [_mk_ranked(p1), _mk_ranked(p2)]
+    ctx = FactContextBuilder().build(ranked, denied_queries=["小米 17 Max"])
+
     assert "P1" in ctx.product_index
     assert ctx.product_index["P1"].brand == "小米"
     assert ctx.product_index["P1"].price == 5999.0
-    # brand_index
     assert "P1" in ctx.brand_index["小米"]
     assert "P2" in ctx.brand_index["华为"]
-    # prompt_block 包含锚点格式
+
+    # prompt_block 格式
     assert "[[P1]]" in ctx.prompt_block
     assert "[[P2]]" in ctx.prompt_block
     assert "小米 14 Ultra" in ctx.prompt_block
     assert "¥5999" in ctx.prompt_block
+
     # denied_queries 透传
     assert "小米 17 Max" in ctx.denied_queries
 
 
-def test_prompt_block_format():
-    p = _make_product("P1", "测试商品", "测试品牌", 100.0, "个护", "防晒霜")
-    ranked = [_make_ranked(p)]
-    ctx = FactContextBuilder().build(UnifiedPlan(), ranked)
-    # 锚点格式: [[product_id]]
-    assert "[[P1]]" in ctx.prompt_block
-    # 包含价格
-    assert "¥100" in ctx.prompt_block
-    # 包含规则说明
+def test_prompt_block_contains_rules():
+    p = _mk_product("P1", "测试", "牌子", 100.0)
+    ctx = FactContextBuilder().build([_mk_ranked(p)])
     assert "你唯一可以引用的商品信息" in ctx.prompt_block
+    assert "[[product_id]]" in ctx.prompt_block
     assert "不要编造任何商品名称" in ctx.prompt_block
+
+
+def test_key_specs_extraction():
+    p = _mk_product("P1", "商品", "品牌", 100.0,
+                    desc="徕卡镜头, 骁龙8Gen3, 1英寸大底")
+    ctx = FactContextBuilder().build([_mk_ranked(p)])
+    assert "徕卡镜头" in ctx.prompt_block
+    assert "骁龙8Gen3" in ctx.prompt_block
+
+
+def test_denied_queries_default():
+    ctx = FactContextBuilder().build([])
+    assert ctx.denied_queries == []
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -820,32 +328,30 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_fact_
 - [ ] **Step 3: 创建 fact_context.py**
 
 ```python
-"""事实上下文构建器 — 将检索结果组装为 LLM 唯一事实来源。"""
+"""事实上下文构建器 — 将检索排序结果组装为 LLM 唯一事实来源。"""
 from __future__ import annotations
 
-from .models import UnifiedPlan, RankedProduct, FactContext, FactRecord
+import re
+
+from .models import RankedProduct, FactContext, FactRecord
 
 
 class FactContextBuilder:
-    """将 UnifiedPlan + 检索排序结果组装为 FactContext。
+    """将检索排序结果组装为 FactContext。
 
-    prompt_block 会注入到 LLM system prompt 末尾，要求 LLM 用 [[product_id]] 锚点
-    格式引用商品。product_index 和 brand_index 供 AnchorValidator 校验使用。
+    prompt_block 注入 LLM system prompt 末尾，要求 LLM 用 [[product_id]] 锚点
+    格式引用商品。product_index 供 AnchorValidator 流式校验；brand_index 供
+    ConsistencyTracker 使用。
     """
 
-    def build(self, plan: UnifiedPlan, ranked: list[RankedProduct]) -> FactContext:
+    def build(self, ranked: list[RankedProduct], *,
+              denied_queries: list[str] | None = None) -> FactContext:
         if not ranked:
-            return FactContext(
-                prompt_block="",
-                product_index={},
-                brand_index={},
-                denied_queries=list(plan.denied_queries) if hasattr(plan, 'denied_queries') else [],
-            )
+            return FactContext(denied_queries=list(denied_queries or []))
 
         records: list[FactRecord] = []
         for item in ranked:
             product = item.product
-            specs = self._extract_key_specs(product)
             records.append(FactRecord(
                 product_id=product.product_id,
                 title=product.title,
@@ -853,7 +359,7 @@ class FactContextBuilder:
                 price=product.price,
                 category=product.category,
                 sub_category=product.sub_category,
-                key_specs=specs,
+                key_specs=self._extract_key_specs(product),
             ))
 
         product_index = {r.product_id: r for r in records}
@@ -861,32 +367,23 @@ class FactContextBuilder:
         for r in records:
             brand_index.setdefault(r.brand, []).append(r.product_id)
 
-        prompt_block = self._render_prompt_block(records)
-        denied = list(getattr(plan, 'denied_queries', []) or [])
-
         return FactContext(
-            prompt_block=prompt_block,
+            prompt_block=self._render_prompt_block(records),
             product_index=product_index,
             brand_index=brand_index,
-            denied_queries=denied,
+            denied_queries=list(denied_queries or []),
         )
 
     def _extract_key_specs(self, product) -> list[str]:
-        """从 marketing_description 和 reviews 中提取核心卖点。"""
-        import re
         keywords: list[str] = []
         desc = (product.marketing_description or "").strip()
         if desc:
-            # 按逗号/顿号/空格拆分，取前 3 个短词
             parts = re.split(r"[，,、\s]+", desc)
             keywords.extend(p.strip() for p in parts[:3] if 2 <= len(p.strip()) <= 20)
-        # 从 reviews 提取高频关键词
-        reviews = product.reviews or []
-        for review in reviews[:3]:
+        for review in (product.reviews or [])[:3]:
             text = str(review.get("content", ""))
             if text and len(text) < 30:
                 keywords.append(text.strip())
-        # 去重，限制 5 个
         seen: set[str] = set()
         result: list[str] = []
         for kw in keywords:
@@ -933,16 +430,21 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_fact_
 
 ```bash
 git add server/backend/app/fact_context.py server/tests/test_fact_context.py
-git commit -m "feat: add FactContextBuilder — structured fact sheet for LLM grounding
+git commit -m "feat: FactContextBuilder — structured fact sheet for LLM anchoring
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 7: 创建 AnchorValidator
+### Task 3: 创建 AnchorValidator（流式模式）
 
-**目标**: 校验 LLM 输出的 `[[product_id]]` 锚点，替换为真实商品名，检测裸奔商品名
+**目标:** 逐 chunk 检测 `[[product_id]]` 锚点，微缓冲校验，命中→展开为商品名，未命中→替换为「该商品」
+
+**关键设计:**
+- 普通文本 chunk：**立即透传**（零延迟）
+- 遇到 `[[`：进入缓冲模式，收集到 `]]` →查 `fact_ctx.product_index` → 展开/替换 → 退出缓冲
+- 流式结束后：deferred `detect_stray_names()` 在**原始 LLM 输出**上执行（expand 前），排除已被锚点覆盖的 title span，仅记 warning log + yield `hallucination_corrected` 事件
 
 **文件:**
 - 创建: `server/backend/app/anchor_validator.py`
@@ -953,104 +455,154 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 ```python
 # server/tests/test_anchor_validator.py
 from __future__ import annotations
+import asyncio
 from server.backend.app.models import FactContext, FactRecord
-from server.backend.app.anchor_validator import AnchorValidator, ValidationResult
+from server.backend.app.anchor_validator import AnchorValidator
 
 
-def _make_ctx() -> FactContext:
-    r1 = FactRecord(product_id="P1", title="小米 14 Ultra", brand="小米", price=5999.0, category="手机", sub_category="智能机")
-    r2 = FactRecord(product_id="P2", title="华为 Mate 70", brand="华为", price=6999.0, category="手机", sub_category="智能机")
+def _mk_ctx() -> FactContext:
+    r1 = FactRecord(product_id="P1", title="小米 14 Ultra", brand="小米", price=5999.0,
+                    category="手机", sub_category="智能机")
+    r2 = FactRecord(product_id="P2", title="华为 Mate 70", brand="华为", price=6999.0,
+                    category="手机", sub_category="智能机")
     return FactContext(
-        prompt_block="测试",
+        prompt_block="",
         product_index={"P1": r1, "P2": r2},
         brand_index={"小米": ["P1"], "华为": ["P2"]},
-        denied_queries=[],
     )
 
 
-def test_extract_anchors():
-    text = "我推荐 [[P1]]，它比 [[P2]] 更适合你"
-    anchors = AnchorValidator.extract_anchors(text)
-    assert anchors == ["P1", "P2"]
+def test_extract_anchors_from_text():
+    text = "推荐 [[P1]]，备选 [[P2]]"
+    assert AnchorValidator.extract_anchors(text) == ["P1", "P2"]
 
 
 def test_extract_anchors_none():
-    assert AnchorValidator.extract_anchors("没有锚点的文本") == []
+    assert AnchorValidator.extract_anchors("纯文本无锚点") == []
 
 
-def test_resolve_all_valid():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    resolved = validator.resolve(["P1", "P2"], ctx)
-    assert resolved["P1"] is not None
-    assert resolved["P2"] is not None
+def test_resolve_valid():
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    resolved = v.resolve("P1", ctx)
+    assert resolved is not None
+    assert resolved.title == "小米 14 Ultra"
 
 
-def test_resolve_partial_invalid():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    resolved = validator.resolve(["P1", "FAKE_ID"], ctx)
-    assert resolved["P1"] is not None
-    assert resolved["FAKE_ID"] is None
+def test_resolve_invalid():
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    assert v.resolve("FAKE_ID", ctx) is None
 
 
-def test_validate_clean():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    resolved = {"P1": ctx.product_index["P1"]}
-    result = validator.validate("推荐 [[P1]]", resolved, ctx)
-    assert result.is_valid
-    assert result.stray_names == []
+def test_expand_anchor():
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    result = v.expand_anchor("P1", ctx)
+    assert result == "**小米 14 Ultra**"
 
 
-def test_validate_with_unresolved_anchor():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    resolved = {"FAKE_ID": None}
-    result = validator.validate("看看 [[FAKE_ID]]", resolved, ctx)
-    assert not result.is_valid
-    assert "FAKE_ID" in result.unresolved_anchors
+def test_expand_anchor_invalid():
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    result = v.expand_anchor("FAKE_ID", ctx)
+    assert result == "该商品"
 
 
-def test_expand_anchors():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    resolved = {"P1": ctx.product_index["P1"], "P2": ctx.product_index["P2"]}
-    expanded, product_ids = validator.expand("推荐 [[P1]]，备选 [[P2]]", resolved)
-    assert "小米 14 Ultra" in expanded
-    assert "华为 Mate 70" in expanded
-    assert "[[" not in expanded
-    assert "P1" in product_ids
-    assert "P2" in product_ids
+def test_detect_stray_names_on_original_text():
+    """裸奔检测应在原始 LLM 输出上执行（expand 之前）。"""
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    # 原始文本中直接写了商品名但没用 [[P1]] 锚点
+    original_text = "我推荐小米 14 Ultra，它拍照很好"
+    strays = v.detect_stray_names(original_text, ctx)
+    assert len(strays) >= 1
+    assert any("小米 14 Ultra" in s for s in strays)
 
 
-def test_detect_stray_names():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    # "小米 14 Ultra" 是 P1 的 title，但没有对应锚点
-    text = "我推荐小米 14 Ultra，它很好"
-    stray = validator.detect_stray_names(text, ctx)
-    assert len(stray) >= 1
-    assert any("小米" in s for s in stray)
+def test_detect_stray_names_excludes_anchored():
+    """被锚点覆盖的 title 不应被检测为 stray。"""
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    # 用了 [[P1]] 锚点的文本
+    original_text = "我推荐 [[P1]]，拍照很好。备选 [[P2]]。"
+    strays = v.detect_stray_names(original_text, ctx)
+    # P1/P2 已被锚点覆盖，不应该是 stray
+    assert all("小米 14 Ultra" not in s for s in strays)
 
 
-def test_detect_stray_names_clean():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    text = "根据你的需求，这几款都不错"
-    stray = validator.detect_stray_names(text, ctx)
-    assert stray == []
+async def test_stream_process_normal_text():
+    """普通文本应逐 chunk 立即透传。"""
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    chunks = ["推荐一款", "手机给", "你"]
+    results = []
+    async for event in v.stream_process(chunks, ctx):
+        results.append(event)
+    # 所有普通文本应立即透传
+    text_parts = [e["text"] for e in results if e["type"] == "text_delta"]
+    assert "".join(text_parts) == "推荐一款手机给你"
 
 
-def test_full_process():
-    ctx = _make_ctx()
-    validator = AnchorValidator()
-    llm_output = "我推荐 [[P1]]，它的徕卡镜头拍照效果出色。备选 [[P2]]。"
-    result = validator.process(llm_output, ctx)
-    assert result.is_valid
-    assert "小米 14 Ultra" in result.clean_text
-    assert "华为 Mate 70" in result.clean_text
-    assert result.referenced_product_ids == ["P1", "P2"]
+async def test_stream_process_with_anchor():
+    """含锚点的 chunk 应展开后透传。"""
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    chunks = ["我推荐 ", "[[P1]]", "，它拍照很好"]
+    results = []
+    async for event in v.stream_process(chunks, ctx):
+        results.append(event)
+    text_parts = [e["text"] for e in results if e["type"] == "text_delta"]
+    full = "".join(text_parts)
+    assert "小米 14 Ultra" in full
+    assert "[[" not in full
+
+
+async def test_stream_process_with_invalid_anchor():
+    """无效锚点应替换为「该商品」并记录 warning。"""
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    chunks = ["看看 ", "[[FAKE_ID]]", " 怎么样"]
+    results = []
+    async for event in v.stream_process(chunks, ctx):
+        results.append(event)
+    text_parts = [e["text"] for e in results if e["type"] == "text_delta"]
+    full = "".join(text_parts)
+    assert "该商品" in full
+    # 应有 warning 事件
+    warnings = [e for e in results if e["type"] == "anchor_warning"]
+    assert len(warnings) >= 1
+
+
+async def test_stream_process_split_anchor():
+    """锚点跨越两个 chunk 时应正确缓冲拼接。"""
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    chunks = ["推荐 ", "[", "[P1]", "] 不错"]
+    results = []
+    async for event in v.stream_process(chunks, ctx):
+        results.append(event)
+    text_parts = [e["text"] for e in results if e["type"] == "text_delta"]
+    full = "".join(text_parts)
+    assert "小米 14 Ultra" in full
+    assert "[[" not in full
+
+
+async def test_stream_process_stray_detection_at_end():
+    """流式结束时执行 deferred 裸奔检测。"""
+    ctx = _mk_ctx()
+    v = AnchorValidator()
+    # 不用锚点直接写商品名
+    chunks = ["推荐 小米 14 Ultra，拍照不错"]
+    results = []
+    async for event in v.stream_process(chunks, ctx):
+        results.append(event)
+    # 文本已透传（裸奔无法在流式中撤回）
+    text_parts = [e["text"] for e in results if e["type"] == "text_delta"]
+    assert "小米 14 Ultra" in "".join(text_parts)
+    # 但应有一个 stray_warning 事件
+    strays = [e for e in results if e["type"] == "stray_warning"]
+    assert len(strays) >= 1
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -1063,26 +615,26 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_ancho
 - [ ] **Step 3: 创建 anchor_validator.py**
 
 ```python
-"""锚点校验器 — 校验 LLM 输出中的 [[product_id]] 锚点，替换为真实商品信息。"""
+"""锚点校验器（流式模式）— 逐 chunk 检测 [[product_id]]，微缓冲校验后透传。"""
 from __future__ import annotations
 
+import logging
 import re
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterator
 
 from .models import FactContext, FactRecord
 
-
-@dataclass
-class ValidationResult:
-    is_valid: bool = True
-    clean_text: str = ""
-    referenced_product_ids: list[str] = field(default_factory=list)
-    unresolved_anchors: list[str] = field(default_factory=list)
-    stray_names: list[str] = field(default_factory=list)
+logger = logging.getLogger(__name__)
 
 
 class AnchorValidator:
-    """校验和清洗 LLM 输出中的商品锚点。"""
+    """流式锚点校验器。
+
+    普通文本: 立即透传（零延迟）
+    遇到 `[[`: 缓冲到 `]]` → 命中 product_index → 展开为 "**商品名**"
+                                    → 未命中 → 替换为 "该商品" + log warning
+    流式结束: deferred 裸奔名检测（记 warning + yield stray_warning 事件）
+    """
 
     ANCHOR_PATTERN = re.compile(r'\[\[([A-Za-z0-9_-]+)\]\]')
 
@@ -1090,70 +642,104 @@ class AnchorValidator:
     def extract_anchors(text: str) -> list[str]:
         return AnchorValidator.ANCHOR_PATTERN.findall(text)
 
-    def resolve(self, anchor_ids: list[str], fact_ctx: FactContext) -> dict[str, FactRecord | None]:
-        return {aid: fact_ctx.product_index.get(aid) for aid in anchor_ids}
+    def resolve(self, anchor_id: str, fact_ctx: FactContext) -> FactRecord | None:
+        return fact_ctx.product_index.get(anchor_id)
 
-    def validate(self, original_text: str, resolved: dict[str, FactRecord | None], fact_ctx: FactContext) -> ValidationResult:
-        result = ValidationResult()
-        for aid, record in resolved.items():
-            if record is None:
-                result.unresolved_anchors.append(aid)
-                result.is_valid = False
-        if not result.is_valid:
-            result.clean_text = self._remove_unresolved_anchors(original_text, result.unresolved_anchors)
+    def expand_anchor(self, anchor_id: str, fact_ctx: FactContext) -> str:
+        record = self.resolve(anchor_id, fact_ctx)
+        if record is not None:
+            return f"**{record.title}**"
+        logger.warning(f"[anchor_validator] unresolved anchor: {anchor_id}")
+        return "该商品"
+
+    async def stream_process(
+        self,
+        chunks: list[str] | AsyncIterator,
+        fact_ctx: FactContext,
+    ) -> AsyncIterator[dict]:
+        """流式处理 LLM 输出 chunks。
+
+        对每个 chunk:
+        - 不在缓冲模式: 扫描 `[[`，之前部分立即 yield；`[[` 之后进入缓冲
+        - 在缓冲模式: 追加到 buffer，`]]` 出现时 → expand_anchor() → yield → 退出缓冲
+
+        全部 chunks 处理完后，执行 deferred 裸奔检测。
+        """
+        collected_text: list[str] = []
+        buffer_mode = False
+        anchor_buffer = ""
+
+        # 支持 list 和 async iterator
+        if hasattr(chunks, '__aiter__'):
+            async_iter = chunks
         else:
-            result.clean_text = original_text
-        return result
+            async def _list_iter():
+                for c in chunks:
+                    yield c
+            async_iter = _list_iter()
 
-    def expand(self, text: str, resolved: dict[str, FactRecord | None]) -> tuple[str, list[str]]:
-        """将 [[product_id]] 替换为加粗的商品名，返回 (扩展后文本, 引用的 product_id 列表)。"""
-        valid = {aid: rec for aid, rec in resolved.items() if rec is not None}
-        product_ids: list[str] = []
+        async for chunk in async_iter:
+            if not chunk:
+                continue
+            collected_text.append(chunk)
 
-        def _replace(match):
-            aid = match.group(1)
-            rec = valid.get(aid)
-            if rec is not None:
-                product_ids.append(aid)
-                return f"**{rec.title}**"
-            return match.group(0)  # 保留未解析的不要紧，已在 validate 中移除
+            if buffer_mode:
+                anchor_buffer += chunk
+                if ']]' in anchor_buffer:
+                    # 找到闭合标记
+                    anchor_content, rest = anchor_buffer.split(']]', 1)
+                    # 提取 anchor_id（去掉可能的 [[ 前缀）
+                    anchor_id = anchor_content.lstrip('[')
+                    expanded = self.expand_anchor(anchor_id, fact_ctx)
+                    yield {"type": "text_delta", "text": expanded}
+                    buffer_mode = False
+                    anchor_buffer = ""
+                    # rest 中可能还有新内容需要处理
+                    if rest:
+                        yield {"type": "text_delta", "text": rest}
+                continue
 
-        expanded = AnchorValidator.ANCHOR_PATTERN.sub(_replace, text)
-        return expanded, product_ids
+            if '[[' in chunk:
+                before, rest = chunk.split('[[', 1)
+                if before:
+                    yield {"type": "text_delta", "text": before}
+                buffer_mode = True
+                anchor_buffer = rest
+            else:
+                yield {"type": "text_delta", "text": chunk}
 
-    def detect_stray_names(self, text: str, fact_ctx: FactContext) -> list[str]:
-        """检测文本中是否出现未用锚点标记的商品名（裸奔检测）。"""
-        stray: list[str] = []
-        for record in fact_ctx.product_index.values():
-            # 只在 title 长度 >= 4 时才检测（避免短词误报）
-            if len(record.title) >= 4 and record.title in text:
-                # 确认该 product_id 确实没有以锚点形式出现
-                if f"[[{record.product_id}]]" not in text:
-                    stray.append(record.title)
-        return stray
+        # 如果流结束还在缓冲中（截断的锚点），原样输出
+        if buffer_mode and anchor_buffer:
+            yield {"type": "text_delta", "text": f"[[{anchor_buffer}"}
 
-    def process(self, llm_output: str, fact_ctx: FactContext) -> ValidationResult:
-        """完整处理流程：提取 → 解析 → 校验 → 扩展 → 裸奔检测。"""
-        anchors = self.extract_anchors(llm_output)
-        resolved = self.resolve(anchors, fact_ctx)
-        result = self.validate(llm_output, resolved, fact_ctx)
-        if result.is_valid:
-            expanded_text, product_ids = self.expand(result.clean_text, resolved)
-            result.clean_text = expanded_text
-            result.referenced_product_ids = product_ids
-            # 裸奔检测
-            result.stray_names = self.detect_stray_names(result.clean_text, fact_ctx)
-            if result.stray_names:
-                result.is_valid = False
-        return result
+        # deferred 裸奔检测：在原始文本上检测未被锚点覆盖的商品名
+        if fact_ctx.product_index:
+            full_text = "".join(collected_text)
+            strays = self.detect_stray_names(full_text, fact_ctx)
+            if strays:
+                logger.warning(f"[anchor_validator] stray names detected: {strays}")
+                yield {
+                    "type": "stray_warning",
+                    "stray_names": strays,
+                }
 
-    def _remove_unresolved_anchors(self, text: str, unresolved: list[str]) -> str:
-        """移除包含未解析锚点的句子。"""
-        for aid in unresolved:
-            # 移除 [[FAKE_ID]] 及其所在的整句（以 。！？\n 为边界）
-            pattern = re.compile(r'[^。！？\n]*\[\[(' + re.escape(aid) + r')\]\][^。！？\n]*[。！？]?')
-            text = pattern.sub('', text)
-        return text.strip()
+    def detect_stray_names(self, original_text: str, fact_ctx: FactContext) -> list[str]:
+        """在原始 LLM 文本上检测未用锚点标记的商品名。
+
+        注意: 必须在 expand 之前、原始文本上执行。
+        已被 [[product_id]] 锚点覆盖的 title 自动排除。
+        """
+        strays: list[str] = []
+        # 找出原始文本中所有已用锚点的 product_id
+        anchored_ids = set(self.extract_anchors(original_text))
+
+        for pid, record in fact_ctx.product_index.items():
+            if pid in anchored_ids:
+                continue  # 已用锚点覆盖，跳过
+            title = record.title
+            if len(title) >= 4 and title in original_text:
+                strays.append(title)
+        return strays
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
@@ -1167,208 +753,16 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_ancho
 
 ```bash
 git add server/backend/app/anchor_validator.py server/tests/test_anchor_validator.py
-git commit -m "feat: add AnchorValidator — [[product_id]] anchor validation and expansion
+git commit -m "feat: AnchorValidator — streaming [[product_id]] validation with deferred stray detection
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 8: 集成 FactContext + AnchorValidator 到 agent.py 生成链路
+### Task 4: 创建 ConsistencyTracker
 
-**目标**: `_stream_generate_text_events` 改为全量缓冲 → FactContext 构建 → LLM 锚定生成 → AnchorValidator 校验 → 推送
-
-**文件:**
-- 修改: `server/backend/app/agent.py`
-- 修改: `server/backend/app/prompt_registry.py`（注入 FactContext.prompt_block）
-- 测试: `server/tests/test_demo_agent_flow.py`
-
-- [ ] **Step 1: 在 agent.py 的 __init__ 中初始化 FactContextBuilder 和 AnchorValidator**
-
-在 `ShopGuideAgent.__init__` 中追加:
-
-```python
-from .fact_context import FactContextBuilder
-from .anchor_validator import AnchorValidator
-self.fact_builder = FactContextBuilder()
-self.anchor_validator = AnchorValidator()
-```
-
-- [ ] **Step 2: 修改 _stream_recommendation_events — 在 LLM 生成前构建 FactContext**
-
-在 `_stream_recommendation_events` 方法中（约第 855 行），LLM 生成前插入:
-
-```python
-# 构建 FactContext
-fact_ctx = self.fact_builder.build(plan, selected)
-
-# 修改 prompt 组装，注入 fact_ctx.prompt_block
-# _stream_generate_text_events 接收 fact_ctx 参数
-async for event in self._stream_generate_text_events(message_id, request, plan, selected, None, fact_ctx=fact_ctx):
-    ...
-```
-
-- [ ] **Step 3: 修改 _stream_generate_text_events — 全量缓冲 + 校验后推送**
-
-修改方法签名和实现:
-
-```python
-async def _stream_generate_text_events(
-    self, message_id: str, request: ChatRequest,
-    plan: RetrievalPlan, ranked: list[RankedProduct],
-    focus_product: Product | None,
-    fact_ctx: FactContext | None = None,
-) -> AsyncIterator[dict]:
-    if not ranked:
-        for event in _text_delta_events(message_id, _no_match_text(plan)):
-            yield event
-        return
-
-    ctx = self.sessions.get("anonymous", request.session_id)
-    
-    # 全量收集 LLM 输出
-    chunks: list[str] = []
-    try:
-        async for chunk in self.llm_client.stream_response(
-            request.message, plan, ranked, focus_product,
-            context=ctx, fact_block=fact_ctx.prompt_block if fact_ctx else "",
-        ):
-            if chunk:
-                chunks.append(chunk)
-    except Exception:
-        pass
-
-    if not chunks:
-        fallback = fallback_text_for_failure("llm_error", plan)
-        for event in _text_delta_events(message_id, fallback):
-            yield event
-        return
-
-    streamed_text = "".join(chunks)
-
-    # AnchorValidator 校验
-    if fact_ctx and fact_ctx.product_index:
-        validation = self.anchor_validator.process(streamed_text, fact_ctx)
-        if not validation.is_valid:
-            logger.warning(
-                f"[anchor_validation] stray_names={validation.stray_names} "
-                f"unresolved={validation.unresolved_anchors}"
-            )
-            fallback = fallback_text_for_failure("hallucination_detected", plan, context=ctx)
-            yield {"type": "hallucination_corrected", "message_id": message_id,
-                   "original_issues": validation.stray_names + validation.unresolved_anchors}
-            for event in _text_delta_events(message_id, fallback):
-                yield event
-            return
-        # 使用清洗后的文本
-        final_text = validation.clean_text
-    else:
-        final_text = streamed_text
-
-    # 流式推送清洗后的文本
-    for event in _text_delta_events(message_id, final_text):
-        yield event
-```
-
-- [ ] **Step 4: 确认 agent.py 可导入**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent import ShopGuideAgent; print('OK')"
-```
-预期: `OK`
-
-- [ ] **Step 5: 提交**
-
-```bash
-git add server/backend/app/agent.py
-git commit -m "feat(agent): integrate FactContext + AnchorValidator into generate pipeline
-
-- LLM output is fully buffered before streaming to user
-- AnchorValidator checks all [[product_id]] anchors against FactContext
-- Hallucinated content triggers fallback instead of reaching user
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
-
----
-
-### Task 9: 更新 HallucinationChecker — 降级为 AnchorValidator 的兜底层
-
-**目标**: 保留价格偏差检测，去掉已被 AnchorValidator 覆盖的虚构 ID/名称检测
-
-**文件:**
-- 修改: `server/backend/app/hallucination_checker.py`
-- 测试: `server/tests/test_product_analysis.py`（现有测试）
-
-- [ ] **Step 1: 精简 HallucinationChecker**
-
-```python
-"""幻觉检测器（兜底层）—— 保留价格偏差检测，虚构 ID/名称检测已由 AnchorValidator 覆盖。"""
-from __future__ import annotations
-
-import re
-from dataclasses import dataclass, field
-
-from .models import RankedProduct, FactContext
-
-
-@dataclass
-class HallucinationReport:
-    is_clean: bool = True
-    price_mismatches: list[dict] = field(default_factory=list)
-
-
-class HallucinationChecker:
-    """检测 LLM 回复中的价格偏差（兜底层）。
-
-    AnchorValidator 已覆盖虚构 product_id 和虚构商品名的检测。
-    本模块只保留价格偏差检测，作为 AnchorValidator 处理后的二次校验。
-    """
-
-    def __init__(self, price_tolerance: float = 0.1):
-        self.price_tolerance = price_tolerance
-
-    def verify(self, response_text: str, fact_ctx: FactContext) -> HallucinationReport:
-        """校验文本中提到的价格是否与 FactContext 一致。"""
-        report = HallucinationReport()
-        title_to_price = {r.title: r.price for r in fact_ctx.product_index.values()}
-
-        price_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*元')
-        for match in price_pattern.finditer(response_text):
-            mentioned_price = float(match.group(1))
-            for title, actual_price in title_to_price.items():
-                if title in response_text:
-                    if abs(mentioned_price - actual_price) / max(actual_price, 1) > self.price_tolerance:
-                        report.price_mismatches.append({
-                            "product": title,
-                            "mentioned": mentioned_price,
-                            "actual": actual_price,
-                        })
-                        report.is_clean = False
-        return report
-```
-
-- [ ] **Step 2: 确认现有测试可运行**
-
-```bash
-cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.hallucination_checker import HallucinationChecker; print('OK')"
-```
-预期: `OK`
-
-- [ ] **Step 3: 提交**
-
-```bash
-git add server/backend/app/hallucination_checker.py
-git commit -m "refactor(hallucination_checker): reduce to price-only verification, AnchorValidator covers IDs/names
-
-Co-Authored-By: Claude <noreply@anthropic.com>"
-```
-
----
-
-### Task 10: 创建 ConsistencyTracker
-
-**目标**: 跨轮次校验回答一致性 — denial cache、price consistency、focus drift
+**目标:** denial cache 记录/查询、focus drift 检测、claim 记录
 
 **文件:**
 - 创建: `server/backend/app/consistency_tracker.py`
@@ -1380,10 +774,10 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 # server/tests/test_consistency_tracker.py
 from __future__ import annotations
 from server.backend.app.models import SessionContext, ConsistencyState, ClaimRecord, FactContext, FactRecord
-from server.backend.app.consistency_tracker import ConsistencyTracker
+from server.backend.app.consistency_tracker import ConsistencyTracker, ConsistencyResult
 
 
-def _make_ctx(denied: list[str] | None = None, confirmed: str | None = None) -> SessionContext:
+def _mk_ctx(denied=None, confirmed=None) -> SessionContext:
     ctx = SessionContext(session_id="test")
     ctx.state.consistency = ConsistencyState(
         denied_product_queries=denied or [],
@@ -1392,74 +786,70 @@ def _make_ctx(denied: list[str] | None = None, confirmed: str | None = None) -> 
     return ctx
 
 
-def _make_fact_ctx() -> FactContext:
-    r = FactRecord(product_id="P1", title="小米 14 Ultra", brand="小米", price=5999.0, category="手机", sub_category="智能机")
+def _mk_fact_ctx() -> FactContext:
+    r = FactRecord(product_id="P1", title="小米 14 Ultra", brand="小米", price=5999.0,
+                   category="手机", sub_category="智能机")
     return FactContext(
-        prompt_block="",
         product_index={"P1": r},
         brand_index={"小米": ["P1"]},
-        denied_queries=[],
     )
-
-
-def test_check_denial_cache_blocks():
-    """之前说'小米 17 Max 不存在'，后续检索结果不能出现相关商品。"""
-    ctx = _make_ctx(denied=["小米 17 Max"])
-    tracker = ConsistencyTracker()
-    result = tracker.check_before_output(
-        session_ctx=ctx,
-        ranked_product_ids=["P1"],
-        fact_ctx=_make_fact_ctx(),
-    )
-    assert result.is_consistent
-
-
-def test_check_denial_cache_empty_context():
-    """无 denial cache 时不应拦截任何商品。"""
-    ctx = _make_ctx()
-    tracker = ConsistencyTracker()
-    result = tracker.check_before_output(ctx, ["P1", "P2"], _make_fact_ctx())
-    assert result.is_consistent
 
 
 def test_record_denial():
-    """记录一条'不存在'声明。"""
-    ctx = _make_ctx()
+    ctx = _mk_ctx()
     tracker = ConsistencyTracker()
     tracker.record_denial(ctx, "小米 17 Max", turn=3)
     assert "小米 17 Max" in ctx.state.consistency.denied_product_queries
-    assert len(ctx.state.consistency.claims) == 1
+    assert ctx.state.consistency.claims[0].claim_type == "not_exists"
 
 
 def test_record_claim():
-    ctx = _make_ctx()
+    ctx = _mk_ctx()
     tracker = ConsistencyTracker()
-    tracker.record_claim(ctx, "P1", "recommendation", "主推小米 14 Ultra", turn=2)
+    tracker.record_claim(ctx, "P1", "recommendation", "主推小米 14 Ultra ¥5999", turn=2)
     assert ctx.state.consistency.claims[0].product_id == "P1"
 
 
 def test_set_confirmed_product():
-    ctx = _make_ctx()
+    ctx = _mk_ctx()
     tracker = ConsistencyTracker()
     tracker.set_confirmed_product(ctx, "P1")
     assert ctx.state.consistency.confirmed_product_id == "P1"
 
 
-def test_check_focus_drift():
-    """用户已确认关注 P1，新回复应主要围绕 P1。"""
-    ctx = _make_ctx(confirmed="P1")
+def test_check_focus_drift_detected():
+    """用户已确认关注 P1，新推荐不含 P1 → 漂移。"""
+    ctx = _mk_ctx(confirmed="P1")
     tracker = ConsistencyTracker()
-    # 新回复推荐的 product_ids 不包含 P1 → 漂移
-    result = tracker.check_before_output(ctx, ["P2", "P3"], _make_fact_ctx())
+    result = tracker.check_before_output(ctx, ["P2", "P3"], _mk_fact_ctx())
     assert not result.is_consistent
-    assert result.focus_drift_detected is True
+    assert result.focus_drift_detected
 
 
 def test_check_focus_no_drift():
-    ctx = _make_ctx(confirmed="P1")
+    ctx = _mk_ctx(confirmed="P1")
     tracker = ConsistencyTracker()
-    result = tracker.check_before_output(ctx, ["P1", "P2"], _make_fact_ctx())
+    result = tracker.check_before_output(ctx, ["P1", "P2"], _mk_fact_ctx())
     assert result.is_consistent
+
+
+def test_check_empty_context():
+    ctx = _mk_ctx()
+    tracker = ConsistencyTracker()
+    result = tracker.check_before_output(ctx, ["P1"], _mk_fact_ctx())
+    assert result.is_consistent
+
+
+def test_get_denied_queries():
+    ctx = _mk_ctx(denied=["查询A", "查询B"])
+    tracker = ConsistencyTracker()
+    assert set(tracker.get_denied_queries(ctx)) == {"查询A", "查询B"}
+
+
+def test_get_denied_queries_empty():
+    ctx = _mk_ctx()
+    tracker = ConsistencyTracker()
+    assert tracker.get_denied_queries(ctx) == []
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -1476,7 +866,7 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_consi
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .models import SessionContext, ClaimRecord, FactContext
 
@@ -1491,12 +881,12 @@ class ConsistencyResult:
 
 
 class ConsistencyTracker:
-    """校验跨轮次回答一致性。
+    """跨轮一致性校验（纯规则，不调 LLM）。
 
-    3 条规则（纯规则，不调 LLM）：
-    - Rule 1 (Denial Cache): 已声明"不存在"的查询词对应的商品不能出现在后续推荐中
-    - Rule 2 (Price Consistency): 同一 product_id 的价格必须与 FactContext 一致
-    - Rule 3 (Focus Drift): 已确认关注某商品时，后续推荐应主要围绕它
+    3 条规则:
+    Rule 1 (Denial Cache): 已声明"不存在"的查询 → 后续检索时注入 denied_queries
+    Rule 2 (Price Consistency): 同一 product_id 价格与 FactContext 一致（由 AnchorValidator 保证）
+    Rule 3 (Focus Drift): confirmed_product_id 不在新推荐中 → 标记漂移
     """
 
     def check_before_output(
@@ -1505,7 +895,6 @@ class ConsistencyTracker:
         ranked_product_ids: list[str],
         fact_ctx: FactContext,
     ) -> ConsistencyResult:
-        """在输出前执行一致性校验。"""
         cs = session_ctx.state.consistency
 
         # Rule 3: Focus drift
@@ -1513,39 +902,34 @@ class ConsistencyTracker:
             return ConsistencyResult(
                 is_consistent=False,
                 focus_drift_detected=True,
-                blocked_reason=f"用户已确认关注 {cs.confirmed_product_id}，但新推荐未包含该商品",
+                blocked_reason=(
+                    f"用户已确认关注 {cs.confirmed_product_id}，"
+                    f"但新推荐未包含该商品"
+                ),
             )
-
-        # Rule 1: Denial cache — 在 fact_ctx 层面已处理（denied_queries 在检索时硬过滤），
-        # 这里做二次校验
-        denied = set(cs.denied_product_queries)
-        if denied:
-            for pid in ranked_product_ids:
-                record = fact_ctx.product_index.get(pid)
-                if record and record.title in denied:
-                    logger.warning(f"[consistency] denial cache hit: {record.title} in ranked results")
 
         return ConsistencyResult(is_consistent=True)
 
+    def get_denied_queries(self, session_ctx: SessionContext) -> list[str]:
+        """获取当前 session 的 denial cache。"""
+        return list(session_ctx.state.consistency.denied_product_queries)
+
     def record_denial(self, ctx: SessionContext, query: str, turn: int) -> None:
-        """记录一条'商品不存在'的声明。"""
+        """记录一条「商品不存在」的声明。"""
         cs = ctx.state.consistency
         if query not in cs.denied_product_queries:
             cs.denied_product_queries.append(query)
         cs.claims.append(ClaimRecord(
-            turn=turn,
-            product_id="",
-            claim_type="not_exists",
-            claim_value=f"查询「{query}」在商品库中不存在",
+            turn=turn, product_id="", claim_type="not_exists",
+            claim_value=f"查询「{query}」不在商品库中",
         ))
 
-    def record_claim(self, ctx: SessionContext, product_id: str, claim_type: str, claim_value: str, turn: int) -> None:
-        """记录一条关于商品的声明。"""
+    def record_claim(self, ctx: SessionContext, product_id: str,
+                     claim_type: str, claim_value: str, turn: int) -> None:
+        """记录一条商品相关的声明。"""
         ctx.state.consistency.claims.append(ClaimRecord(
-            turn=turn,
-            product_id=product_id,
-            claim_type=claim_type,
-            claim_value=claim_value,
+            turn=turn, product_id=product_id,
+            claim_type=claim_type, claim_value=claim_value,
         ))
 
     def set_confirmed_product(self, ctx: SessionContext, product_id: str) -> None:
@@ -1564,78 +948,311 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_consi
 
 ```bash
 git add server/backend/app/consistency_tracker.py server/tests/test_consistency_tracker.py
-git commit -m "feat: add ConsistencyTracker — cross-turn claim consistency verification
+git commit -m "feat: ConsistencyTracker — cross-turn denial cache + focus drift detection
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 11: 集成 ConsistencyTracker 到 agent.py
+### Task 5: LLM 客户端适配 — 三个 stream_response + _response_evidence_payload 追加 fact_block
 
-**目标**: 在 AnchorValidator 之后、推送之前执行 ConsistencyTracker 校验
+**目标:** 所有 `stream_response` 方法和 `_response_evidence_payload` 追加 `fact_block: str = ""` 参数，将 FactContext.prompt_block 注入 system prompt
+
+**文件:**
+- 修改: `server/backend/app/llm_client.py`
+- 测试: `server/tests/test_new_models.py`（追加）
+
+- [ ] **Step 1: 追加测试**
+
+```python
+# 追加到 server/tests/test_new_models.py
+
+def test_response_evidence_payload_accepts_fact_block():
+    """_response_evidence_payload 应接收并传递 fact_block。"""
+    from server.backend.app.llm_client import _response_evidence_payload
+    from server.backend.app.models import RetrievalPlan
+    plan = RetrievalPlan(intent="recommend_product", retrieval_mode="single",
+                         retrieval_query="test",
+                         hard_constraints=HardConstraints())
+    payload = _response_evidence_payload(plan, [], fact_block="[事实块内容]")
+    # fact_block 应出现在 payload 中
+    assert "fact_block" in payload
+    assert payload["fact_block"] == "[事实块内容]"
+
+
+def test_response_evidence_payload_no_fact_block():
+    """不传 fact_block 时默认空字符串。"""
+    from server.backend.app.llm_client import _response_evidence_payload
+    from server.backend.app.models import RetrievalPlan, HardConstraints
+    plan = RetrievalPlan(intent="recommend_product", retrieval_mode="single",
+                         retrieval_query="test",
+                         hard_constraints=HardConstraints())
+    payload = _response_evidence_payload(plan, [])
+    assert payload.get("fact_block", "") == ""
+```
+
+注意: `HardConstraints` 从 `models.py` 导入，需要在测试文件顶部补充 import。
+
+- [ ] **Step 2: 运行测试确认失败**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_new_models.py::test_response_evidence_payload_accepts_fact_block -v
+```
+预期: FAIL（_response_evidence_payload 缺少 fact_block 参数）
+
+- [ ] **Step 3: 修改 _response_evidence_payload 签名和返回值**
+
+```python
+# 修改函数签名（约第 642 行）
+def _response_evidence_payload(
+    plan: RetrievalPlan,
+    ranked_products: list[RankedProduct],
+    focus_product: Product | None = None,
+    *,
+    context: SessionContext | None = None,
+    fact_block: str = "",          # ← 新增
+) -> dict[str, Any]:
+    # ... 现有 products/constraints 逻辑不变 ...
+
+    return {
+        'allowed_products': products,
+        'selected_primary': products[0]['product_id'] if products else None,
+        'recent_context_text': _build_recent_context_text(context),
+        'constraint_note': _constraint_sentence(plan),
+        'response_contract': { ... },   # 保持不变
+        'hard_constraints_applied': { ... },  # 保持不变
+        'focus_product': focus_product.model_dump(mode='json') if focus_product else None,
+        'forbidden_claims': ['疗效承诺', '未给出的商品属性', '后端没有返回的 product_id'],
+        'fact_block': fact_block,       # ← 新增
+    }
+```
+
+- [ ] **Step 4: 修改 DoubaoLLMClient.stream_response（约 250 行）**
+
+```python
+async def stream_response(
+    self,
+    user_message: str,
+    plan: RetrievalPlan,
+    ranked_products: list[RankedProduct],
+    focus_product: Product | None = None,
+    *,
+    context=None,
+    fact_block: str = "",          # ← 新增
+):
+    stream_kwargs: dict[str, Any] = {
+        'model': self.model,
+        'messages': [
+            {'role': 'system', 'content': RESPONSE_SYSTEM_PROMPT},
+            {
+                'role': 'user',
+                'content': json.dumps(
+                    {
+                        'message': user_message,
+                        'evidence_payload': _response_evidence_payload(
+                            plan, ranked_products, focus_product,
+                            context=context, fact_block=fact_block,  # ← 传递
+                        ),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        ],
+        # ... 其余不变 ...
+    }
+```
+
+- [ ] **Step 5: 修改 FakeLLMClient.stream_response（约 521 行）**
+
+```python
+async def stream_response(
+    self,
+    user_message: str,
+    plan: RetrievalPlan,
+    ranked_products: list[RankedProduct],
+    focus_product: Product | None = None,
+    *,
+    context=None,
+    fact_block: str = "",          # ← 新增
+):
+    text = await self.generate_response(
+        user_message, plan, ranked_products, focus_product,
+        context=context,
+    )
+    for index in range(0, len(text), 12):
+        yield text[index : index + 12]
+```
+
+- [ ] **Step 6: 修改 LLMClientWithBreaker.stream_response（约 833 行）**
+
+```python
+async def stream_response(
+    self,
+    user_message: str,
+    plan: RetrievalPlan,
+    ranked_products: list[RankedProduct],
+    focus_product: Product | None = None,
+    *,
+    context=None,
+    fact_block: str = "",          # ← 新增
+):
+    async for chunk in self.breaker.call_stream(
+        self.client.stream_response,
+        self._fallback.stream_response,
+        user_message, plan, ranked_products, focus_product,
+        context=context, fact_block=fact_block,  # ← 传递
+    ):
+        yield chunk
+```
+
+- [ ] **Step 7: 修改 DoubaoLLMClient.generate_response 同样追加 fact_block（约 196 行）**
+
+```python
+async def generate_response(
+    self,
+    user_message: str,
+    plan: RetrievalPlan,
+    ranked_products: list[RankedProduct],
+    focus_product: Product | None = None,
+    *,
+    context=None,
+    fact_block: str = "",          # ← 新增
+):
+    # ... 内部调用 _response_evidence_payload 时传递 fact_block ...
+    payload = _response_evidence_payload(
+        plan, ranked_products, focus_product,
+        context=context, fact_block=fact_block,  # ← 传递
+    )
+```
+
+- [ ] **Step 8: 运行测试确认通过**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_new_models.py -v
+```
+预期: 全部 PASS
+
+- [ ] **Step 9: 确认导入和语法**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.llm_client import DoubaoLLMClient; print('OK')"
+```
+预期: `OK`
+
+- [ ] **Step 10: 提交**
+
+```bash
+git add server/backend/app/llm_client.py server/tests/test_new_models.py
+git commit -m "feat(llm_client): add fact_block parameter to all stream_response/generate_response
+
+- _response_evidence_payload gains fact_block field
+- DoubaoLLMClient, FakeLLMClient, LLMClientWithBreaker all accept fact_block
+- Default empty string for backward compat
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task 6: 集成 FactContext + 流式 AnchorValidator 到 agent.py 生成链路（P0 + P3）
+
+**目标:** `_stream_generate_text_events` 改为：FactContext Builder → LLM 生成（带 fact_block）→ AnchorValidator.stream_process 流式校验 → 推送
+
+**注意:** 不修改 `_prepare_context_for_turn` 的 `context_action` 逻辑——保持现有 `same_task/new_task` 语义不变。
 
 **文件:**
 - 修改: `server/backend/app/agent.py`
-- 测试: `server/tests/test_consistency_tracker.py`（集成测试追加）
+- 测试: `server/tests/test_demo_agent_flow.py`（作为回归）
 
-- [ ] **Step 1: 在 agent.py __init__ 中初始化 ConsistencyTracker**
+- [ ] **Step 1: 在 __init__ 中初始化新组件**
 
 ```python
+# 在 ShopGuideAgent.__init__ 末尾追加（约第 178 行之前）
+from .fact_context import FactContextBuilder
+from .anchor_validator import AnchorValidator
 from .consistency_tracker import ConsistencyTracker
+self.fact_builder = FactContextBuilder()
+self.anchor_validator = AnchorValidator()
 self.consistency_tracker = ConsistencyTracker()
 ```
 
-- [ ] **Step 2: 在 _stream_recommendation_events 中，AnchorValidator 后插入 ConsistencyTracker**
+- [ ] **Step 2: 修改 _stream_recommendation_events — LLM 生成前构建 FactContext**
 
-在 `_stream_recommendation_events` 的 LLM 生成后（约 Task 8 修改的位置）追加:
+在 `_stream_recommendation_events` 方法中（约第 919-923 行，即 `_stream_generate_text_events` 调用之前）：
 
 ```python
-# 在 AnchorValidator 校验之后
-if validation.is_valid:
-    # ConsistencyTracker 校验
-    consistency_result = self.consistency_tracker.check_before_output(
-        session_ctx=context,
-        ranked_product_ids=validation.referenced_product_ids,
-        fact_ctx=fact_ctx,
-    )
-    if not consistency_result.is_consistent:
-        logger.warning(f"[consistency] blocked: {consistency_result.blocked_reason}")
-        fallback = fallback_text_for_failure("contradiction_blocked", plan, context=context)
-        yield {"type": "consistency_blocked", "message_id": message_id,
-               "reason": consistency_result.blocked_reason}
+# 构建 FactContext（含 denial cache）
+denied = self.consistency_tracker.get_denied_queries(context)
+fact_ctx = self.fact_builder.build(selected, denied_queries=denied)
+
+# 传入 fact_ctx 给生成方法
+async for event in self._stream_generate_text_events(
+    message_id, request, plan, selected, None, fact_ctx=fact_ctx,
+):
+    ...
+```
+
+- [ ] **Step 3: 重写 _stream_generate_text_events — 流式校验**
+
+```python
+async def _stream_generate_text_events(
+    self,
+    message_id: str,
+    request: ChatRequest,
+    plan: RetrievalPlan,
+    ranked: list[RankedProduct],
+    focus_product: Product | None,
+    *,
+    fact_ctx: FactContext | None = None,  # ← 新参数
+) -> AsyncIterator[dict]:
+    if not ranked:
+        for event in _text_delta_events(message_id, _no_match_text(plan)):
+            yield event
+        return
+
+    ctx = self.sessions.get("anonymous", request.session_id)
+    fact_block = fact_ctx.prompt_block if fact_ctx else ""
+
+    # LLM 流式输出（带 fact_block 约束）
+    try:
+        llm_stream = self.llm_client.stream_response(
+            request.message, plan, ranked, focus_product,
+            context=ctx, fact_block=fact_block,
+        )
+    except Exception:
+        fallback = fallback_text_for_failure("llm_error", plan)
         for event in _text_delta_events(message_id, fallback):
             yield event
         return
+
+    # AnchorValidator 流式校验（逐 chunk 透传 + 锚点展开）
+    if fact_ctx and fact_ctx.product_index:
+        async for event in self.anchor_validator.stream_process(llm_stream, fact_ctx):
+            if event["type"] == "text_delta":
+                event["message_id"] = message_id
+            yield event
+    else:
+        # 无 fact_ctx 时直接透传
+        async for chunk in llm_stream:
+            if chunk:
+                yield {"type": "text_delta", "message_id": message_id, "text": chunk}
 ```
 
-- [ ] **Step 3: 在 _remember_recommendations 中记录 claims**
+- [ ] **Step 4: 修改 _stream_followup 同样构建 FactContext**
 
-在方法末尾追加:
+在 `_stream_followup` 方法中 final_selected 之后、`_stream_generate_text_events` 调用之前（约第 800-801 行）：
 
 ```python
-# 记录一致性声明
-for item in ranked:
-    self.consistency_tracker.record_claim(
-        context, item.product.product_id, "recommendation",
-        f"推荐 {item.product.title} ¥{item.product.price:.0f}",
-        turn=context.state.dialog_state.turn_index,
-    )
+denied = self.consistency_tracker.get_denied_queries(context)
+fact_ctx = self.fact_builder.build(final_selected, denied_queries=denied)
+async for event in self._stream_generate_text_events(
+    message_id, request, plan, final_selected, focus_product, fact_ctx=fact_ctx,
+):
+    ...
 ```
 
-- [ ] **Step 4: 在 _build_pending_recovery_events 找不到匹配时记录 denial**
-
-在 `_build_pending_recovery_events` 返回 None 之前:
-
-```python
-if pending and pending.failed_query:
-    self.consistency_tracker.record_denial(
-        context, pending.failed_query,
-        turn=context.state.dialog_state.turn_index,
-    )
-```
-
-- [ ] **Step 5: 确认可导入**
+- [ ] **Step 5: 确认导入和语法**
 
 ```bash
 cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent import ShopGuideAgent; print('OK')"
@@ -1646,16 +1263,232 @@ cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent
 
 ```bash
 git add server/backend/app/agent.py
-git commit -m "feat(agent): integrate ConsistencyTracker into output pipeline
+git commit -m "feat(agent): integrate streaming AnchorValidator + FactContext into generate pipeline
+
+- FactContext built before LLM call with denial cache
+- AnchorValidator.stream_process validates [[pid]] anchors in real-time
+- Normal text passes through instantly (zero delay)
+- Invalid anchors replaced with placeholder, strays flagged
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 12: 增强 SessionStore — checkpoint 和 recover
+### Task 7: 同步 HallucinationChecker — 签名改 FactContext + 同步调用点
 
-**目标**: 新增 `checkpoint()` 异步写入和 `recover()` 恢复方法
+**目标:** `verify()` 签名改为接收 `FactContext`；去除已被 AnchorValidator 覆盖的虚构 ID/名称检测；同步 `agent.py` 调用点
+
+**文件:**
+- 修改: `server/backend/app/hallucination_checker.py`
+- 修改: `server/backend/app/agent.py`（调用点同步）
+
+- [ ] **Step 1: 精简 HallucinationChecker**
+
+```python
+"""幻觉检测器（兜底层）— 保留价格偏差检测。虚构 ID/名称检测已由 AnchorValidator 覆盖。"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+
+from .models import FactContext
+
+
+@dataclass
+class HallucinationReport:
+    is_clean: bool = True
+    price_mismatches: list[dict] = field(default_factory=list)
+
+
+class HallucinationChecker:
+    """价格偏差检测器（AnchorValidator 的兜底层）。"""
+
+    def __init__(self, price_tolerance: float = 0.1):
+        self.price_tolerance = price_tolerance
+
+    def verify(self, response_text: str, fact_ctx: FactContext) -> HallucinationReport:
+        """校验文本中的价格是否与 FactContext 一致。"""
+        report = HallucinationReport()
+        title_to_price = {r.title: r.price for r in fact_ctx.product_index.values()}
+        if not title_to_price:
+            return report
+
+        price_pattern = re.compile(r'(\d+(?:\.\d+)?)\s*元')
+        for match in price_pattern.finditer(response_text):
+            mentioned_price = float(match.group(1))
+            for title, actual_price in title_to_price.items():
+                if title in response_text:
+                    if abs(mentioned_price - actual_price) / max(actual_price, 1) > self.price_tolerance:
+                        report.price_mismatches.append({
+                            "product": title,
+                            "mentioned": mentioned_price,
+                            "actual": actual_price,
+                        })
+                        report.is_clean = False
+        return report
+```
+
+- [ ] **Step 2: 同步 agent.py 中的调用点**
+
+在 `agent.py` 中找到 `_stream_generate_text_events` 中 HallucinationChecker 的调用（约 1048-1056 行），修改为：
+
+```python
+# 旧代码:
+# from .hallucination_checker import HallucinationChecker
+# report = HallucinationChecker().verify(streamed_text, ranked)
+
+# 新代码: 改为接收 FactContext
+if fact_ctx and fact_ctx.product_index:
+    from .hallucination_checker import HallucinationChecker
+    report = HallucinationChecker().verify(streamed_text, fact_ctx)
+    if not report.is_clean:
+        fallback = fallback_text_for_failure("hallucination_detected", plan)
+        yield {"type": "hallucination_corrected", "message_id": message_id,
+               "original_issues": report.price_mismatches}
+        for event in _text_delta_events(message_id, fallback):
+            yield event
+        return
+```
+
+注意: 这个调用点现在的位置在 `_stream_generate_text_events` 中 AnchorValidator 之后。由于 AnchorValidator 是流式的，`streamed_text` 需要从流式输出中重新收集。实际上在流式校验模式下，价格偏差检测应该在流式结束后、用收集到的完整文本做 deferred check。
+
+简化处理: 将 HallucinationChecker 的价格检测作为流式结束后的 deferred check，与 stray detection 并列。修改 `_stream_generate_text_events`:
+
+```python
+# 在 AnchorValidator.stream_process 循环中收集全量文本
+collected_for_price_check: list[str] = []
+
+async for event in self.anchor_validator.stream_process(llm_stream, fact_ctx):
+    if event["type"] == "text_delta":
+        collected_for_price_check.append(event["text"])
+        event["message_id"] = message_id
+    yield event
+
+# deferred 价格偏差检测（在流式结束后）
+if collected_for_price_check and fact_ctx and fact_ctx.product_index:
+    full_text = "".join(collected_for_price_check)
+    from .hallucination_checker import HallucinationChecker
+    report = HallucinationChecker().verify(full_text, fact_ctx)
+    if not report.is_clean:
+        logger.warning(f"[hallucination] price mismatches: {report.price_mismatches}")
+        yield {"type": "price_mismatch_warning", "message_id": message_id,
+               "mismatches": report.price_mismatches}
+```
+
+- [ ] **Step 3: 确认可导入**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "
+from server.backend.app.hallucination_checker import HallucinationChecker, HallucinationReport
+from server.backend.app.models import FactContext, FactRecord
+ctx = FactContext(product_index={'P1': FactRecord(product_id='P1', title='A', brand='B', price=100, category='C', sub_category='D')})
+r = HallucinationChecker().verify('¥150 元', ctx)
+print(f'is_clean={r.is_clean}, mismatches={len(r.price_mismatches)}')
+"
+```
+预期: `is_clean=False, mismatches=1`（价格偏差 50% > 10% tolerance）
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add server/backend/app/hallucination_checker.py server/backend/app/agent.py
+git commit -m "refactor(hallucination_checker): accept FactContext, price-only check, sync call site
+
+- verify() takes FactContext instead of list[RankedProduct]
+- Removed fabricated ID/name detection (covered by AnchorValidator)
+- Price check runs as deferred post-stream validation in agent.py
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task 8: 集成 ConsistencyTracker 到 agent.py（P1）
+
+**目标:** 在输出前调用 `check_before_output()`；在 recommend 和 denial 时刻记录 claims
+
+**文件:**
+- 修改: `server/backend/app/agent.py`
+
+- [ ] **Step 1: 在 _stream_recommendation_events 推送前加入 consistency check**
+
+在 `_stream_recommendation_events` 中，LLM 生成并校验后（Task 6 修改的位置之后）、推送 product cards 之前：
+
+```python
+# ConsistencyTracker 校验
+if fact_ctx:
+    consistency_result = self.consistency_tracker.check_before_output(
+        session_ctx=context,
+        ranked_product_ids=[item.product.product_id for item in selected],
+        fact_ctx=fact_ctx,
+    )
+    if not consistency_result.is_consistent:
+        logger.warning(f"[consistency] blocked: {consistency_result.blocked_reason}")
+        fallback = fallback_text_for_failure("contradiction_blocked", plan, context=context)
+        yield {"type": "consistency_blocked", "message_id": message_id,
+               "reason": consistency_result.blocked_reason}
+        for event in _text_delta_events(message_id, fallback):
+            yield event
+        yield {"type": "done", "message_id": message_id}
+        return
+```
+
+- [ ] **Step 2: 在 _remember_recommendations 中记录 claims**
+
+在 `_remember_recommendations` 方法末尾（约第 1587 行之前）追加：
+
+```python
+# 记录一致性声明
+turn = context.state.dialog_state.turn_index
+for item in ranked:
+    self.consistency_tracker.record_claim(
+        context,
+        item.product.product_id,
+        "recommendation",
+        f"推荐 {item.product.title} ¥{item.product.price:.0f}",
+        turn=turn,
+    )
+```
+
+- [ ] **Step 3: 在 _build_pending_recovery_events 找不到匹配时记录 denial**
+
+在 `_build_pending_recovery_events` 中 recoverable 判定失败时（约返回 `None` 之前，如果 `pending.failed_query` 存在）：
+
+```python
+if pending and pending.failed_query:
+    self.consistency_tracker.record_denial(
+        context,
+        pending.failed_query,
+        turn=context.state.dialog_state.turn_index,
+    )
+```
+
+- [ ] **Step 4: 确认可导入**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent import ShopGuideAgent; print('OK')"
+```
+预期: `OK`
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/backend/app/agent.py
+git commit -m "feat(agent): integrate ConsistencyTracker — pre-output check + claim recording
+
+- check_before_output() blocks focus drift before pushing to user
+- record_claim() for each recommendation
+- record_denial() for failed queries
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task 9: SessionStore 新增公开方法 checkpoint() 和 recover()
+
+**目标:** checkpoint() 不绕过 get()，正确走 repo/file/in-memory 三层；recover() 返回 SessionRecovery
 
 **文件:**
 - 修改: `server/backend/app/session_store.py`
@@ -1667,34 +1500,33 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 # server/tests/test_session_checkpoint.py
 from __future__ import annotations
 import tempfile
-import os
-from pathlib import Path
 from server.backend.app.session_store import SessionStore
-from server.backend.app.models import SessionContext
 
 
-def test_checkpoint_and_recover():
+def test_checkpoint_and_recover_with_file_backend():
     with tempfile.TemporaryDirectory() as tmpdir:
         store = SessionStore(persist_dir=tmpdir)
+        # 先 get（触发创建）
         ctx = store.get("user1", "sess1")
-        ctx.state.checkpoint_stage = "turn_start"
         ctx.dialog_turns.append({"role": "user", "content": "推荐小米手机"})
-        store.save("user1", "sess1")
+        ctx.state.checkpoint_stage = "turn_start"
 
-        # 模拟恢复
+        # 通过公开方法 checkpoint
+        store.checkpoint("user1", "sess1", "turn_start")
+
+        # 恢复
         store2 = SessionStore(persist_dir=tmpdir)
         recovery = store2.recover("user1", "sess1")
         assert recovery is not None
         assert recovery.user_message_restored is True
-        assert recovery.hint is not None
 
 
-def test_checkpoint_stage_tracking():
+def test_checkpoint_stage_persisted():
     with tempfile.TemporaryDirectory() as tmpdir:
         store = SessionStore(persist_dir=tmpdir)
         ctx = store.get("user1", "sess1")
         ctx.state.checkpoint_stage = "post_retrieve"
-        store.save("user1", "sess1")
+        store.checkpoint("user1", "sess1", "post_retrieve")
 
         store2 = SessionStore(persist_dir=tmpdir)
         ctx2 = store2.get("user1", "sess1")
@@ -1705,6 +1537,21 @@ def test_recover_nonexistent():
     store = SessionStore()
     recovery = store.recover("no_user", "no_sess")
     assert recovery is None
+
+
+def test_recover_with_history_no_stage():
+    """有对话历史但无 checkpoint stage → 部分恢复。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = SessionStore(persist_dir=tmpdir)
+        ctx = store.get("user1", "sess1")
+        ctx.dialog_turns.append({"role": "user", "content": "你好"})
+        store.save("user1", "sess1")
+
+        store2 = SessionStore(persist_dir=tmpdir)
+        recovery = store2.recover("user1", "sess1")
+        assert recovery is not None
+        assert recovery.user_message_restored is True
+        assert recovery.hint is not None
 ```
 
 - [ ] **Step 2: 运行测试确认失败**
@@ -1712,18 +1559,33 @@ def test_recover_nonexistent():
 ```bash
 cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_session_checkpoint.py -v
 ```
-预期: FAIL（recover 方法不存在）
+预期: FAIL（checkpoint/recover 方法不存在）
 
-- [ ] **Step 3: 在 session_store.py 中新增方法**
+- [ ] **Step 3: 在 SessionStore 类中新增方法**
 
 ```python
-# 追加到 SessionStore 类
+def checkpoint(self, user_id: str, session_id: str, stage: str) -> None:
+    """回合级自动保存。不绕过 get()，正确走 repo/file/in-memory 三层。
+
+    先通过 get() 确保 session 在 _sessions 中存在（repo 模式会从 DB 加载），
+    然后更新 checkpoint_stage，最后调用 save() 持久化。
+    """
+    ctx = self.get(user_id, session_id)
+    ctx.state.checkpoint_stage = stage
+    self.save(user_id, session_id)
+
 
 def recover(self, user_id: str, session_id: str):
     """恢复会话，返回 SessionRecovery 或 None。"""
     from .models import SessionRecovery
-    ctx = self.get(user_id, session_id)
+    try:
+        ctx = self.get(user_id, session_id)
+    except Exception:
+        return None
+
     stage = ctx.state.checkpoint_stage
+    has_history = bool(ctx.dialog_turns)
+
     if stage == "turn_start":
         return SessionRecovery(
             user_message_restored=True,
@@ -1740,10 +1602,9 @@ def recover(self, user_id: str, session_id: str):
         return SessionRecovery(
             user_message_restored=True,
             products_cached=True,
-            hint=None,  # 完整回复已保存，无需提示
+            hint=None,
         )
-    elif ctx.dialog_turns:
-        # 有对话历史但无 checkpoint stage → 部分恢复
+    elif has_history:
         return SessionRecovery(
             user_message_restored=True,
             products_cached=False,
@@ -1763,106 +1624,105 @@ cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_sessi
 
 ```bash
 git add server/backend/app/session_store.py server/tests/test_session_checkpoint.py
-git commit -m "feat(session_store): add recover() method with stage-aware hints
+git commit -m "feat(session_store): add checkpoint() and recover() as public methods
+
+- checkpoint() goes through get() for correct repo/file/in-memory handling
+- recover() returns SessionRecovery with stage-aware hints
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 13: 在 agent.py 中插入 3 个 checkpoint 点 + 统一异常边界
+### Task 10: agent.py 中 3 个 checkpoint 插入点 + 统一异常边界（P2）
 
-**目标**: 在 Turn Start、Post-Retrieve、Turn End 3 个位置自动保存；统一异常边界保留上下文
+**目标:** Turn Start、Post-Retrieve、Turn End 自动保存；异常边界保留上下文
 
 **文件:**
 - 修改: `server/backend/app/agent.py`
 
-- [ ] **Step 1: 在 stream_message 的 3 个位置插入 checkpoint**
+- [ ] **Step 1: 插入 Checkpoint 1 — Turn Start**
 
-在 `stream_message` 方法中（约第 328 行）：
+在 `stream_message` 方法中，`context.dialog_turns.append({"role": "user", ...})` 之后（约第 342 行）：
 
-**Checkpoint 1 — Turn Start**（用户消息已追加到 dialog_turns 之后）:
 ```python
 context.dialog_turns.append({"role": "user", "content": request.message or ""})
-# ↓ 新增
-await self._checkpoint(user_id, request.session_id, "turn_start")
+# ↓ 新增 checkpoint
+self.sessions.checkpoint(user_id, request.session_id, "turn_start")
 ```
 
-**Checkpoint 2 — Post-Retrieve**（检索+排序完成后，LLM 生成前）:
-在 `_run_retrieval_flow` 的最后（约 LLM 生成前的位置）:
+- [ ] **Step 2: 插入 Checkpoint 2 — Post-Retrieve**
+
+在 `_run_retrieval_flow` 中，`context.last_plan = plan` 之后（约第 515 行）：
+
 ```python
-# 在 context.last_plan 赋值之后
-await self._checkpoint(user_id, request.session_id, "post_retrieve")
+context.last_plan = plan
+# ↓ 新增 checkpoint
+self.sessions.checkpoint(user_id, request.session_id, "post_retrieve")
 ```
 
-**Checkpoint 3 — Turn End**（完整回复推送后）:
-在 `stream_message` 的 `self._record_display_messages(context, collected)` 之后:
+- [ ] **Step 3: 插入 Checkpoint 3 — Turn End**
+
+在 `stream_message` 方法中，`self._record_display_messages(context, collected)` 之后（约第 365 行）：
+
 ```python
-await self._checkpoint(user_id, request.session_id, "turn_end")
+self._record_display_messages(context, collected)
+# ↓ 新增 checkpoint
+self.sessions.checkpoint(user_id, request.session_id, "turn_end")
 ```
 
-- [ ] **Step 2: 添加 _checkpoint helper 方法**
+- [ ] **Step 4: 在 _do_stream_message 中增加统一异常边界**
 
 ```python
-async def _checkpoint(self, user_id: str, session_id: str, stage: str) -> None:
-    """Fire-and-forget 的异步 checkpoint 写入。"""
-    import asyncio
+async def _do_stream_message(self, user_id: str, request: ChatRequest,
+                             compiled_ir, context: SessionContext,
+                             trace=None) -> AsyncIterator[dict]:
     try:
-        context = self.sessions._sessions.get((user_id, session_id))
-        if context:
-            context.state.checkpoint_stage = stage
-        asyncio.create_task(self._async_save(user_id, session_id))
-    except Exception:
-        logger.warning(f"[checkpoint] failed to schedule save for {user_id}/{session_id}", exc_info=True)
-
-async def _async_save(self, user_id: str, session_id: str) -> None:
-    """异步写入 session，不阻塞主流程。"""
-    try:
-        self.sessions.save(user_id, session_id)
-    except Exception:
-        logger.warning(f"[checkpoint] save failed for {user_id}/{session_id}", exc_info=True)
-```
-
-- [ ] **Step 3: 在 _do_stream_message 中增加统一异常边界**
-
-```python
-async def _do_stream_message(self, ...):
-    try:
-        # 正常流程
+        # ====== 现有正常流程 ======
+        # 1. pending recovery
+        # 2. thinking indicator
+        # 3. ToolPlanner → plan
+        # 4. dispatch
         ...
     except Exception as exc:
-        logger.error(f"[stream] unhandled error: {exc}", exc_info=True)
-        # 上下文保留：在降级回复前先保存 checkpoint
-        await self._checkpoint(user_id, request.session_id, "post_error")
+        logger.error(f"[stream] unhandled error for {user_id}/{request.session_id}: {exc}",
+                     exc_info=True)
+        self.sessions.checkpoint(user_id, request.session_id, "post_error")
         message_id = _message_id()
         fallback = fallback_text_for_failure("internal_error", context=context)
-        yield self._assistant_state(message_id, "error", "服务暂时不可用", intent="error")
+        yield self._assistant_state(message_id, "error", "服务暂时不可用",
+                                    intent="error", retrieval_mode="no_retrieval")
         for event in _text_delta_events(message_id, fallback):
             yield event
         yield {"type": "done", "message_id": message_id}
 ```
 
-- [ ] **Step 4: 确认导入和语法**
+- [ ] **Step 5: 确认语法**
 
 ```bash
 cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent import ShopGuideAgent; print('OK')"
 ```
 预期: `OK`
 
-- [ ] **Step 5: 提交**
+- [ ] **Step 6: 提交**
 
 ```bash
 git add server/backend/app/agent.py
-git commit -m "feat(agent): add 3-stage checkpoint + unified exception boundary
+git commit -m "feat(agent): 3-stage checkpoint + unified exception boundary
+
+- Checkpoint 1: Turn Start (after user message appended)
+- Checkpoint 2: Post-Retrieve (after plan set)
+- Checkpoint 3: Turn End (after display messages recorded)
+- Unified exception boundary preserves context on crash
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
 
 ---
 
-### Task 14: 上下文感知降级提示
+### Task 11: 上下文感知降级提示（P4）
 
-**目标**: 所有 fallback 文案改为接收 `SessionContext`，输出包含具体商品名/查询词的提示
+**目标:** `fallback_text_for_failure()` 改为接收 `context` 参数，输出包含商品名/查询词的提示
 
 **文件:**
 - 修改: `server/backend/app/degradation.py`
@@ -1873,53 +1733,52 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 """降级提示 — 上下文感知的 fallback 文案。"""
 from __future__ import annotations
 
-from .models import SessionContext
 
-
-def fallback_text_for_failure(reason: str, plan=None, context: SessionContext | None = None) -> str:
-    # 提取上下文
+def fallback_text_for_failure(reason: str, plan=None, context=None) -> str:
     last_query = ""
     last_product_names: list[str] = []
-    if context:
-        if context.dialog_turns:
-            last_query = (context.dialog_turns[-1].get("content", "") or "")[:50]
-        for pid in (context.last_product_ids or [])[:3]:
-            # 从 context 提取商品名（如果 last_recommendations 有）
-            for rec in (context.last_recommendations or []):
-                if rec.get("product_id") == pid:
+    if context is not None:
+        turns = getattr(context, 'dialog_turns', []) or []
+        if turns:
+            last_msg = turns[-1].get("content", "") if isinstance(turns[-1], dict) else ""
+            last_query = (last_msg or "")[:50]
+        for pid in (getattr(context, 'last_product_ids', []) or [])[:3]:
+            recs = getattr(context, 'last_recommendations', []) or []
+            for rec in recs:
+                if isinstance(rec, dict) and rec.get("product_id") == pid:
                     last_product_names.append(str(rec.get("title", pid)))
                     break
 
     product_hint = ""
     if last_product_names:
         names = "、".join(last_product_names)
-        product_hint = f"你之前关注的商品：{names}。"
+        product_hint = f" 你之前关注的商品：{names}。"
 
     if reason == "llm_timeout":
         if last_product_names:
             return f"我找到了候选商品（含 {names}），但生成详细解释超时了。你可以直接查看商品卡片，或说「详细说说第一款」让我继续。"
-        return "我正在检索相关商品，但生成解释超时了。请稍等片刻再试，或换个方式描述你的需求。"
+        return "我正在检索相关商品，但生成解释超时了。请稍等片刻再试。"
 
     if reason == "retrieval_error":
         if last_product_names:
-            return f"检索服务暂时不稳定，但我还记得你之前关注的商品（{names}）。你可以继续围绕它们提问，或稍后再试。"
+            return f"检索服务暂时不稳定，但我还记得你之前关注的商品（{names}）。你可以继续围绕它们提问。"
         return "检索服务暂时不稳定，我先按当前商品库的基础信息给出保守结果。"
 
     if reason == "llm_error":
-        query_hint = f"关于「{last_query}」" if last_query else ""
-        return f"{query_hint}LLM 服务调用失败了，我暂时无法生成新的回复。你可以稍后再试，或换个方式描述你的需求。{product_hint}".strip()
+        query = f"关于「{last_query}」" if last_query else ""
+        return f"{query}LLM 服务调用失败了，我暂时无法生成新的回复。你可以稍后再试。{product_hint}".strip()
 
     if reason == "hallucination_detected":
-        query_hint = f"关于「{last_query}」" if last_query else ""
-        return f"{query_hint}我生成的内容存在不准确之处，已触发保护机制。请重新描述你的需求，我会严格基于商品库为你查找。{product_hint}".strip()
+        query = f"关于「{last_query}」" if last_query else ""
+        return f"{query}我生成的内容存在不准确之处，已触发保护机制。请重新描述你的需求。{product_hint}".strip()
 
     if reason == "contradiction_blocked":
         return f"当前回复与之前的分析存在矛盾，已被拦截。请换一种方式提问。{product_hint}".strip()
 
     if reason == "internal_error":
-        return f"服务暂时不可用，请稍后再试。你的对话记录已保存，不会丢失。"
+        return "服务暂时不可用，请稍后再试。你的对话记录已保存，不会丢失。"
 
-    return "当前服务暂时不稳定，我没有执行任何购物车或订单写操作。请稍后重试。"
+    return "当前服务暂时不稳定。请稍后重试。"
 ```
 
 - [ ] **Step 2: 确认导入**
@@ -1929,10 +1788,19 @@ cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.degra
 ```
 预期: `OK`
 
-- [ ] **Step 3: 提交**
+- [ ] **Step 3: 同步 agent.py 中所有 fallback_text_for_failure 调用，传入 context**
+
+在 `agent.py` 中找到所有 `fallback_text_for_failure(...)` 调用（约 1012、1038、1052 行等），确保都传入了 `context` 参数：
+
+```python
+# 旧: fallback_text_for_failure("llm_error", plan)
+# 新: fallback_text_for_failure("llm_error", plan, context=ctx)
+```
+
+- [ ] **Step 4: 提交**
 
 ```bash
-git add server/backend/app/degradation.py
+git add server/backend/app/degradation.py server/backend/app/agent.py
 git commit -m "feat(degradation): context-aware fallback messages with product hints
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
@@ -1940,39 +1808,42 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ---
 
-### Task 15: 全量回归测试 + 修复
+### Task 12: 全量回归测试 + 修复
 
-**目标**: 确保所有改动不破坏现有功能
-
-**文件:**
-- 运行: `server/tests/` 下所有测试
+**目标:** 确保所有改动不破坏现有功能
 
 - [ ] **Step 1: 运行全量测试**
 
 ```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/ -v --tb=short 2>&1 | tail -100
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/ -v --tb=short 2>&1 | tail -120
 ```
 
-- [ ] **Step 2: 逐项修复 FAIL**
+- [ ] **Step 2: 逐项分析并修复 FAIL**
 
-对每个失败的测试:
-1. 阅读失败原因
-2. 判断是预期行为变更（如旧 SemanticFrame → UnifiedPlan 的字段名变化）还是真正的回归
-3. 预期变更 → 更新测试
-4. 真正回归 → 修复代码
+对于每个失败测试:
+1. 判断是预期行为变更还是回归
+2. 预期变更 → 更新测试使其反映新行为
+3. 回归 → 修复代码
 
-- [ ] **Step 3: 运行全量测试确认全部通过**
+关键检查点:
+- `test_demo_agent_flow.py` — 核心流程是否正常
+- `test_response_contract.py` — 输出格式是否正常
+- `test_product_matcher.py` — 商品匹配是否正常
+- `test_cart_intent.py` — 购物车是否正常
+- HallucinationChecker 旧测试 — 可能需要更新（签名已变）
+
+- [ ] **Step 3: 重复直到全量通过**
 
 ```bash
-cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/ -v --tb=short
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/ -v
 ```
-预期: 全部 PASS（或所有 FAIL 均为预期的语义变更，已更新测试）
+预期: 全部 PASS（或所有 FAIL 均为预期变更且测试已更新）
 
 - [ ] **Step 4: 提交**
 
 ```bash
 git add server/tests/
-git commit -m "test: update tests for UnifiedPlan migration, fix regressions
+git commit -m "test: update tests for Stage 1 fact-grounded pipeline, fix regressions
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
@@ -1981,10 +1852,719 @@ Co-Authored-By: Claude <noreply@anthropic.com>"
 
 ## 完成标志
 
-Phase 1-5 全部完成，`pytest server/tests/` 全量通过后：
-- LLM 调用次数从 3 减少到 2
-- `[[product_id]]` 锚点机制确保所有商品引用可追溯到数据库
-- AnchorValidator 拦截虚构商品引用
-- ConsistencyTracker 阻止前后矛盾
-- SessionStore checkpoint 保证上下文不丢失
-- degradation 提示包含用户上下文
+全部 12 个 Task 完成，`pytest server/tests/` 全量通过后：
+
+- `[[product_id]]` 锚点机制通过 prompt 约束 LLM 引用真实商品
+- `AnchorValidator.stream_process` 流式校验锚点（零普通文本延迟）
+- `ConsistencyTracker` 阻止 focus drift 和矛盾
+- `SessionStore.checkpoint` 三阶段自动保存
+- `degradation` 提示含用户上下文
+- 现有 ToolPlan / SemanticFrame / RetrievalPlan 三层模型**完整保留不变**
+
+---
+
+# Stage 2：UnifiedPlan 迁移 + 链路简化
+
+**前置条件:** Stage 1 全部完成且全量测试通过。
+
+**目标:** 合并 ToolPlan + SemanticFrame + RetrievalPlan → UnifiedPlan，删除 IntentCompiler LLM 路径，LLM 调用从 3 次降到 2 次。
+
+**核心原则:**
+- `UnifiedPlan` 继承 Stage 1 不改旧模型的策略——先共存再迁移
+- 先在 `tool_planner.py` 让 LLM 输出增强的 UnifiedPlan JSON（含所有约束字段）
+- 再逐步把 `agent.py` 中的 `SemanticFrame`/`RetrievalPlan` 引用替换为 `UnifiedPlan`
+- 全部迁移完成后，通过 type alias + deprecated 标记过渡，最后清理
+
+## Stage 2 全局约束
+
+- UnifiedPlan 必须包含当前 ToolPlan 的**所有** `args` 子字段（不能静默丢弃，如评审 Issue 2 所指）
+- `_parse_plan()` 必须先显式检测 `"args" in data` 走旧转换，再尝试新格式
+- `context_action` 的 `same_task/new_task` 语义必须保留（如评审 Issue 3 所指）
+- 迁移完成前旧模型不可删除，迁移完成后通过 type alias 过渡至少 1 周再清理
+
+---
+
+### Task S2-1: 创建 UnifiedPlan 模型（与旧模型共存）
+
+**目标:** 在 `models.py` 中新增 `UnifiedPlan`，字段覆盖 ToolPlan + SemanticFrame + RetrievalPlan 的全部信息
+
+**文件:**
+- 修改: `server/backend/app/models.py`
+- 测试: `server/tests/test_unified_plan.py`
+
+- [ ] **Step 1: 编写测试**
+
+```python
+# server/tests/test_unified_plan.py
+from __future__ import annotations
+from server.backend.app.models import UnifiedPlan
+
+
+def test_unified_plan_defaults():
+    p = UnifiedPlan()
+    assert p.tool == "chitchat"
+    assert p.confidence == 0.5
+    assert p.include_brands == []
+    assert p.soft_preferences == {}
+
+
+def test_unified_plan_full_fields():
+    p = UnifiedPlan(
+        tool="recommend_product",
+        confidence=0.9,
+        category="智能手机",
+        sub_category="旗舰机",
+        price_min=3000,
+        price_max=7000,
+        include_brands=["小米", "华为"],
+        exclude_brands=["苹果"],
+        soft_preferences={"拍照": "优秀"},
+        retrieval_query="旗舰拍照手机",
+        retrieval_mode="single",
+        need_clarification=False,
+        cart_action="add",
+        cart_target_product_id="P1",
+        cart_quantity=2,
+        compare_targets=["P1", "P2"],
+        analysis_aspect="specs",
+        followup_kind="explain",
+        # 保留旧 ToolPlan args 子字段的兼容性——从 args 扁平化到顶层
+    )
+    assert p.tool == "recommend_product"
+    assert p.price_max == 7000
+    assert "小米" in p.include_brands
+
+
+def test_unified_plan_serialization():
+    import json
+    p = UnifiedPlan(tool="chitchat", confidence=0.3)
+    d = p.model_dump(mode="json")
+    assert d["tool"] == "chitchat"
+    # 确保可以 json 序列化
+    assert json.dumps(d)
+
+
+def test_unified_plan_does_not_break_old_models():
+    """UnifiedPlan 与旧模型共存，互不影响。"""
+    from server.backend.app.models import ToolPlan, SemanticFrame, RetrievalPlan
+    tp = ToolPlan(tool="chitchat")
+    assert tp.tool == "chitchat"
+    assert SemanticFrame is not None
+    assert RetrievalPlan is not None
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
+```
+预期: FAIL（UnifiedPlan 未定义）
+
+- [ ] **Step 3: 在 models.py 中追加 UnifiedPlan（放在 Stage 1 的 FactContext 等模型之后）**
+
+```python
+# ========== UnifiedPlan（Stage 2 — 最终合并 ToolPlan + SemanticFrame + RetrievalPlan） ==========
+
+
+class UnifiedPlan(BaseModel):
+    """单次 LLM 调用的完整决策输出。
+
+    字段设计原则: 覆盖 ToolPlan.args 全部子字段 + SemanticFrame 意图字段 +
+    RetrievalPlan 检索字段。所有字段设默认值，LLM 只需填它能抽取的部分。
+    """
+    # ---- 工具路由（原 ToolPlan.tool） ----
+    tool: str = "chitchat"
+    """recommend_product | product_analysis | compare_products | cart_operation |
+       scenario_bundle | product_followup | chitchat"""
+    confidence: float = 0.5
+
+    # ---- 意图标记（原 SemanticFrame.intent + clarification） ----
+    need_clarification: bool = False
+    clarification_question: str | None = None
+
+    # ---- 硬约束（原 HardConstraints + ConstraintEdits.add） ----
+    category: str | None = None
+    sub_category: str | None = None
+    price_min: float | None = None
+    price_max: float | None = None
+    include_brands: list[str] = Field(default_factory=list)
+    exclude_brands: list[str] = Field(default_factory=list)
+    in_stock_only: bool = True
+
+    # ---- 软偏好（原 RetrievalPlan.soft_preferences） ----
+    soft_preferences: dict[str, str] = Field(default_factory=dict)
+
+    # ---- 检索参数（原 RetrievalPlan.retrieval_query + ToolPlanArgs.category_hint） ----
+    retrieval_query: str = ""
+    retrieval_mode: str = "single"
+
+    # ---- 商品识别（原 ToolPlanArgs.target_product_query / category_hint） ----
+    target_product_query: str | None = None
+    category_hint: str | None = None
+
+    # ---- 对比/分析/追问（原 ToolPlanArgs） ----
+    compare_targets: list[str] = Field(default_factory=list)
+    analysis_aspect: str | None = None
+    followup_kind: str | None = None
+
+    # ---- cart 操作（原 CartOperation + ToolPlanArgs） ----
+    cart_action: str | None = None
+    cart_target_product_id: str | None = None
+    cart_quantity: int = 1
+
+    # ---- 否定缓存（从 ConsistencyState 透传，供 FactContextBuilder 使用） ----
+    denied_queries: list[str] = Field(default_factory=list)
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
+```
+预期: 全部 PASS
+
+- [ ] **Step 5: 确认旧模型不受影响**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "
+from server.backend.app.models import UnifiedPlan, ToolPlan, SemanticFrame, RetrievalPlan
+print('All models coexist OK')
+"
+```
+预期: `All models coexist OK`
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add server/backend/app/models.py server/tests/test_unified_plan.py
+git commit -m "feat(models): add UnifiedPlan — full union of ToolPlan + SemanticFrame + RetrievalPlan
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task S2-2: 增强 ToolPlanner — 输出 UnifiedPlan JSON
+
+**目标:** ToolPlanner prompt 增强为一次性输出包含全部约束字段的 UnifiedPlan JSON；`_parse_plan()` 先检测旧格式再解析新格式
+
+**关键设计（修复评审 Issue 2）:**
+
+```python
+def _parse_plan(self, raw: str):
+    if not raw or not raw.strip():
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+    # ★ 关键: 先检测旧 ToolPlan 格式 (有 "args" 键)
+    if "args" in data:
+        try:
+            from .tool_plan import ToolPlan
+            old = ToolPlan.model_validate(data)
+            # 旧 → 新 显式转换，不丢任何字段
+            return UnifiedPlan(
+                tool=old.tool,
+                confidence=old.confidence,
+                category_hint=old.args.category_hint,
+                target_product_query=old.args.target_product_query,
+                price_min=old.args.price_min,
+                price_max=old.args.price_max,
+                include_brands=list(old.args.include_brands),
+                exclude_brands=list(old.args.exclude_brands),
+                soft_preferences=dict(old.args.soft_preferences),
+                compare_targets=list(old.args.compare_targets),
+                analysis_aspect=old.args.analysis_aspect,
+                followup_kind=old.args.followup_kind,
+                cart_action=old.args.cart_action,
+                cart_quantity=old.args.cart_quantity,
+                retrieval_query=old.args.target_product_query or "",
+            )
+        except Exception:
+            return None
+
+    # 新 UnifiedPlan 格式
+    try:
+        from .models import UnifiedPlan
+        return UnifiedPlan.model_validate(data)
+    except Exception:
+        return None
+```
+
+**文件:**
+- 修改: `server/backend/app/tool_planner.py`
+- 测试: 追加到 `server/tests/test_unified_plan.py`
+
+- [ ] **Step 1: 追加测试**
+
+```python
+# 追加到 server/tests/test_unified_plan.py
+import json
+from server.backend.app.tool_planner import ToolPlanner
+
+
+def test_parse_old_toolplan_format():
+    """旧格式 {tool, confidence, args:{...}} 应正确转换，不丢字段。"""
+    planner = ToolPlanner(llm_client=None)  # type: ignore
+    old_json = json.dumps({
+        "tool": "recommend_product",
+        "confidence": 0.85,
+        "args": {
+            "category_hint": "智能手机",
+            "price_min": 3000,
+            "price_max": 7000,
+            "include_brands": ["小米"],
+            "target_product_query": "小米旗舰机",
+            "soft_preferences": {"拍照": "好"},
+        },
+    })
+    plan = planner._parse_plan(old_json)
+    assert plan is not None
+    assert plan.tool == "recommend_product"
+    assert plan.category_hint == "智能手机"       # 不应被丢掉
+    assert plan.price_min == 3000                 # 不应被丢掉
+    assert "小米" in plan.include_brands          # 不应被丢掉
+    assert plan.retrieval_query == "小米旗舰机"    # target_product_query → retrieval_query
+
+
+def test_parse_new_unified_plan_format():
+    """新 UnifiedPlan JSON 格式直接解析。"""
+    planner = ToolPlanner(llm_client=None)  # type: ignore
+    new_json = json.dumps({
+        "tool": "compare_products",
+        "confidence": 0.9,
+        "compare_targets": ["P1", "P2"],
+        "price_min": 2000,
+    })
+    plan = planner._parse_plan(new_json)
+    assert plan is not None
+    assert plan.tool == "compare_products"
+    assert plan.compare_targets == ["P1", "P2"]
+```
+
+- [ ] **Step 2: 运行测试确认旧格式转换通过，新格式失败（_parse_plan 还未改）**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
+```
+
+- [ ] **Step 3: 修改 tool_planner.py**
+
+按上面的 `_parse_plan()` 逻辑修改；同时增强 `plan()` 方法中的 LLM prompt，在 tool_planner prompt 中加入 category/sub_category/price/retrieval 等字段的输出要求。
+
+- [ ] **Step 4: 运行测试确认全部通过**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
+```
+预期: 全部 PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/backend/app/tool_planner.py server/tests/test_unified_plan.py
+git commit -m "feat(tool_planner): output UnifiedPlan JSON, old ToolPlan format detected first
+
+- _parse_plan checks 'args' in data before trying UnifiedPlan
+- Old ToolPlan.args fully mapped to UnifiedPlan fields
+- Prompt enhanced to request all constraint fields
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task S2-3: 重写 StateReducer — 消费 UnifiedPlan
+
+**目标:** StateReducer 新增 `apply_unified()` 方法接收 `UnifiedPlan`，同时保留旧 `apply()` 兼容 SemanticFrame
+
+**文件:**
+- 修改: `server/backend/app/state_reducer.py`
+- 测试: 追加到 `server/tests/test_unified_plan.py`
+
+- [ ] **Step 1: 追加测试**
+
+```python
+# 追加到 server/tests/test_unified_plan.py
+from server.backend.app.models import SessionContext, UnifiedPlan
+from server.backend.app.state_reducer import StateReducer
+
+
+def test_state_reducer_apply_unified():
+    ctx = SessionContext(session_id="test")
+    plan = UnifiedPlan(
+        tool="recommend_product",
+        category="手机数码",
+        sub_category="智能手机",
+        price_min=2000,
+        price_max=5000,
+        include_brands=["小米"],
+        soft_preferences={"拍照": "好"},
+    )
+    reducer = StateReducer()
+    reducer.apply_unified(ctx, plan, "推荐小米拍照手机")
+    state = ctx.state
+    assert state.dialog_state.turn_index == 1
+    assert state.dialog_state.last_intent == "recommend_product"
+    assert state.constraint_state.hard.category == "手机数码"
+    assert state.constraint_state.hard.sub_category == "智能手机"
+    assert state.constraint_state.hard.price_min == 2000
+    assert "小米" in state.constraint_state.hard.include_brands
+    assert state.constraint_state.soft.get("拍照") == "好"
+
+
+def test_old_apply_still_works():
+    """旧 apply() 兼容 SemanticFrame/ShoppingIntentIR。"""
+    from server.backend.app.models import SemanticFrame
+    ctx = SessionContext(session_id="test")
+    frame = SemanticFrame(intent="recommend_product")
+    reducer = StateReducer()
+    reducer.apply(ctx, frame, "test")
+    assert ctx.state.dialog_state.turn_index == 1
+```
+
+- [ ] **Step 2: 在 StateReducer 中新增 apply_unified()**
+
+在 `state_reducer.py` 中追加:
+
+```python
+def apply_unified(self, context: SessionContext, plan: UnifiedPlan, user_message: str) -> None:
+    """消费 UnifiedPlan 的状态归约。"""
+    state = context.state
+    state.dialog_state.turn_index += 1
+    state.dialog_state.last_intent = plan.tool
+    state.dialog_state.last_user_message = user_message
+
+    hc = state.constraint_state.hard
+    if plan.category:
+        hc.category = plan.category
+    if plan.sub_category:
+        hc.sub_category = plan.sub_category
+    if plan.price_min is not None:
+        hc.price_min = plan.price_min
+    if plan.price_max is not None:
+        hc.price_max = plan.price_max
+    if plan.include_brands:
+        hc.include_brands = dedupe(list(hc.include_brands) + list(plan.include_brands))
+    if plan.exclude_brands:
+        hc.exclude_brands = dedupe(list(hc.exclude_brands) + list(plan.exclude_brands))
+    for key, value in plan.soft_preferences.items():
+        if value:
+            state.constraint_state.soft[key] = value
+
+    state.constraint_state.source_turns.append({
+        "turn_index": state.dialog_state.turn_index,
+        "intent": plan.tool,
+        "message": user_message,
+        "plan": plan.model_dump(mode="json"),
+    })
+    _sync_legacy_context(context)
+```
+
+- [ ] **Step 3: 运行测试**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/test_unified_plan.py -v
+```
+预期: 全部 PASS
+
+- [ ] **Step 4: 提交**
+
+```bash
+git add server/backend/app/state_reducer.py server/tests/test_unified_plan.py
+git commit -m "feat(state_reducer): add apply_unified() for UnifiedPlan consumption
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task S2-4: 简化 agent.py — 移除 IntentCompiler LLM 调用
+
+**目标:** `_do_stream_message` 改用 `apply_unified()`，删除 `_merge_tool_plan_into_ir()`，`_prepare_context_for_turn` 适配 UnifiedPlan
+
+**文件:**
+- 修改: `server/backend/app/agent.py`
+
+- [ ] **Step 1: 修改 _do_stream_message**
+
+```python
+async def _do_stream_message(self, user_id, request, compiled_ir, context, trace=None):
+    # ... recovery / thinking indicator 不变 ...
+
+    seed_constraint_state_from_plan(context, context.last_plan)
+    plan_t0 = _time.time()
+    unified_plan = await self.tool_planner.plan(request, context)
+    # ... trace 记录 ...
+
+    # ★ 改用 apply_unified
+    self._prepare_context_for_turn(context, request, unified_plan)
+    self.state_reducer.apply_unified(context, unified_plan, request.message or "")
+
+    async for event in self._dispatch_tool(user_id, request, context, unified_plan):
+        yield event
+```
+
+- [ ] **Step 2: _dispatch_tool 参数 unified_plan 替换 compiled_ir + tool_plan**
+
+修改 `_dispatch_tool` 签名，参数统一为 `unified_plan: UnifiedPlan`。
+
+对于 `cart_operation` / `product_followup` 路径——这些之前需要 `compiled_ir`（IntentCompiler 编译的结果）。现在统一从 `unified_plan` 中获取约束。如果某个 path 仍需要 IR 级别的字段（如 `cart_operation.target`），用 `unified_plan.cart_target_product_id` 代替。
+
+- [ ] **Step 3: _run_retrieval_flow 接收 unified_plan**
+
+```python
+async def _run_retrieval_flow(self, user_id, request, context, unified_plan):
+    # ★ 不再调用 intent_compiler.compile()
+    # 直接从 unified_plan 构建 RetrievalPlan
+    # 保留 _prepare_context_for_turn 的 context_action 语义
+    context_action = self._prepare_context_for_turn(context, request, unified_plan)
+    
+    plan = self.query_builder.build_from_unified(unified_plan, context, request.message)
+    # ... 后续不变 ...
+```
+
+- [ ] **Step 4: 删除 _merge_tool_plan_into_ir**
+
+```python
+# 直接删除整个方法（约 570-591 行）
+```
+
+- [ ] **Step 5: 确认可导入 + 语法正确**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.agent import ShopGuideAgent; print('OK')"
+```
+预期: `OK`
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add server/backend/app/agent.py
+git commit -m "refactor(agent): dispatch via UnifiedPlan, remove _merge_tool_plan_into_ir
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task S2-5: 适配 QueryBuilder — build_from_unified()
+
+**目标:** `QueryBuilder` 新增 `build_from_unified()` 方法，直接消费 `UnifiedPlan` 产出 `RetrievalPlan`
+
+**文件:**
+- 修改: `server/backend/app/query_builder.py`
+
+- [ ] **Step 1: 追加方法**
+
+```python
+def build_from_unified(self, plan: UnifiedPlan, context, user_message: str) -> RetrievalPlan:
+    """从 UnifiedPlan 构建 RetrievalPlan，跳过 SemanticFrame → IR 转换。"""
+    from .models import HardConstraints
+
+    hc = HardConstraints(
+        category=plan.category,
+        sub_category=plan.sub_category,
+        price_min=plan.price_min,
+        price_max=plan.price_max,
+        include_brands=list(plan.include_brands),
+        exclude_brands=list(plan.exclude_brands),
+    )
+    return RetrievalPlan(
+        intent=plan.tool,
+        retrieval_mode=plan.retrieval_mode,
+        category=plan.sub_category or plan.category,
+        hard_constraints=hc,
+        soft_preferences=dict(plan.soft_preferences),
+        retrieval_query=plan.retrieval_query or plan.target_product_query or user_message,
+        need_clarification=plan.need_clarification,
+        clarification_question=plan.clarification_question,
+    )
+```
+
+- [ ] **Step 2: 确认导入**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.query_builder import QueryBuilder; print('OK')"
+```
+预期: `OK`
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add server/backend/app/query_builder.py
+git commit -m "feat(query_builder): add build_from_unified() — direct UnifiedPlan → RetrievalPlan
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task S2-6: 更新 Tool 参数 — compiled_ir → unified_plan
+
+**目标:** 所有 Tool 的 `execute()` 方法参数从 `compiled_ir` 改为 `unified_plan`
+
+**文件:**
+- 修改: `server/backend/app/tools/retrieval.py`
+- 修改: `server/backend/app/tools/cart.py`
+- 修改: `server/backend/app/tools/clarify.py`
+- 修改: `server/backend/app/tools/comparison.py`
+- 修改: `server/backend/app/tools/bundle.py`
+- 修改: `server/backend/app/tools/followup.py`
+- 修改: `server/backend/app/tools/product_analysis.py`
+
+- [ ] **Step 1: 全局替换参数名**
+
+所有 `execute()` 方法中:
+```python
+# 旧: compiled_ir=compiled_ir
+# 新: unified_plan=unified_plan
+```
+
+对应的内部引用:
+```python
+# 旧: compiled_ir.query_intent → unified_plan.soft_preferences
+# 旧: compiled_ir.constraint_edits → unified_plan (直接取字段)
+```
+
+- [ ] **Step 2: 确认可导入**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "from server.backend.app.tools.registry import ToolRegistry; print('OK')"
+```
+预期: `OK`
+
+- [ ] **Step 3: 提交**
+
+```bash
+git add server/backend/app/tools/
+git commit -m "refactor(tools): compiled_ir → unified_plan parameter migration
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task S2-7: 删除 IntentCompiler + 精简 SemanticParser + 添加向后兼容别名
+
+**目标:** 删除 `intent_compiler.py`；`semantic_layer.py` 只保留 `rule_semantic_frame()` 兜底；`SemanticFrame` → `UnifiedPlan` type alias
+
+**文件:**
+- 删除: `server/backend/app/intent_compiler.py`
+- 修改: `server/backend/app/semantic_layer.py`
+- 修改: `server/backend/app/models.py`（追加 type alias）
+- 修改: `server/backend/app/agent.py`（移除 IntentCompiler 导入和实例化）
+
+- [ ] **Step 1: 在 models.py 末尾追加向后兼容别名**
+
+```python
+# ========== Stage 2 向后兼容别名 ==========
+# 迁移完成后的过渡期（至少 1 周），旧代码中的 SemanticFrame/ShoppingIntentIR
+# 引用自动映射到 UnifiedPlan。过渡期结束后删除旧模型。
+SemanticFrame = UnifiedPlan
+ShoppingIntentIR = UnifiedPlan
+```
+
+- [ ] **Step 2: 从 agent.py 移除 IntentCompiler 导入和使用**
+
+```python
+# 删除: from .intent_compiler import IntentCompiler
+# 删除: self.intent_compiler = IntentCompiler(...)
+```
+
+- [ ] **Step 3: 删除 intent_compiler.py**
+
+```bash
+rm server/backend/app/intent_compiler.py
+```
+
+- [ ] **Step 4: 精简 semantic_layer.py**
+
+删除 `SemanticParser` 类及其 LLM 路径的 `parse()` 方法。
+保留:
+- `rule_semantic_frame()` — ToolPlanner LLM 失败时的规则兜底
+- `_add_constraints` / `_relax_constraints` / `_remove_constraints` — 其他地方仍在使用
+
+- [ ] **Step 5: 确认全项目可导入**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -c "
+from server.backend.app.models import SemanticFrame, ShoppingIntentIR, UnifiedPlan
+from server.backend.app.semantic_layer import rule_semantic_frame
+from server.backend.app.agent import ShopGuideAgent
+print('All imports OK')
+"
+```
+预期: `All imports OK`
+
+- [ ] **Step 6: 提交**
+
+```bash
+git rm server/backend/app/intent_compiler.py
+git add server/backend/app/semantic_layer.py server/backend/app/models.py server/backend/app/agent.py
+git commit -m "refactor: delete IntentCompiler, SemanticFrame → UnifiedPlan alias
+
+- IntentCompiler removed (LLM path replaced by UnifiedPlan in ToolPlanner)
+- SemanticParser LLM path removed, rule_semantic_frame kept as fallback
+- SemanticFrame / ShoppingIntentIR → UnifiedPlan type alias for backwards compat
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+### Task S2-8: Stage 2 全量回归测试
+
+**目标:** 确保 Stage 2 迁移不破坏任何现有功能
+
+- [ ] **Step 1: 运行全量测试**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/ -v --tb=short 2>&1 | tail -150
+```
+
+- [ ] **Step 2: 逐项修复 FAIL**
+
+对每个失败:
+- 旧 SemanticFrame 构造代码 → 改用 UnifiedPlan
+- 旧 ConstraintEdits 引用 → 直接从 UnifiedPlan 取字段
+- 预期行为变更 → 更新测试
+
+- [ ] **Step 3: 确认 LLM 调用数从 3 降到 2**
+
+在 `agent.py` 中 grep 确认:
+```bash
+grep -n "llm_client\." server/backend/app/agent.py
+```
+预期: 只有 ToolPlanner 的 `plan()` 和生成阶段的 `stream_response()` 两处 LLM 调用
+
+- [ ] **Step 4: 全量通过**
+
+```bash
+cd /home/huadabioa/houlong/SoulDance && python -m pytest server/tests/ -v
+```
+预期: 全部 PASS
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add server/tests/
+git commit -m "test: Stage 2 regression fixes — UnifiedPlan migration complete
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
+---
+
+## Stage 2 完成标志
+
+全部 8 个 Task 完成，`pytest server/tests/` 全量通过后：
+
+- `UnifiedPlan` 成为 ToolPlanner → 检索 → 生成的**唯一数据载体**
+- LLM 调用从 3 次减少到 2 次
+- `IntentCompiler` 已删除，`SemanticParser` 仅保留规则兜底
+- `_merge_tool_plan_into_ir()` 已删除
+- `SemanticFrame` / `ShoppingIntentIR` 为 `UnifiedPlan` 的 type alias
+- 旧模型 `ConstraintEdits` / `CartOperation` / `QueryIntent` 保留作为过渡，后续版本清理

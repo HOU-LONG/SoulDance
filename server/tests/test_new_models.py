@@ -68,12 +68,12 @@ def test_session_state_has_consistency_field():
 
 
 def test_session_context_imports_unchanged():
-    """旧模型不受影响。"""
+    """Models are importable."""
     from server.backend.app.models import (
-        ConstraintEdits, CartOperation, QueryIntent, SemanticFrame,
-        ShoppingIntentIR, RetrievalPlan,
+        ConstraintEdits, CartOperation, QueryIntent,
+        RetrievalPlan, UnifiedPlan,
     )
-    from server.backend.app.tool_plan import ToolPlan  # ToolPlan 在 tool_plan.py，不在 models.py
-    assert ConstraintEdits is not None
-    assert SemanticFrame is not None
+    from server.backend.app.tool_plan import ToolPlan
+    assert UnifiedPlan is not None
     assert ToolPlan is not None
+    assert ConstraintEdits is not None

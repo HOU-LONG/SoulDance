@@ -140,15 +140,7 @@ async def test_wrapper_all_methods_are_wrapped():
         def __init__(self):
             self.count = 0
 
-        async def parse_semantic_frame(self, message, context=None, request_type="user_message"):
-            self.count += 1
-            return "{}"
-
         async def select_products(self, user_message, plan, candidates):
-            self.count += 1
-            return "{}"
-
-        async def classify_contextual_followup(self, message, context):
             self.count += 1
             return "{}"
 
@@ -167,13 +159,11 @@ async def test_wrapper_all_methods_are_wrapped():
     counting = CountingLLM()
     wrapper = LLMClientWithBreaker(counting)
 
-    await wrapper.parse_semantic_frame("hi")
     await wrapper.select_products("msg", None, [])
-    await wrapper.classify_contextual_followup("hi", {})
     await wrapper.generate_response("msg", None, [])
     async for _ in wrapper.stream_response("msg", None, []):
         pass
     async for _ in wrapper.stream_chitchat_response("hi", "small_talk"):
         pass
 
-    assert counting.count == 6
+    assert counting.count == 4

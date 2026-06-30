@@ -84,7 +84,6 @@ from .utils import extract_json
 from .embedding_retriever import BM25OnlyRetriever
 from .image_assets import product_image_url_auto as product_image_url
 from .knowledge_base import evidence_review_summary, product_evidence
-from .intent_compiler import IntentCompiler
 from .keywords import (
     CHEAPER_ALTERNATIVE_MARKERS,
     DIFFERENT_BRAND_MARKERS,
@@ -111,6 +110,7 @@ from .models import (
     RecommendationMemoryItem,
     RetrievalPlan,
     SessionContext,
+    UnifiedPlan,
 )
 from .planner_agent import PlannerAgent
 from .query_builder import QueryBuilder
@@ -165,7 +165,6 @@ class ShopGuideAgent:
         # settings 仅长会话评测专用，production 默认 None → 全部走 C4 全开行为
         self.settings = settings
         self.semantic_parser = SemanticParser(self.llm_client, settings=self.settings)
-        self.intent_compiler = IntentCompiler(self.llm_client, self.semantic_parser)
         self.state_reducer = StateReducer()
         self.reference_resolver = ReferenceResolver(self.product_map)
         self.tts = tts_adapter or TTSAdapter()
@@ -224,7 +223,7 @@ class ShopGuideAgent:
     async def plan(self, user_id: str, request: ChatRequest) -> RetrievalPlan:
         context = self.sessions.get(user_id, request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
-        ir = await self.intent_compiler.compile(request, context)
+        ir = rule_semantic_frame(request)
         if _is_pending_clarification_answer(context, request, ir):
             ir.intent = "recommend_product"
             _apply_pending_answer_preferences(ir, request.message)
@@ -331,7 +330,7 @@ class ShopGuideAgent:
     async def compile_intent(self, user_id: str, request: ChatRequest):
         context = self.sessions.get(user_id, request.session_id)
         seed_constraint_state_from_plan(context, context.last_plan)
-        return await self.intent_compiler.compile(request, context)
+        return rule_semantic_frame(request)
 
     async def stream_message(self, user_id: str, request: ChatRequest, compiled_ir=None) -> AsyncIterator[dict]:
         import time as _time
@@ -410,18 +409,21 @@ class ShopGuideAgent:
                 intent="thinking", retrieval_mode="no_retrieval",
             )
 
-            # 3. ToolPlanner 唯一入口
+            # 3. ToolPlanner 唯一入口 → UnifiedPlan
             import time as _time
             seed_constraint_state_from_plan(context, context.last_plan)
             plan_t0 = _time.time()
-            tool_plan = await self.tool_planner.plan(request, context)
+            unified_plan = await self.tool_planner.plan(request, context)
             if trace is not None:
                 trace.plan_tool_ms = (_time.time() - plan_t0) * 1000
-                trace.tool = tool_plan.tool
-                trace.tool_confidence = tool_plan.confidence
+                trace.tool = unified_plan.tool
+                trace.tool_confidence = unified_plan.confidence
 
-            # 4. 按 tool_plan.tool 分发
-            async for event in self._dispatch_tool(user_id, request, context, tool_plan, compiled_ir):
+            # 4. UnifiedPlan → StateReducer
+            self.state_reducer.apply_unified(context, unified_plan, request.message or "")
+
+            # 5. 按 unified_plan.tool 分发
+            async for event in self._dispatch_tool(user_id, request, context, unified_plan):
                 yield event
         except Exception as exc:
             logger.error(f"[stream] unhandled error for {user_id}/{request.session_id}: {exc}", exc_info=True)
@@ -439,60 +441,45 @@ class ShopGuideAgent:
         user_id: str,
         request: ChatRequest,
         context: SessionContext,
-        tool_plan,
-        compiled_ir,
+        unified_plan: UnifiedPlan,
     ) -> AsyncIterator[dict]:
-        """Phase B: ToolPlan → tool 单点分发。
-
-        - product_analysis / chitchat: 直接走对应 tool，自由回答
-        - product_followup: 走 followup tool（仍使用 IR 编译做模糊指代解析）
-        - cart_operation: 走 cart tool（main.py ws 路由层已 deterministic 拦下大多数 cart 场景，
-                          这里只在 LLM 主动判断为 cart 时进入）
-        - recommend_product / compare_products / scenario_bundle: 跑 IR + plan 链路（retrieval/对比/Bundle 逻辑保留），
-                          但 IR 的硬软约束由 ToolPlan 的 args 注入，不再走完整规则栈
-        """
-        tool_name = tool_plan.tool
+        """Stage 2: UnifiedPlan → tool 单点分发。"""
+        tool_name = unified_plan.tool
 
         if tool_name == "product_analysis":
             async for event in self.tool_registry.execute(
                 "product_analysis", request, context,
-                tool_plan=tool_plan, user_id=user_id,
+                unified_plan=unified_plan, user_id=user_id,
             ):
                 yield event
             return
 
         if tool_name == "chitchat":
-            # registry 会把第一参数作为 intent 注入 kwargs，所以传 "small_talk" 即可
             async for event in self.tool_registry.execute(
                 "small_talk", request, context,
-                tool_plan=tool_plan, user_id=user_id,
+                unified_plan=unified_plan, user_id=user_id,
             ):
                 yield event
             return
 
         if tool_name == "cart_operation":
-            # cart 走旧 IR 链路（cart_operation 在 product_map 中需要解析 target，
-            # 沿用 followup_tool 之外的 deterministic 解析）
-            ir = compiled_ir or await self.intent_compiler.compile(request, context)
             async for event in self.tool_registry.execute(
                 "cart_operation", request, context,
-                compiled_ir=ir, tool_plan=tool_plan, user_id=user_id,
+                unified_plan=unified_plan, user_id=user_id,
             ):
                 yield event
             return
 
         if tool_name == "product_followup":
-            ir = compiled_ir or await self.intent_compiler.compile(request, context)
             async for event in self.tool_registry.execute(
                 "product_followup", request, context,
-                compiled_ir=ir, tool_plan=tool_plan, user_id=user_id,
+                unified_plan=unified_plan, user_id=user_id,
             ):
                 yield event
             return
 
-        # 剩下 recommend_product / compare_products / scenario_bundle：复用 IR + plan + retrieval 链路
-        # 但 IR 的约束由 ToolPlan args 注入，跳过 _apply_product_admission_gate（不再降级）
-        async for event in self._run_retrieval_flow(user_id, request, context, tool_plan, compiled_ir):
+        # recommend_product / compare_products / scenario_bundle
+        async for event in self._run_retrieval_flow(user_id, request, context, unified_plan):
             yield event
 
     async def _run_retrieval_flow(
@@ -500,35 +487,14 @@ class ShopGuideAgent:
         user_id: str,
         request: ChatRequest,
         context: SessionContext,
-        tool_plan,
-        compiled_ir,
+        unified_plan: UnifiedPlan,
     ) -> AsyncIterator[dict]:
-        """recommend / compare / bundle 共用的检索/排序流。
-
-        关键差异：不再走 _apply_product_admission_gate 的"无词典词 → unclear_input"降级；
-        约束从 tool_plan.args 注入而非完全依赖 _normalize_intent 规则栈。
-        """
-        ir = compiled_ir or await self.intent_compiler.compile(request, context)
-        if _is_pending_clarification_answer(context, request, ir):
-            ir.intent = "recommend_product"
-            _apply_pending_answer_preferences(ir, request.message)
-
-        # ToolPlan args → IR constraint edits
-        self._merge_tool_plan_into_ir(ir, tool_plan)
-        # 强制 ir.intent 对齐 tool_plan.tool，让 query_builder/state_reducer 按正确意图走
-        if tool_plan.tool == "compare_products":
-            ir.intent = "compare_products"
-        elif tool_plan.tool == "scenario_bundle":
-            ir.intent = "scenario_bundle"
-        elif tool_plan.tool == "recommend_product" and ir.intent in {"small_talk", "unclear_input"}:
-            ir.intent = "recommend_product"
-
-        context_action = self._prepare_context_for_turn(context, request, ir)
-        self.state_reducer.apply(context, ir, request.message)
-        plan = self.query_builder.build(ir, context, request.message)
+        """Stage 2: UnifiedPlan → RetrievalPlan，跳过 IntentCompiler + _merge_tool_plan_into_ir。"""
+        context_action = self._prepare_context_for_turn_unified(context, request, unified_plan)
+        plan = self.query_builder.build_from_unified(unified_plan, context, request.message)
         self.taxonomy.apply_to_constraints(plan.hard_constraints, request.message)
         plan.category = plan.hard_constraints.sub_category or plan.hard_constraints.category or plan.category
-        # Anchor resolution: "回到第一轮" → bind to first-turn brand
+        # Anchor resolution
         if plan.soft_preferences.pop("anchor_reference", None) == "first_turn":
             first_brand = context.reference_anchors.get("first_turn_brand")
             if first_brand:
@@ -537,7 +503,6 @@ class ShopGuideAgent:
                 )
         context.last_plan = plan
         context.state.trace.last_execution_plan = {"retrieval_plan": plan.model_dump(mode="json")}
-        # Checkpoint 2: Post-Retrieve
         self.sessions.checkpoint(user_id, request.session_id, "post_retrieve")
 
         if plan.need_clarification or plan.intent == "clarification":
@@ -548,31 +513,28 @@ class ShopGuideAgent:
                 yield event
             return
 
-        if tool_plan.tool == "compare_products":
+        if unified_plan.tool == "compare_products":
             async for event in self.tool_registry.execute(
                 "compare_products", request, context,
-                plan=plan, tool_plan=tool_plan, user_id=user_id,
+                plan=plan, unified_plan=unified_plan, user_id=user_id,
             ):
                 yield event
             return
 
-        if tool_plan.tool == "scenario_bundle":
+        if unified_plan.tool == "scenario_bundle":
             async for event in self.tool_registry.execute(
                 "scenario_bundle", request, context,
-                plan=plan, tool_plan=tool_plan, user_id=user_id,
+                plan=plan, unified_plan=unified_plan, user_id=user_id,
             ):
                 yield event
             return
 
-        # recommend_product：未知类目时，优先用 LLM 给的 category_hint 做模糊检索兜底，
-        # 而不是直接走 taxonomy recovery（那会让用户先去选类目，打断流畅体验）
+        # recommend_product: category_hint 兜底
         if _looks_like_product_request(request.message) and not self.taxonomy.is_known_request(request.message):
-            category_hint = tool_plan.args.category_hint
+            category_hint = unified_plan.category_hint
             if category_hint and category_hint.strip():
-                # LLM 给了类目提示（如"零食""功能饮料"），直接用它做 retrieval_query 搜索
                 plan.retrieval_query = category_hint.strip()
             else:
-                # 没有任何线索 → 回退到 recovery
                 message_id = _message_id()
                 text = _unknown_category_text(request.message)
                 yield self._assistant_state(message_id, "clarifying", "当前商品库没有匹配类目", plan)
@@ -587,33 +549,31 @@ class ShopGuideAgent:
         memory_hit = self._get_recommendation_memory_hit(plan, request.message)
         async for event in self.tool_registry.execute(
             "recommend_product", request, context,
-            plan=plan, compiled_ir=ir, context_action=context_action,
-            memory_hit=memory_hit, tool_plan=tool_plan, user_id=user_id,
+            plan=plan, context_action=context_action,
+            memory_hit=memory_hit, unified_plan=unified_plan, user_id=user_id,
         ):
             yield event
 
-    def _merge_tool_plan_into_ir(self, ir, tool_plan) -> None:
-        """把 ToolPlanArgs 中的约束塞到 IR 的 constraint_edits.add，让 query_builder 一并消费。"""
-        args = tool_plan.args
-        if args.price_max is not None:
-            ir.constraint_edits.add.price_max = args.price_max
-        if args.price_min is not None:
-            ir.constraint_edits.add.price_min = args.price_min
-        if args.include_brands:
-            ir.constraint_edits.add.include_brands = dedupe(
-                list(ir.constraint_edits.add.include_brands) + list(args.include_brands)
-            )
-        if args.exclude_brands:
-            ir.constraint_edits.add.exclude_brands = dedupe(
-                list(ir.constraint_edits.add.exclude_brands) + list(args.exclude_brands)
-            )
-        if args.soft_preferences:
-            ir.constraint_edits.add.soft_preferences.update(args.soft_preferences)
-        if args.category_hint:
-            existing = list(getattr(ir.query_intent, "query_terms", []) or [])
-            if args.category_hint not in existing:
-                existing.append(args.category_hint)
-                ir.query_intent.query_terms = existing
+    def _prepare_context_for_turn_unified(self, context: SessionContext, request: ChatRequest, unified_plan: UnifiedPlan) -> str:
+        """Simplified context_action for UnifiedPlan (Stage 2)."""
+        if request.type == "product_followup":
+            return "followup"
+        if unified_plan.tool not in {"recommend_product", "clarification"}:
+            return unified_plan.tool
+        explicit_match = self.taxonomy.resolve_task_object(request.message)
+        pending = context.state.pending_clarification
+        if explicit_match:
+            current_sub = context.state.constraint_state.hard.sub_category
+            pending_sub = pending.sub_category if pending else None
+            if (explicit_match.sub_category and current_sub and explicit_match.sub_category != current_sub) or \
+               (explicit_match.sub_category and pending_sub and explicit_match.sub_category != pending_sub):
+                _reset_shopping_task(context)
+                return "new_task"
+            if pending and (explicit_match.sub_category == pending_sub):
+                _seed_pending_constraints(context)
+                return "clarification_answer"
+            return "same_task"
+        return "same_task"
 
     def _record_display_messages(self, context: SessionContext, events: list[dict]) -> None:
         """Build one assistant DisplayMessage from collected stream events."""
@@ -733,7 +693,7 @@ class ShopGuideAgent:
             return
         if ir is None:
             seed_constraint_state_from_plan(context, context.last_plan)
-            ir = await self.intent_compiler.compile(request, context)
+            ir = rule_semantic_frame(request)
         self._prepare_context_for_turn(context, request, ir)
         self.state_reducer.apply(context, ir, request.message)
         plan = self.query_builder.build(ir, context, request.message)
@@ -829,7 +789,12 @@ class ShopGuideAgent:
             }
             yield replacement_event
             text_parts: list[str] = []
-            async for event in self._stream_generate_text_events(message_id, request, plan, final_selected, focus_product):
+            # 事实锚定管道: followup 路径也构建 FactContext
+            denied = self.consistency_tracker.get_denied_queries(context)
+            fact_ctx = self.fact_builder.build(final_selected, denied_queries=denied)
+            async for event in self._stream_generate_text_events(
+                message_id, request, plan, final_selected, focus_product, fact_ctx=fact_ctx,
+            ):
                 if event.get("type") == "text_delta":
                     text_parts.append(event["text"])
                 yield event
@@ -1678,7 +1643,7 @@ class ShopGuideAgent:
 
     async def try_handle_cart_message(self, user_id: str, request: ChatRequest, cart: CartService, compiled_ir=None) -> dict | None:
         context = self.sessions.get(user_id, request.session_id)
-        frame = compiled_ir or await self.intent_compiler.compile(request, context)
+        frame = compiled_ir or rule_semantic_frame(request)
         if compiled_ir is None and (frame.intent != "cart_operation" or frame.cart_operation is None):
             frame = rule_semantic_frame(request)
         if frame.intent != "cart_operation" or frame.cart_operation is None:

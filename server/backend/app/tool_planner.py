@@ -23,14 +23,13 @@ class ToolPlanner:
     def __init__(self, llm_client):
         self.llm_client = llm_client
 
-    async def plan(self, request: ChatRequest, context: SessionContext) -> ToolPlan:
-        # 1. product_followup 类型的 request 直接固定 tool（前端传过来的明确意图）
+    async def plan(self, request: ChatRequest, context: SessionContext):
+        """返回 UnifiedPlan（Stage 2 迁移后统一载体）。"""
+        from .models import UnifiedPlan
+
+        # 1. product_followup 类型的 request 直接固定 tool
         if request.type == "product_followup":
-            return ToolPlan(
-                tool="product_followup",
-                args=ToolPlanArgs(),
-                confidence=1.0,
-            )
+            return UnifiedPlan(tool="product_followup", confidence=1.0)
 
         # 2. LLM 主流程
         context_payload = self._context_payload(context)
@@ -42,7 +41,7 @@ class ToolPlanner:
         except Exception:
             pass
 
-        # 3. LLM 失败兜底——保守判断（基于关键词）
+        # 3. LLM 失败兜底
         return self._rule_fallback(request, context)
 
     # ----- 内部 -----
@@ -55,27 +54,52 @@ class ToolPlanner:
             "recent_cart_product_id": context.recent_cart_product_id,
         }
 
-    def _parse_plan(self, raw: str) -> ToolPlan | None:
+    def _parse_plan(self, raw: str):
         if not raw or not raw.strip():
             return None
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
             return None
+
+        # ★ 先检测旧 ToolPlan 格式 ({tool, confidence, args: {...}})
+        if "args" in data:
+            try:
+                old = ToolPlan.model_validate(data)
+                from .models import UnifiedPlan
+                return UnifiedPlan(
+                    tool=old.tool,
+                    confidence=old.confidence,
+                    category_hint=old.args.category_hint,
+                    target_product_query=old.args.target_product_query,
+                    price_min=old.args.price_min,
+                    price_max=old.args.price_max,
+                    include_brands=list(old.args.include_brands),
+                    exclude_brands=list(old.args.exclude_brands),
+                    soft_preferences=dict(old.args.soft_preferences),
+                    compare_targets=list(old.args.compare_targets),
+                    analysis_aspect=old.args.analysis_aspect,
+                    followup_kind=old.args.followup_kind,
+                    cart_action=old.args.cart_action,
+                    cart_quantity=old.args.cart_quantity,
+                    retrieval_query=old.args.target_product_query or "",
+                )
+            except Exception:
+                return None
+
+        # 新 UnifiedPlan 格式
         try:
-            return ToolPlan.model_validate(data)
+            from .models import UnifiedPlan
+            return UnifiedPlan.model_validate(data)
         except Exception:
             return None
 
-    def _rule_fallback(self, request: ChatRequest, context: SessionContext) -> ToolPlan:
-        """LLM 真挂了：用极简规则决定 tool（保守路线，多走 chitchat 让用户自然收到回复）。"""
+    def _rule_fallback(self, request: ChatRequest, context: SessionContext):
+        """LLM 挂了——规则兜底返回 UnifiedPlan。"""
+        from .models import UnifiedPlan
         text = (request.message or "").strip()
         if re.search(r"加入购物车|加购|放购物车|结算|下单", text):
-            return ToolPlan(
-                tool="cart_operation",
-                args=ToolPlanArgs(cart_action="add", cart_target="focus_product"),
-                confidence=0.5,
-            )
+            return UnifiedPlan(tool="cart_operation", cart_action="add", confidence=0.5)
         if re.search(r"对比|比较一下", text):
-            return ToolPlan(tool="compare_products", args=ToolPlanArgs(), confidence=0.5)
-        return ToolPlan(tool="chitchat", args=ToolPlanArgs(), confidence=0.3)
+            return UnifiedPlan(tool="compare_products", confidence=0.5)
+        return UnifiedPlan(tool="chitchat", confidence=0.3)

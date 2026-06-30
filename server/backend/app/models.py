@@ -285,6 +285,11 @@ class UnifiedPlan(BaseModel):
     denied_queries: list[str] = Field(default_factory=list)
 
 
+# ========== Stage 2 向后兼容别名 ==========
+SemanticFrame = UnifiedPlan
+ShoppingIntentIR = UnifiedPlan
+
+
 class SessionState(BaseModel):
     session_id: str = ""
     user_profile: UserProfile = Field(default_factory=UserProfile)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .constraint_filter import dedupe
-from .models import HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR
+from .models import HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR, UnifiedPlan
 from .planner_agent import _clarification_policy, _detect_category, _parent_category
 from .taxonomy import TaxonomyResolver
 
@@ -59,6 +59,28 @@ class QueryBuilder:
             retrieval_query=" ".join(query_terms) or user_message or "商品推荐",
             need_clarification=need_clarification,
             clarification_question=clarification_question,
+        )
+
+    def build_from_unified(self, plan: UnifiedPlan, context: SessionContext, user_message: str) -> RetrievalPlan:
+        """从 UnifiedPlan 直接构建 RetrievalPlan（Stage 2 新增）。"""
+        hc = HardConstraints(
+            category=plan.category,
+            sub_category=plan.sub_category,
+            price_min=plan.price_min,
+            price_max=plan.price_max,
+            include_brands=list(plan.include_brands),
+            exclude_brands=list(plan.exclude_brands),
+        )
+        query = plan.retrieval_query or plan.target_product_query or user_message
+        return RetrievalPlan(
+            intent=plan.tool,
+            retrieval_mode=plan.retrieval_mode or "single",
+            category=plan.sub_category or plan.category,
+            hard_constraints=hc,
+            soft_preferences=dict(plan.soft_preferences),
+            retrieval_query=query,
+            need_clarification=plan.need_clarification,
+            clarification_question=plan.clarification_question,
         )
 
 

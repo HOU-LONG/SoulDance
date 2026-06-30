@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 from .constraint_filter import dedupe
-from .models import ConstraintEdits, HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR
+from .models import ConstraintEdits, HardConstraints, RetrievalPlan, SessionContext, ShoppingIntentIR, UnifiedPlan
 from .semantic_layer import _add_constraints, _relax_constraints, _remove_constraints
 
 
@@ -60,6 +60,38 @@ class StateReducer:
                 "constraint_edits": ir.constraint_edits.model_dump(mode="json"),
             }
         )
+        _sync_legacy_context(context)
+
+    def apply_unified(self, context: SessionContext, plan: UnifiedPlan, user_message: str) -> None:
+        """消费 UnifiedPlan 的状态归约（Stage 2 新增）。"""
+        state = context.state
+        state.dialog_state.turn_index += 1
+        state.dialog_state.last_intent = plan.tool
+        state.dialog_state.last_user_message = user_message
+
+        hc = state.constraint_state.hard
+        if plan.category:
+            hc.category = plan.category
+        if plan.sub_category:
+            hc.sub_category = plan.sub_category
+        if plan.price_min is not None:
+            hc.price_min = plan.price_min
+        if plan.price_max is not None:
+            hc.price_max = plan.price_max
+        if plan.include_brands:
+            hc.include_brands = dedupe(list(hc.include_brands) + list(plan.include_brands))
+        if plan.exclude_brands:
+            hc.exclude_brands = dedupe(list(hc.exclude_brands) + list(plan.exclude_brands))
+        for key, value in plan.soft_preferences.items():
+            if value:
+                state.constraint_state.soft[key] = value
+
+        state.constraint_state.source_turns.append({
+            "turn_index": state.dialog_state.turn_index,
+            "intent": plan.tool,
+            "message": user_message,
+            "plan": plan.model_dump(mode="json"),
+        })
         _sync_legacy_context(context)
 
 
